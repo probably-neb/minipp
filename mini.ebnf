@@ -1,0 +1,35 @@
+program -> types declarations functions
+types -> {type-declaration}∗
+type-declaration -> 'struct' id '{' nested-decl '}' ';'
+nested-decl -> decl ';' { decl ';'}∗
+decl -> 'type' id
+type -> 'int' | 'bool' | 'struct' id
+declarations -> {declaration}∗
+declaration -> 'type' id-list ';'
+id-list -> id {',' id}∗
+functions -> {function}∗
+function -> 'fun' id parameters return-type '{' declarations statement-list '}'
+parameters -> '(' {decl { ',' decl}∗}opt ')'
+return-type -> type | 'void'
+statement -> block | assignment | print | conditional | loop | delete | ret | invocation
+block -> { statement-list }
+statement-list -> {statement}∗
+assignment -> lvalue '=' { expression | 'read' } ';'
+print -> 'print' expression { 'endl' }opt ;
+conditional -> if '(' expression ')' block { 'else' block }opt
+loop -> 'while' '(' expression ')' block
+delete -> 'delete' expression ;
+ret -> 'return' {expression}opt ';'
+invocation -> id arguments ';'
+lvalue -> id { '.' id}∗
+expression -> boolterm { '||' boolterm}∗
+boolterm -> eqterm { '&&' eqterm}∗
+eqterm -> relterm {{ '==' | '!=' } relterm}∗
+relterm -> simple {{ '<' | '>' | '<=' | '>=' } simple}∗
+simple -> term {{ '+' | '−' } term}∗
+term -> unary {{ '∗' | '/' } unary}∗
+unary -> { '!' | '−' }∗ selector
+selector -> factor {'.' id}∗
+factor -> '(' expression ')' | id {arguments}opt | number | 'true' | 'false' | 'new' id | 'null'
+arguments -> '(' {expression { ',' expression}∗}opt ')'
+number -> {'0' | '1' | ... | '9'}{ '0' | '1' | ... | '9'}∗
