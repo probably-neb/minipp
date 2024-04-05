@@ -7,6 +7,10 @@ const Range = struct {
     pub fn new(start: u32, end: u32) Range {
         return Range{ .start = start, .end = end };
     }
+
+    pub fn getSubStrFromStr(self: Range, str: []const u8) []const u8 {
+        return str[self.start..self.end];
+    }
 };
 
 pub const TokenKind = union(enum) {
@@ -87,12 +91,11 @@ pub const Lexer = struct {
     // The input string
     input: []const u8,
 
-    pub fn new(input: []const u8) Lexer {
+    pub fn new(input: []const u8, filePath: []const u8) Lexer {
         var lxr = Lexer{
             .line_number = 0,
             .column = 0,
-            // TODO handle this file name properly
-            .file = "stdin",
+            .file = filePath,
             .line = Range{ .start = 0, .end = 0 },
             .pos = 0,
             .read_pos = 0,
@@ -103,7 +106,11 @@ pub const Lexer = struct {
         return lxr;
     }
 
-    pub fn next_token(lxr: *Lexer) Token {
+    pub fn newFromStr(input: []const u8) Lexer {
+        return Lexer.new(input, "");
+    }
+
+    pub fn next_token(lxr: *Lexer) !Token {
         lxr.skip_whitespace();
 
         const kind = switch (lxr.ch) {
@@ -111,12 +118,18 @@ pub const Lexer = struct {
             '0'...'9' => lxr.read_number(),
             else => blk: {
                 if (std.ascii.isPrint(lxr.ch)) {
-                    break :blk lxr.read_symbol();
+                    break :blk try lxr.read_symbol();
                 } else if (lxr.ch == 0) {
                     break :blk TokenKind.Eof;
                 }
-                // TODO add proper handling for errors
-                unreachable;
+                // TODO improve error handling
+                if (lxr.file.len == 0) {
+                    std.debug.print("error: unexpected character {any} in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
+                } else {
+                    std.debug.print("error: unexpected character {any} in line=\"{s}\" in file=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.file, lxr.line_number, lxr.column });
+                }
+                lxr.line.end = if (lxr.line.end == 0) @truncate(lxr.input.len) else lxr.line.end;
+                return error.InvalidToken;
             },
         };
 
@@ -134,15 +147,6 @@ pub const Lexer = struct {
 
         lxr.pos = lxr.read_pos;
         lxr.read_pos += 1;
-    }
-
-    // This function has no use currently, but could be used in the future to
-    // help with error handling.
-    fn expect(lxr: *Lexer, byte: u8) void {
-        lxr.step();
-        if (lxr.ch != byte) {
-            std.debug.panic("unexpected char {} in input, expected {}", .{ lxr.ch, byte });
-        }
     }
 
     fn peek(lxr: *Lexer) u8 {
@@ -194,7 +198,7 @@ pub const Lexer = struct {
         return TokenKind{ .Number = Range{ .start = pos, .end = lxr.pos } };
     }
 
-    fn read_symbol(lxr: *Lexer) TokenKind {
+    fn read_symbol(lxr: *Lexer) !TokenKind {
         // This function requires implementing if_peek logic, adapted to Zig.
         // Zig doesn't support Rust-like macros, so we use inline functions or conditionals.
         // For simplicity, let's just handle a couple of cases:
@@ -210,8 +214,16 @@ pub const Lexer = struct {
             '+' => TokenKind.Plus,
             '*' => TokenKind.Mul,
             '/' => TokenKind.Div,
-            // TODO add proper handling for errors
-            else => unreachable,
+            // TODO improve error handling
+            else => {
+                if (lxr.file.len == 0) {
+                    std.debug.print("error: unexpected character \'{c}\' in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
+                } else {
+                    std.debug.print("error: unexpected character \'{c}\' in line=\"{s}\" in file=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.file, lxr.line_number, lxr.column });
+                }
+                lxr.line.end = if (lxr.line.end == 0) @truncate(lxr.input.len) else lxr.line.end;
+                return error.InvalidToken;
+            },
         };
     }
 
@@ -221,11 +233,11 @@ pub const Lexer = struct {
     }
 };
 
-pub fn main() void {
-    var input: []const u8 = "( (+ 1 2) 3 ) (5 + 6) (3 - 8))";
-    var lxr = Lexer.new(input);
-    var tok = lxr.next_token();
-    while (tok.kind != TokenKind.Eof) : (tok = lxr.next_token()) {
+pub fn main() !void {
+    var input: []const u8 = "( (+ 1 2) 3 )@(5 + 6) (3 - 8))";
+    var lxr = Lexer.newFromStr(input);
+    var tok = try lxr.next_token();
+    while (tok.kind != TokenKind.Eof) : (tok = try lxr.next_token()) {
         std.debug.print("{}\n", .{tok.kind});
     }
 }
