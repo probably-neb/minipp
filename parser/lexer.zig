@@ -9,18 +9,16 @@ const Range = struct {
     }
 };
 
-pub const Token = union(enum) {
+pub const TokenKind = union(enum) {
+    // For error handling and reporting
     Ident: Range,
-    Int: Range,
-    Float: Range,
-    String: Range,
-    Char: u32,
+    Number: Range,
     Lt,
     LtEq,
     Gt,
     GtEq,
     Eq,
-    DblEq,
+    DoubleEq,
     Plus,
     Minus,
     Mul,
@@ -29,32 +27,78 @@ pub const Token = union(enum) {
     RParen,
     LSquirly,
     RSquirly,
-    LBrace,
-    RBrace,
-    True,
-    False,
     Eof,
-    If,
-    Fun,
-    Let,
+    KeywordBool,
+    KeywordDelete,
+    KeywordEndl,
+    KeywordFalse,
+    KeywordFun,
+    KeywordIf,
+    KeywordInt,
+    KeywordNew,
+    KeywordNull,
+    KeywordRead,
+    KeywordReturn,
+    KeywordStruct,
+    KeywordTrue,
+    KeywordVoid,
+    KeywordWhile,
 
-    pub const keywords = std.ComptimeStringMap(Token, .{
-        .{ "true", Token.True },
-        .{ "false", Token.False },
-        .{ "if", Token.If },
-        .{ "fun", Token.Fun },
-        .{ "let", Token.Let },
+    pub const keywords = std.ComptimeStringMap(TokenKind, .{
+        .{ "bool", TokenKind.KeywordBool },
+        .{ "delete", TokenKind.KeywordDelete },
+        .{ "endl", TokenKind.KeywordEndl },
+        .{ "false", TokenKind.KeywordFalse },
+        .{ "fun", TokenKind.KeywordFun },
+        .{ "if", TokenKind.KeywordIf },
+        .{ "int", TokenKind.KeywordInt },
+        .{ "new", TokenKind.KeywordNew },
+        .{ "null", TokenKind.KeywordNull },
+        .{ "read", TokenKind.KeywordRead },
+        .{ "return", TokenKind.KeywordReturn },
+        .{ "struct", TokenKind.KeywordStruct },
+        .{ "true", TokenKind.KeywordTrue },
+        .{ "void", TokenKind.KeywordVoid },
+        .{ "while", TokenKind.KeywordWhile },
     });
 };
 
+pub const Token = struct {
+    kind: TokenKind,
+    line_number: u32,
+    line: Range,
+    column: u32,
+    file: []const u8,
+};
+
 pub const Lexer = struct {
+    // For error handling and reporting
+    line_number: u32,
+    column: u32,
+    file: []const u8,
+    line: Range,
+
+    // The current position in the input
     pos: u32,
+    // The position that we are currently reading
     read_pos: u32,
+    // The current character we are reading
     ch: u8,
+    // The input string
     input: []const u8,
 
     pub fn new(input: []const u8) Lexer {
-        var lxr = Lexer{ .pos = 0, .read_pos = 0, .ch = 0, .input = input };
+        var lxr = Lexer{
+            .line_number = 0,
+            .column = 0,
+            // TODO handle this file name properly
+            .file = "stdin",
+            .line = Range{ .start = 0, .end = 0 },
+            .pos = 0,
+            .read_pos = 0,
+            .ch = 0,
+            .input = input,
+        };
         lxr.step();
         return lxr;
     }
@@ -62,22 +106,22 @@ pub const Lexer = struct {
     pub fn next_token(lxr: *Lexer) Token {
         lxr.skip_whitespace();
 
-        const tok = switch (lxr.ch) {
-            '"' => Token{ .String = lxr.read_string() },
-            '\'' => Token{ .Char = lxr.read_char() },
-            'a'...'z', 'A'...'Z', '_' => return lxr.ident_or_builtin(),
-            '0'...'9' => return lxr.read_numeric(),
+        const kind = switch (lxr.ch) {
+            'a'...'z', 'A'...'Z' => lxr.ident_or_builtin(),
+            '0'...'9' => lxr.read_number(),
             else => blk: {
                 if (std.ascii.isPrint(lxr.ch)) {
                     break :blk lxr.read_symbol();
                 } else if (lxr.ch == 0) {
-                    break :blk Token.Eof;
+                    break :blk TokenKind.Eof;
                 }
+                // TODO add proper handling for errors
                 unreachable;
             },
         };
 
         lxr.step();
+        const tok = Token{ .kind = kind, .line = lxr.line, .line_number = lxr.line_number, .column = lxr.column, .file = lxr.file };
         return tok;
     }
 
@@ -92,6 +136,8 @@ pub const Lexer = struct {
         lxr.read_pos += 1;
     }
 
+    // This function has no use currently, but could be used in the future to
+    // help with error handling.
     fn expect(lxr: *Lexer, byte: u8) void {
         lxr.step();
         if (lxr.ch != byte) {
@@ -108,88 +154,63 @@ pub const Lexer = struct {
     }
 
     fn skip_whitespace(lxr: *Lexer) void {
-        while (std.ascii.isWhitespace(lxr.ch)) {
+        while (true) {
+            switch (lxr.ch) {
+                '\n' => {
+                    lxr.line_number += 1;
+                    lxr.column = 0;
+                    lxr.line.start = if (lxr.line.end == 0) 0 else lxr.line.end + 1;
+                    lxr.line.end = lxr.pos;
+                },
+                ' ', '\t', '\r' => {
+                    lxr.column += 1;
+                },
+                else => break,
+            }
             lxr.step();
         }
-    }
-
-    fn ident_or_builtin(lxr: *Lexer) Token {
-        const range = lxr.read_ident();
-        const ident = lxr.slice(range);
-        const tok = Token.keywords.get(ident) orelse Token{ .Ident = range };
-        return tok;
     }
 
     fn read_ident(lxr: *Lexer) Range {
         const pos = lxr.pos;
-        while (std.ascii.isAlphabetic(lxr.ch) or lxr.ch == '_') {
+        while (std.ascii.isAlphabetic(lxr.ch)) {
             lxr.step();
         }
         return Range{ .start = pos, .end = lxr.pos };
     }
 
-    fn read_numeric(lxr: *Lexer) Token {
+    fn ident_or_builtin(lxr: *Lexer) TokenKind {
+        const range = lxr.read_ident();
+        const ident = lxr.slice(range);
+        const tok = TokenKind.keywords.get(ident) orelse TokenKind{ .Ident = range };
+        return tok;
+    }
+
+    fn read_number(lxr: *Lexer) TokenKind {
         const pos = lxr.pos;
         while (std.ascii.isDigit(lxr.ch)) {
             lxr.step();
         }
-        if (lxr.ch == '.' or lxr.ch == 'e') {
-            lxr.step();
-            return Token{ .Float = lxr.read_float(pos) };
-        }
-        return Token{ .Int = Range{ .start = pos, .end = lxr.pos } };
+        return TokenKind{ .Number = Range{ .start = pos, .end = lxr.pos } };
     }
 
-    fn read_float(lxr: *Lexer, start: u32) Range {
-        while (std.ascii.isDigit(lxr.ch)) {
-            lxr.step();
-        }
-        if (lxr.ch == 'e') {
-            lxr.step();
-            if (lxr.ch == '-' or lxr.ch == '+') {
-                lxr.step();
-            }
-            while (std.ascii.isDigit(lxr.ch)) {
-                lxr.step();
-            }
-        }
-        return Range{ .start = start, .end = lxr.pos };
-    }
-
-    fn read_string(lxr: *Lexer) Range {
-        const pos = lxr.pos + 1;
-        while (lxr.peek() != '"' and lxr.ch != 0) {
-            lxr.step();
-        }
-        lxr.step(); // Move past the closing quote
-        return Range{ .start = pos, .end = lxr.pos };
-    }
-
-    fn read_char(lxr: *Lexer) u32 {
-        const pos = lxr.pos + 1;
-        lxr.step();
-        lxr.expect('\'');
-        return pos;
-    }
-
-    fn read_symbol(lxr: *Lexer) Token {
+    fn read_symbol(lxr: *Lexer) TokenKind {
         // This function requires implementing if_peek logic, adapted to Zig.
         // Zig doesn't support Rust-like macros, so we use inline functions or conditionals.
         // For simplicity, let's just handle a couple of cases:
         return switch (lxr.ch) {
-            '<' => if (lxr.peek() == '=') Token.LtEq else Token.Lt,
-            '>' => if (lxr.peek() == '=') Token.GtEq else Token.Gt,
-            '=' => if (lxr.peek() == '=') Token.DblEq else Token.Eq,
-            '-' => Token.Minus,
-            '(' => Token.LParen,
-            ')' => Token.RParen,
-            '{' => Token.LSquirly,
-            '}' => Token.RSquirly,
-            '[' => Token.LBrace,
-            ']' => Token.RBrace,
-            '+' => Token.Plus,
-            '*' => Token.Mul,
-            '/' => Token.Div,
+            '<' => if (lxr.peek() == '=') TokenKind.LtEq else TokenKind.Lt,
+            '>' => if (lxr.peek() == '=') TokenKind.GtEq else TokenKind.Gt,
+            '=' => if (lxr.peek() == '=') TokenKind.DoubleEq else TokenKind.Eq,
+            '-' => TokenKind.Minus,
+            '(' => TokenKind.LParen,
+            ')' => TokenKind.RParen,
+            '{' => TokenKind.LSquirly,
+            '}' => TokenKind.RSquirly,
+            '+' => TokenKind.Plus,
+            '*' => TokenKind.Mul,
+            '/' => TokenKind.Div,
+            // TODO add proper handling for errors
             else => unreachable,
         };
     }
@@ -201,10 +222,10 @@ pub const Lexer = struct {
 };
 
 pub fn main() void {
-    var input: []const u8 = "(if (= (+ 1 2) 3 ) (5 + 6) (3 - 8))";
+    var input: []const u8 = "( (+ 1 2) 3 ) (5 + 6) (3 - 8))";
     var lxr = Lexer.new(input);
     var tok = lxr.next_token();
-    while (tok != Token.Eof) : (tok = lxr.next_token()) {
-        std.debug.print("{}\n", .{tok});
+    while (tok.kind != TokenKind.Eof) : (tok = lxr.next_token()) {
+        std.debug.print("{}\n", .{tok.kind});
     }
 }
