@@ -15,7 +15,7 @@ const Range = struct {
 
 pub const TokenKind = union(enum) {
     // For error handling and reporting
-    Ident: Range,
+    Identifier: Range,
     Number: Range,
     Lt,
     LtEq,
@@ -29,8 +29,9 @@ pub const TokenKind = union(enum) {
     Div,
     LParen,
     RParen,
-    LSquirly,
-    RSquirly,
+    LCurly,
+    RCurly,
+    Semicolon,
     Eof,
     KeywordBool,
     KeywordDelete,
@@ -65,6 +66,19 @@ pub const TokenKind = union(enum) {
         .{ "void", TokenKind.KeywordVoid },
         .{ "while", TokenKind.KeywordWhile },
     });
+
+    pub fn equals(self: TokenKind, other: TokenKind) bool {
+        if (@TypeOf(self) != @TypeOf(other)) return false;
+
+        // Check if the enum types are the same
+        if (@tagName(self) != @tagName(other)) return false;
+
+        // If the enum type carries additional data, compare it
+        switch (self) {
+            .Identifier, .Number => |data| return data == other.Identifier or data == other.Number,
+            else => return true,
+        }
+    }
 };
 
 pub const Token = struct {
@@ -108,6 +122,26 @@ pub const Lexer = struct {
 
     pub fn newFromStr(input: []const u8) Lexer {
         return Lexer.new(input, "");
+    }
+
+    pub fn tokenize(input: []const u8, filePath: []const u8) ![]Token {
+        var lexer = Lexer.new(input, filePath);
+        var tokens = std.ArrayList(Token).init(std.heap.page_allocator);
+        defer tokens.deinit();
+
+        while (true) {
+            const tok = try lexer.next_token();
+            if (tok.kind == TokenKind.Eof) {
+                break;
+            }
+            try tokens.append(tok);
+        }
+
+        return tokens.toOwnedSlice();
+    }
+
+    pub fn tokenizeFromStr(input: []const u8) ![]Token {
+        return Lexer.tokenize(input, "");
     }
 
     pub fn next_token(lxr: *Lexer) !Token {
@@ -186,7 +220,7 @@ pub const Lexer = struct {
     fn ident_or_builtin(lxr: *Lexer) TokenKind {
         const range = lxr.read_ident();
         const ident = lxr.slice(range);
-        const tok = TokenKind.keywords.get(ident) orelse TokenKind{ .Ident = range };
+        const tok = TokenKind.keywords.get(ident) orelse TokenKind{ .Identifier = range };
         return tok;
     }
 
@@ -209,11 +243,12 @@ pub const Lexer = struct {
             '-' => TokenKind.Minus,
             '(' => TokenKind.LParen,
             ')' => TokenKind.RParen,
-            '{' => TokenKind.LSquirly,
-            '}' => TokenKind.RSquirly,
+            '{' => TokenKind.LCurly,
+            '}' => TokenKind.RCurly,
             '+' => TokenKind.Plus,
             '*' => TokenKind.Mul,
             '/' => TokenKind.Div,
+            ';' => TokenKind.Semicolon,
             // TODO improve error handling
             else => {
                 if (lxr.file.len == 0) {
