@@ -13,6 +13,8 @@ const Range = struct {
     }
 };
 
+// TODO: include range in Token struct and have getter function for it
+// so we don't have to track/compute it for trivially known values (like keywords or `==`)
 pub const TokenKind = union(enum) {
     // For error handling and reporting
     Identifier: Range,
@@ -49,6 +51,10 @@ pub const TokenKind = union(enum) {
     KeywordVoid,
     KeywordWhile,
 
+    // NOTE: bool, int, void shouldn't be valid keywords, (valid /type/ names)
+    // and I feel that anything returned from the keywords map should be a keyword
+    // we should move checking for "int"/"bool"/"void" to the type checking/name resolution steps (type name resolution)
+    // when it exists
     pub const keywords = std.ComptimeStringMap(TokenKind, .{
         .{ "bool", TokenKind.KeywordBool },
         .{ "delete", TokenKind.KeywordDelete },
@@ -68,19 +74,17 @@ pub const TokenKind = union(enum) {
     });
 
     pub fn equals(self: TokenKind, other: TokenKind) bool {
-        if (@TypeOf(self) != @TypeOf(other)) return false;
+        const self_tag = @intFromEnum(self);
+        const other_tag = @intFromEnum(other);
 
-        // Check if the enum types are the same
-        if (@tagName(self) != @tagName(other)) return false;
-
-        // If the enum type carries additional data, compare it
-        switch (self) {
-            .Identifier, .Number => |data| return data == other.Identifier or data == other.Number,
-            else => return true,
-        }
+        return self_tag == other_tag;
     }
 };
 
+// TODO: remove unecessary fields
+// line (Range), column, line_no are only needed for errors and debug sybmols
+// and encode the same information. Could realistcally be replaced with a single `start_index`
+// and we can just reparse later. UX for that api / speed tradeoff TBD
 pub const Token = struct {
     kind: TokenKind,
     line_number: u32,
@@ -89,6 +93,7 @@ pub const Token = struct {
     file: []const u8,
 };
 
+// FIXME: handle comments
 pub const Lexer = struct {
     // For error handling and reporting
     line_number: u32,
@@ -156,7 +161,7 @@ pub const Lexer = struct {
                 } else if (lxr.ch == 0) {
                     break :blk TokenKind.Eof;
                 }
-                // TODO improve error handling
+                // TODO: improve error handling
                 if (lxr.file.len == 0) {
                     std.debug.print("error: unexpected character {any} in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
                 } else {
@@ -249,7 +254,7 @@ pub const Lexer = struct {
             '*' => TokenKind.Mul,
             '/' => TokenKind.Div,
             ';' => TokenKind.Semicolon,
-            // TODO improve error handling
+            // TODO: improve error handling
             else => {
                 if (lxr.file.len == 0) {
                     std.debug.print("error: unexpected character \'{c}\' in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
