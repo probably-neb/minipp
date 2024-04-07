@@ -273,6 +273,61 @@ pub const Lexer = struct {
     }
 };
 
+///////////
+// TESTS //
+///////////
+
+fn create_soa_tok_list(gpa: std.mem.Allocator, tokens: []Token) !std.MultiArrayList(Token) {
+    var new_tokens: std.MultiArrayList(Token) = .{};
+    try new_tokens.ensureTotalCapacity(gpa, tokens.len);
+    for (tokens) |token| {
+        new_tokens.appendAssumeCapacity(token);
+    }
+
+    return new_tokens;
+}
+
+fn expect_token_kinds_equals(expected: []TokenKind, actual: []Token) !void {
+    for (expected, 0..) |expected_kind, i| {
+        const actual_tok = actual.get(i) orelse return error.NotEnoughTokens;
+        const actual_kind = actual_tok.kind;
+        if (!expected_kind.equals(actual_kind.kind)) {
+            std.debug.print("error: expected token kind {any} but got {any}\n", .{ expected_kind, actual_kind.kind });
+            return error.TokensDoNotMatch;
+        }
+    }
+}
+
+fn print_tokens(tokens: []Token) void {
+    for (tokens) |token| {
+        std.debug.print("{}\n", .{token.kind});
+    }
+}
+
+const expect = std.testing.expect;
+
+test "add" {
+    const contents = "1+2";
+    const tokens = try Lexer.tokenizeFromStr(contents);
+    expect(tokens.len == 3) catch |err| {
+        std.debug.print("error: expected 3 tokens but got {d}\n", .{tokens.len});
+        std.debug.print("got tokens:\n", .{});
+        print_tokens(tokens);
+        return err;
+    };
+}
+
+test "simple-struct" {
+    const content = "struct SimpleStruct { int x; int y; }";
+    const tokens = try Lexer.tokenizeFromStr(content);
+    expect(tokens.len == 10) catch |err| {
+        std.debug.print("error: expected 10 tokens but got {d}\n", .{tokens.len});
+        std.debug.print("got tokens:\n", .{});
+        print_tokens(tokens);
+        return err;
+    };
+}
+
 pub fn main() !void {
     var input: []const u8 = "( (+ 1 2) 3 )@(5 + 6) (3 - 8))";
     var lxr = Lexer.newFromStr(input);
