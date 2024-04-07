@@ -157,6 +157,7 @@ pub const Lexer = struct {
             '0'...'9' => lxr.read_number(),
             else => blk: {
                 if (std.ascii.isPrint(lxr.ch)) {
+                    std.debug.print("reading symbol: {c}\n", .{lxr.ch});
                     break :blk try lxr.read_symbol();
                 } else if (lxr.ch == 0) {
                     break :blk TokenKind.Eof;
@@ -172,7 +173,6 @@ pub const Lexer = struct {
             },
         };
 
-        lxr.step();
         const tok = Token{ .kind = kind, .line = lxr.line, .line_number = lxr.line_number, .column = lxr.column, .file = lxr.file };
         return tok;
     }
@@ -186,6 +186,14 @@ pub const Lexer = struct {
 
         lxr.pos = lxr.read_pos;
         lxr.read_pos += 1;
+    }
+
+    fn step_if_next_is(lxr: *Lexer, ch: u8) bool {
+        if (lxr.peek() == ch) {
+            lxr.step();
+            return true;
+        }
+        return false;
     }
 
     fn peek(lxr: *Lexer) u8 {
@@ -238,13 +246,10 @@ pub const Lexer = struct {
     }
 
     fn read_symbol(lxr: *Lexer) !TokenKind {
-        // This function requires implementing if_peek logic, adapted to Zig.
-        // Zig doesn't support Rust-like macros, so we use inline functions or conditionals.
-        // For simplicity, let's just handle a couple of cases:
-        return switch (lxr.ch) {
-            '<' => if (lxr.peek() == '=') TokenKind.LtEq else TokenKind.Lt,
-            '>' => if (lxr.peek() == '=') TokenKind.GtEq else TokenKind.Gt,
-            '=' => if (lxr.peek() == '=') TokenKind.DoubleEq else TokenKind.Eq,
+        const tok: TokenKind = switch (lxr.ch) {
+            '<' => if (lxr.step_if_next_is('=')) TokenKind.LtEq else TokenKind.Lt,
+            '>' => if (lxr.step_if_next_is('=')) TokenKind.GtEq else TokenKind.Gt,
+            '=' => if (lxr.step_if_next_is('=')) TokenKind.DoubleEq else TokenKind.Eq,
             '-' => TokenKind.Minus,
             '(' => TokenKind.LParen,
             ')' => TokenKind.RParen,
@@ -265,6 +270,8 @@ pub const Lexer = struct {
                 return error.InvalidToken;
             },
         };
+        lxr.step();
+        return tok;
     }
 
     fn slice(lxr: *Lexer, range: Range) []const u8 {
