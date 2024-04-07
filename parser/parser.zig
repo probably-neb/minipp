@@ -37,7 +37,7 @@ pub const Parser = struct {
     }
 
     fn consumeToken(self: *Parser) !Token {
-        const token = self.tokens[self.readPos];
+        const token = self.tokens.get(self.readPos) orelse return error.TokenIndexOutOfBounds;
         self.pos = self.readPos;
         self.readPos += 1;
         return token;
@@ -79,7 +79,7 @@ pub const Parser = struct {
         // TODO: maybe figure out something better than just using the current token
         var result: Node = Node{ .kind = NodeKind.TypeDeclaration, .token = try self.currentToken() };
 
-        // TODO remov this
+        // TODO: remov this
         std.debug.print("tokens: {any}\n\n\n", .{tokens});
 
         var children = std.ArrayList(Node).init(allocator);
@@ -90,20 +90,18 @@ pub const Parser = struct {
         // Expect identifier
         try children.append(try self.expectIdentifier());
 
-        // Expect {
-        // TODO maybe don't keep the curly braces in the AST
-        try children.append(try self.expectToken(TokenKind.LCurly));
+        try self.expectToken(TokenKind.LCurly);
 
         // Expect nested declarations
         try children.append(try self.parseNestedDeclarations());
 
         // Expect }
-        // TODO maybe don't keep the curly braces in the AST
-        try children.append(try self.expectToken(TokenKind.RCurly));
+        // TODO: maybe don't keep the curly braces in the AST
+        try self.expectToken(TokenKind.RCurly);
 
         // Expect ;
-        // TODO maybe don't keep the semicolons in the AST
-        try children.append(try self.expectToken(TokenKind.Semicolon));
+        // TODO: maybe don't keep the semicolons in the AST
+        try self.expectToken(TokenKind.Semicolon);
 
         // convert to array
         result.children = children.toOwnedSlice();
@@ -118,13 +116,11 @@ pub const Parser = struct {
         var children = std.ArrayList(Node).init(allocator);
 
         try children.append(try self.parseDecl());
-        // TODO maybe don't keep the semicolons in the AST
-        try children.append(try self.expectToken(TokenKind.Semicolon));
+        try self.expectToken(TokenKind.Semicolon);
 
         while (try self.peekToken().kind != TokenKind.RCurly) {
             try children.append(try self.parseDecl());
-            // TODO maybe don't keep the semicolons in the AST
-            try children.append(try self.expectToken(TokenKind.Semicolon));
+            try self.expectToken(TokenKind.Semicolon);
         }
         result.children = children.toOwnedSlice();
         return result;
