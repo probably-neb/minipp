@@ -1,0 +1,289 @@
+const std = @import("std");
+
+const Range = struct {
+    start: u32,
+    end: u32,
+
+    pub fn new(start: u32, end: u32) Range {
+        return Range{ .start = start, .end = end };
+    }
+
+    pub fn getSubStrFromStr(self: Range, str: []const u8) []const u8 {
+        return str[self.start..self.end];
+    }
+};
+
+pub const TokenKind = union(enum) {
+    // For error handling and reporting
+    Identifier: Range,
+    Number: Range,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    Eq,
+    Dot,
+    DoubleEq,
+    NotEq,
+    Not,
+    Plus,
+    Minus,
+    Mul,
+    Div,
+    LParen,
+    RParen,
+    LCurly,
+    RCurly,
+    Semicolon,
+    Eof,
+    Or,
+    And,
+    KeywordBool,
+    KeywordDelete,
+    KeywordEndl,
+    KeywordFalse,
+    KeywordFun,
+    KeywordIf,
+    KeywordInt,
+    KeywordNew,
+    KeywordNull,
+    KeywordPrint,
+    KeywordRead,
+    KeywordReturn,
+    KeywordStruct,
+    KeywordTrue,
+    KeywordVoid,
+    KeywordWhile,
+
+    pub const keywords = std.ComptimeStringMap(TokenKind, .{
+        .{ "bool", TokenKind.KeywordBool },
+        .{ "delete", TokenKind.KeywordDelete },
+        .{ "endl", TokenKind.KeywordEndl },
+        .{ "false", TokenKind.KeywordFalse },
+        .{ "fun", TokenKind.KeywordFun },
+        .{ "if", TokenKind.KeywordIf },
+        .{ "int", TokenKind.KeywordInt },
+        .{ "new", TokenKind.KeywordNew },
+        .{ "null", TokenKind.KeywordNull },
+        .{ "print", TokenKind.KeywordPrint },
+        .{ "read", TokenKind.KeywordRead },
+        .{ "return", TokenKind.KeywordReturn },
+        .{ "struct", TokenKind.KeywordStruct },
+        .{ "true", TokenKind.KeywordTrue },
+        .{ "void", TokenKind.KeywordVoid },
+        .{ "while", TokenKind.KeywordWhile },
+    });
+
+    pub fn equals(self: TokenKind, other: TokenKind) bool {
+        if (@TypeOf(self) != @TypeOf(other)) return false;
+
+        // Check if the enum types are the same
+        if (@tagName(self) != @tagName(other)) return false;
+
+        // If the enum type carries additional data, compare it
+        switch (self) {
+            .Identifier, .Number => |data| return data == other.Identifier or data == other.Number,
+            else => return true,
+        }
+    }
+};
+
+pub const Token = struct {
+    kind: TokenKind,
+    line_number: u32,
+    line: Range,
+    column: u32,
+    file: []const u8,
+};
+
+pub const Lexer = struct {
+    // For error handling and reporting
+    line_number: u32,
+    column: u32,
+    file: []const u8,
+    line: Range,
+
+    // The current position in the input
+    pos: u32,
+    // The position that we are currently reading
+    read_pos: u32,
+    // The current character we are reading
+    ch: u8,
+    // The input string
+    input: []const u8,
+
+    pub fn new(input: []const u8, filePath: []const u8) Lexer {
+        var lxr = Lexer{
+            .line_number = 0,
+            .column = 0,
+            .file = filePath,
+            .line = Range{ .start = 0, .end = 0 },
+            .pos = 0,
+            .read_pos = 0,
+            .ch = 0,
+            .input = input,
+        };
+        lxr.step();
+        return lxr;
+    }
+
+    pub fn newFromStr(input: []const u8) Lexer {
+        return Lexer.new(input, "");
+    }
+
+    pub fn tokenize(input: []const u8, filePath: []const u8) ![]Token {
+        var lexer = Lexer.new(input, filePath);
+        var tokens = std.ArrayList(Token).init(std.heap.page_allocator);
+        defer tokens.deinit();
+
+        while (true) {
+            const tok = try lexer.next_token();
+            if (tok.kind == TokenKind.Eof) {
+                break;
+            }
+            try tokens.append(tok);
+        }
+
+        return tokens.toOwnedSlice();
+    }
+
+    pub fn tokenizeFromStr(input: []const u8) ![]Token {
+        return Lexer.tokenize(input, "");
+    }
+
+    pub fn next_token(lxr: *Lexer) !Token {
+        lxr.skip_whitespace();
+
+        const kind = switch (lxr.ch) {
+            'a'...'z', 'A'...'Z' => lxr.ident_or_builtin(),
+            '0'...'9' => lxr.read_number(),
+            else => blk: {
+                if (std.ascii.isPrint(lxr.ch)) {
+                    break :blk try lxr.read_symbol();
+                } else if (lxr.ch == 0) {
+                    break :blk TokenKind.Eof;
+                }
+                // TODO improve error handling
+                if (lxr.file.len == 0) {
+                    std.debug.print("error: unexpected character {any} in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
+                } else {
+                    std.debug.print("error: unexpected character {any} in line=\"{s}\" in file=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.file, lxr.line_number, lxr.column });
+                }
+                lxr.line.end = if (lxr.line.end == 0) @truncate(lxr.input.len) else lxr.line.end;
+                return error.InvalidToken;
+            },
+        };
+
+        lxr.step();
+        const tok = Token{ .kind = kind, .line = lxr.line, .line_number = lxr.line_number, .column = lxr.column, .file = lxr.file };
+        return tok;
+    }
+
+    fn step(lxr: *Lexer) void {
+        if (lxr.read_pos >= lxr.input.len) {
+            lxr.ch = 0;
+        } else {
+            lxr.ch = lxr.input[lxr.read_pos];
+        }
+
+        lxr.pos = lxr.read_pos;
+        lxr.read_pos += 1;
+    }
+
+    fn peek(lxr: *Lexer) u8 {
+        if (lxr.read_pos >= lxr.input.len) {
+            return 0;
+        } else {
+            return lxr.input[lxr.read_pos];
+        }
+    }
+
+    fn skip_whitespace(lxr: *Lexer) void {
+        while (true) {
+            switch (lxr.ch) {
+                '\n' => {
+                    lxr.line_number += 1;
+                    lxr.column = 0;
+                    lxr.line.start = if (lxr.line.end == 0) 0 else lxr.line.end + 1;
+                    lxr.line.end = lxr.pos;
+                },
+                ' ', '\t', '\r' => {
+                    lxr.column += 1;
+                },
+                else => break,
+            }
+            lxr.step();
+        }
+    }
+
+    fn read_ident(lxr: *Lexer) Range {
+        const pos = lxr.pos;
+        while (std.ascii.isAlphabetic(lxr.ch)) {
+            lxr.step();
+        }
+        return Range{ .start = pos, .end = lxr.pos };
+    }
+
+    fn ident_or_builtin(lxr: *Lexer) TokenKind {
+        const range = lxr.read_ident();
+        const ident = lxr.slice(range);
+        const tok = TokenKind.keywords.get(ident) orelse TokenKind{ .Identifier = range };
+        return tok;
+    }
+
+    fn read_number(lxr: *Lexer) TokenKind {
+        const pos = lxr.pos;
+        while (std.ascii.isDigit(lxr.ch)) {
+            lxr.step();
+        }
+        return TokenKind{ .Number = Range{ .start = pos, .end = lxr.pos } };
+    }
+
+    fn read_symbol(lxr: *Lexer) !TokenKind {
+        // This function requires implementing if_peek logic, adapted to Zig.
+        // Zig doesn't support Rust-like macros, so we use inline functions or conditionals.
+        // For simplicity, let's just handle a couple of cases:
+        return switch (lxr.ch) {
+            '<' => if (lxr.peek() == '=') TokenKind.LtEq else TokenKind.Lt,
+            '>' => if (lxr.peek() == '=') TokenKind.GtEq else TokenKind.Gt,
+            '=' => if (lxr.peek() == '=') TokenKind.DoubleEq else TokenKind.Eq,
+            '|' => if (lxr.peek() == '|') TokenKind.Or else error.InvalidToken,
+            '&' => if (lxr.peek() == '&') TokenKind.And else error.InvalidToken,
+            '!' => if (lxr.peek() == '=') TokenKind.NotEq else TokenKind.Not,
+            '-' => TokenKind.Minus,
+            '(' => TokenKind.LParen,
+            ')' => TokenKind.RParen,
+            '{' => TokenKind.LCurly,
+            '}' => TokenKind.RCurly,
+            '+' => TokenKind.Plus,
+            '*' => TokenKind.Mul,
+            '/' => TokenKind.Div,
+            ';' => TokenKind.Semicolon,
+            '.' => TokenKind.Dot,
+            // TODO improve error handling
+            else => {
+                if (lxr.file.len == 0) {
+                    std.debug.print("error: unexpected character \'{c}\' in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
+                } else {
+                    std.debug.print("error: unexpected character \'{c}\' in line=\"{s}\" in file=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.file, lxr.line_number, lxr.column });
+                }
+                lxr.line.end = if (lxr.line.end == 0) @truncate(lxr.input.len) else lxr.line.end;
+                return error.InvalidToken;
+            },
+        };
+    }
+
+    fn slice(lxr: *Lexer, range: Range) []const u8 {
+        const end = @min(range.end, lxr.input.len);
+        return lxr.input[range.start..end];
+    }
+};
+
+pub fn main() !void {
+    var input: []const u8 = "( (+ 1 2) 3 )@(5 + 6) (3 - 8))";
+    var lxr = Lexer.newFromStr(input);
+    var tok = try lxr.next_token();
+    while (tok.kind != TokenKind.Eof) : (tok = try lxr.next_token()) {
+        std.debug.print("{}\n", .{tok.kind});
+    }
+}
