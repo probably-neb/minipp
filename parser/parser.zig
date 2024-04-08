@@ -263,7 +263,11 @@ pub const Parser = struct {
 
     // Functions = { Function }*
     pub fn parseFunctions(self: *Parser) !Node {
+<<<<<<< HEAD
         var result: Node = Node{ .kind = NodeKind.Functions, .token = try self.currentToken() };
+=======
+        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+>>>>>>> implemented rough outline for all ast parser types
         var children = std.ArrayList(Node).init(allocator);
 
         // While not EOF then parse function
