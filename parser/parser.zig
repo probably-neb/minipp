@@ -72,15 +72,11 @@ pub const Parser = struct {
     idMap: std.StringHashMap(bool),
 
     fn peekToken(self: *Parser) !Token {
-        return self.tokens[self.readPos];
-    }
-
-    fn peekNToken(self: *Parser, n: usize) !Token {
-        return self.tokens[self.readPos + n];
+        return self.tokens.get(self.readPos) orelse return error.TokenIndexOutOfBounds;
     }
 
     fn currentToken(self: *Parser) !Token {
-        return self.tokens[self.pos];
+        return self.tokens.get(self.pos) orelse return error.TokenIndexOutOfBounds;
     }
 
     fn consumeToken(self: *Parser) !Token {
