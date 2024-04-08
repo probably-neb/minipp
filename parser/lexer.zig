@@ -1,5 +1,14 @@
 const std = @import("std");
 
+/// Print function that only prints in test mode. Useful for printing info
+/// for debugging purposes that you don't want to show up when not running tests
+fn test_print(comptime fmt: []const u8, args: anytype) void {
+    const builtin = @import("builtin");
+    if (builtin.is_test) {
+        std.debug.print(fmt, args);
+    }
+}
+
 const Range = struct {
     start: u32,
     end: u32,
@@ -15,10 +24,10 @@ const Range = struct {
 
 // TODO: include range in Token struct and have getter function for it
 // so we don't have to track/compute it for trivially known values (like keywords or `==`)
-pub const TokenKind = union(enum) {
+pub const TokenKind = enum {
     // For error handling and reporting
-    Identifier: Range,
-    Number: Range,
+    Identifier,
+    Number,
     Lt,
     LtEq,
     Gt,
@@ -87,6 +96,10 @@ pub const TokenKind = union(enum) {
 // and we can just reparse later. UX for that api / speed tradeoff TBD
 pub const Token = struct {
     kind: TokenKind,
+    // TODO: create getter method for range that compute it for trivial cases
+    // and returns precomputed value if present.
+    // NOTE - must assert that the range is valid in non-trivial cases (Number/Identifier)
+    _range: ?Range,
     line_number: u32,
     line: Range,
     column: u32,
@@ -109,6 +122,17 @@ pub const Lexer = struct {
     ch: u8,
     // The input string
     input: []const u8,
+
+    /// Internal struct for holding info required to construct a full token
+    /// Used as a DTO (data transfer object)
+    /// A good example is the `ident_or_builtin` function which returns
+    /// the keyword token type and a null range if it was a keyword
+    /// (because range of keyword is trivially known based on start + len)
+    /// or the `Identifier` token type and the range if it was an ident
+    const TokInfo = struct {
+        kind: TokenKind,
+        range: ?Range,
+    };
 
     pub fn new(input: []const u8, filePath: []const u8) Lexer {
         var lxr = Lexer{
@@ -152,15 +176,18 @@ pub const Lexer = struct {
     pub fn next_token(lxr: *Lexer) !Token {
         lxr.skip_whitespace();
 
-        const kind = switch (lxr.ch) {
+        const info: TokInfo = switch (lxr.ch) {
             'a'...'z', 'A'...'Z' => lxr.ident_or_builtin(),
-            '0'...'9' => lxr.read_number(),
+            '0'...'9' => .{ .kind = TokenKind.Number, .range = lxr.read_number() },
             else => blk: {
                 if (std.ascii.isPrint(lxr.ch)) {
-                    std.debug.print("reading symbol: {c}\n", .{lxr.ch});
-                    break :blk try lxr.read_symbol();
-                } else if (lxr.ch == 0) {
-                    break :blk TokenKind.Eof;
+                    break :blk .{ .kind = try lxr.read_symbol(), .range = null };
+                }
+                if (lxr.ch == 0) {
+                    // TODO: return null and make return type ?Token
+                    // so that we can use `while (lxr.next_token()) |tok|`
+                    // pattern
+                    break :blk .{ .kind = TokenKind.Eof, .range = null };
                 }
                 // TODO: improve error handling
                 if (lxr.file.len == 0) {
@@ -173,7 +200,7 @@ pub const Lexer = struct {
             },
         };
 
-        const tok = Token{ .kind = kind, .line = lxr.line, .line_number = lxr.line_number, .column = lxr.column, .file = lxr.file };
+        const tok = Token{ .kind = info.kind, ._range = info.range, .line = lxr.line, .line_number = lxr.line_number, .column = lxr.column, .file = lxr.file };
         return tok;
     }
 
@@ -230,35 +257,38 @@ pub const Lexer = struct {
         return Range{ .start = pos, .end = lxr.pos };
     }
 
-    fn ident_or_builtin(lxr: *Lexer) TokenKind {
+    fn ident_or_builtin(lxr: *Lexer) TokInfo {
         const range = lxr.read_ident();
         const ident = lxr.slice(range);
-        const tok = TokenKind.keywords.get(ident) orelse TokenKind{ .Identifier = range };
-        return tok;
+        const kw = TokenKind.keywords.get(ident);
+        if (kw) |kw_kind| {
+            return .{ .kind = kw_kind, .range = null };
+        }
+        return .{ .kind = .Identifier, .range = range };
     }
 
-    fn read_number(lxr: *Lexer) TokenKind {
+    fn read_number(lxr: *Lexer) Range {
         const pos = lxr.pos;
         while (std.ascii.isDigit(lxr.ch)) {
             lxr.step();
         }
-        return TokenKind{ .Number = Range{ .start = pos, .end = lxr.pos } };
+        return Range{ .start = pos, .end = lxr.pos };
     }
 
     fn read_symbol(lxr: *Lexer) !TokenKind {
         const tok: TokenKind = switch (lxr.ch) {
-            '<' => if (lxr.step_if_next_is('=')) TokenKind.LtEq else TokenKind.Lt,
-            '>' => if (lxr.step_if_next_is('=')) TokenKind.GtEq else TokenKind.Gt,
-            '=' => if (lxr.step_if_next_is('=')) TokenKind.DoubleEq else TokenKind.Eq,
-            '-' => TokenKind.Minus,
-            '(' => TokenKind.LParen,
-            ')' => TokenKind.RParen,
-            '{' => TokenKind.LCurly,
-            '}' => TokenKind.RCurly,
-            '+' => TokenKind.Plus,
-            '*' => TokenKind.Mul,
-            '/' => TokenKind.Div,
-            ';' => TokenKind.Semicolon,
+            '<' => if (lxr.step_if_next_is('=')) .LtEq else .Lt,
+            '>' => if (lxr.step_if_next_is('=')) .GtEq else .Gt,
+            '=' => if (lxr.step_if_next_is('=')) .DoubleEq else .Eq,
+            '-' => .Minus,
+            '(' => .LParen,
+            ')' => .RParen,
+            '{' => .LCurly,
+            '}' => .RCurly,
+            '+' => .Plus,
+            '*' => .Mul,
+            '/' => .Div,
+            ';' => .Semicolon,
             // TODO: improve error handling
             else => {
                 if (lxr.file.len == 0) {
