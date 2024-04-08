@@ -158,7 +158,7 @@ pub const Parser = struct {
         return result;
     }
 
-    // NestedDeclarations = { Decl ";" }+
+    // NestedDecl = { Decl ";" }+
     pub fn parseNestedDeclarations(self: *Parser) !Node {
         // init
         var result: Node = Node{ .kind = NodeKind.NestedDecl, .token = try self.currentToken() };
@@ -177,9 +177,9 @@ pub const Parser = struct {
         return result;
     }
 
-    // Declaration = Type Identifier
+    // Decl = Type Identifier
     pub fn parseDecl(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.NestedDecl, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Decl, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         try children.append(try self.parseType());
@@ -192,7 +192,7 @@ pub const Parser = struct {
 
     // Type = "int" | "bool" | "struct" Identifier
     pub fn parseType(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.NestedDecl, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Type, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         switch (self.consumeToken()) {
@@ -267,7 +267,7 @@ pub const Parser = struct {
 
     // Functions = { Function }*
     pub fn parseFunctions(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Functions, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // While not EOF then parse function
@@ -282,7 +282,7 @@ pub const Parser = struct {
 
     // Function = "fun" Identifier Paramaters ReturnType "{" Declarations StatementList "}"
     pub fn parseFunction(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Function, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect fun
@@ -316,7 +316,7 @@ pub const Parser = struct {
 
     // Parameters = "(" (Decl ("," Decl)* )? ")"
     pub fn parseParameters(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Parameters, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect (
@@ -341,7 +341,7 @@ pub const Parser = struct {
 
     // ReturnType = Type | "void"
     pub fn parseReturnType(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.ReturnType, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         switch (self.currentToken().kind) {
@@ -359,7 +359,7 @@ pub const Parser = struct {
 
     // Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation
     pub fn parseStatement(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Statement, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         switch (self.currentToken().kind) {
@@ -409,7 +409,7 @@ pub const Parser = struct {
 
     // Block = "{" StatementList "}"
     pub fn parseBlock(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Block, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect {
@@ -429,7 +429,7 @@ pub const Parser = struct {
 
     // Assignment = LValue = (Expression | "read") ";"
     pub fn parseAssignment(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Assignment, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect LValue
@@ -523,7 +523,7 @@ pub const Parser = struct {
 
     // While = "while" "(" Expression ")" Block
     pub fn parseWhile(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.While, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect while
@@ -547,7 +547,7 @@ pub const Parser = struct {
 
     // Delete = "delete" Expression ";"
     pub fn parseDelete(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Delete, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect delete
@@ -565,7 +565,7 @@ pub const Parser = struct {
 
     // Return = "return" (Expression)?  ";"
     pub fn parseReturn(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Return, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect return
@@ -586,7 +586,7 @@ pub const Parser = struct {
 
     // Invocation = Identifier Arguments ";"
     pub fn parseIdentifier(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Invocation, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect Identifier
@@ -604,7 +604,7 @@ pub const Parser = struct {
 
     // LValue = Identifier ("." Identifier)*
     pub fn parseLValue(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.LValue, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect Identifier
@@ -624,7 +624,7 @@ pub const Parser = struct {
 
     // Expression = BoolTerm ("||" BoolTerm)*
     pub fn parseExpression(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Expression, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect BoolTerm
@@ -644,7 +644,7 @@ pub const Parser = struct {
 
     // Boolterm = EqTerm ("&&" EqTerm)*
     pub fn parseBoolTerm(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.BoolTerm, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect EqTerm
@@ -664,7 +664,7 @@ pub const Parser = struct {
 
     // EqTerm = RelTerm (("==" | "!=") RelTerm)*
     pub fn parseEqTerm(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.EqTerm, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect RelTerm
@@ -702,7 +702,7 @@ pub const Parser = struct {
 
     // RelTerm = Simple (("<" | ">" | ">=" | "<=") Simple)*
     pub fn parseRelTerm(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.RelTerm, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect Simple
@@ -756,7 +756,7 @@ pub const Parser = struct {
 
     // Simple = Term (("+" | "-") Term)*
     pub fn parseSimple(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Simple, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect Term
@@ -793,7 +793,7 @@ pub const Parser = struct {
 
     // Term = Unary (("*" | "/") Unary)*
     pub fn parseTerm(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Term, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect Unary
@@ -830,7 +830,7 @@ pub const Parser = struct {
 
     // Unary = ("!" | "-")* Selector
     pub fn parseUnary(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Unary, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect ("!" | "-")*
@@ -860,7 +860,7 @@ pub const Parser = struct {
 
     // Selector = Factor ("." Identifier)*
     pub fn parseSelector(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Selector, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         // Expect Factor
@@ -880,7 +880,7 @@ pub const Parser = struct {
 
     // Factor = "(" Expression ")" | Identifier (Arguments)? | Number | "true" | "false" | "new" Identifier | "null"
     pub fn parseFactor(self: *Parser) !Node {
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
+        var result: Node = Node{ .kind = NodeKind.Factor, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
         switch (self.currentToken().kind) {
