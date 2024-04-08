@@ -99,6 +99,8 @@ pub const Token = struct {
     // TODO: create getter method for range that compute it for trivial cases
     // and returns precomputed value if present.
     // NOTE - must assert that the range is valid in non-trivial cases (Number/Identifier)
+    // ALSO NOTE - It's not that much work to compute it for everythnig
+    // and takes up the same amount of memory
     _range: ?Range,
     line_number: u32,
     line: Range,
@@ -178,7 +180,7 @@ pub const Lexer = struct {
 
         const info: TokInfo = switch (lxr.ch) {
             'a'...'z', 'A'...'Z' => lxr.ident_or_builtin(),
-            '0'...'9' => .{ .kind = TokenKind.Number, .range = lxr.read_number() },
+            '0'...'9' => .{ .kind = TokenKind.Number, .range = try lxr.read_number() },
             else => blk: {
                 if (std.ascii.isPrint(lxr.ch)) {
                     break :blk .{ .kind = try lxr.read_symbol(), .range = null };
@@ -251,7 +253,10 @@ pub const Lexer = struct {
 
     fn read_ident(lxr: *Lexer) Range {
         const pos = lxr.pos;
-        while (std.ascii.isAlphabetic(lxr.ch)) {
+        // NOTE: no need to check first char is not numeric here
+        // because if first char was numeric we would have called
+        // read_number instead
+        while (std.ascii.isAlphanumeric(lxr.ch)) {
             lxr.step();
         }
         return Range{ .start = pos, .end = lxr.pos };
@@ -262,12 +267,12 @@ pub const Lexer = struct {
         const ident = lxr.slice(range);
         const kw = TokenKind.keywords.get(ident);
         if (kw) |kw_kind| {
-            return .{ .kind = kw_kind, .range = null };
+            return .{ .kind = kw_kind, .range = range };
         }
         return .{ .kind = .Identifier, .range = range };
     }
 
-    fn read_number(lxr: *Lexer) Range {
+    fn read_number(lxr: *Lexer) !Range {
         const pos = lxr.pos;
         while (std.ascii.isDigit(lxr.ch)) {
             lxr.step();
@@ -314,25 +319,31 @@ pub const Lexer = struct {
 // TESTS //
 ///////////
 
-fn create_soa_tok_list(gpa: std.mem.Allocator, tokens: []Token) !std.MultiArrayList(Token) {
-    var new_tokens: std.MultiArrayList(Token) = .{};
-    try new_tokens.ensureTotalCapacity(gpa, tokens.len);
-    for (tokens) |token| {
-        new_tokens.appendAssumeCapacity(token);
+fn expect_token_kinds_equals(expected: []const TokenKind, actual: []Token) !void {
+    if (expected.len != actual.len) {
+        std.debug.print("error: expected {d} tokens but got {d}\n", .{ expected.len, actual.len });
+        std.debug.print("expected tokens:\n{any}\n", .{expected});
+        std.debug.print("got tokens:\n{any}\n", .{actual});
+        return error.TokensDoNotMatch;
     }
-
-    return new_tokens;
-}
-
-fn expect_token_kinds_equals(expected: []TokenKind, actual: []Token) !void {
     for (expected, 0..) |expected_kind, i| {
-        const actual_tok = actual.get(i) orelse return error.NotEnoughTokens;
+        if (i >= actual.len) {
+            std.debug.print("error: expected token kind {any} but got EOF\n", .{expected_kind});
+            return error.NotEnoughTokens;
+        }
+        const actual_tok = actual[i];
         const actual_kind = actual_tok.kind;
-        if (!expected_kind.equals(actual_kind.kind)) {
-            std.debug.print("error: expected token kind {any} but got {any}\n", .{ expected_kind, actual_kind.kind });
+        if (!expected_kind.equals(actual_kind)) {
+            std.debug.print("error: expected token kind {any} but got {any}\n", .{ expected_kind, actual_kind });
             return error.TokensDoNotMatch;
         }
     }
+}
+
+fn expect_results_in_tokens(contents: []const u8, expected: []const TokenKind) ![]Token {
+    const tokens = try Lexer.tokenizeFromStr(contents);
+    try expect_token_kinds_equals(expected, tokens);
+    return tokens;
 }
 
 fn print_tokens(tokens: []Token) void {
@@ -344,32 +355,94 @@ fn print_tokens(tokens: []Token) void {
 const expect = std.testing.expect;
 
 test "add" {
-    const contents = "1+2";
-    const tokens = try Lexer.tokenizeFromStr(contents);
-    expect(tokens.len == 3) catch |err| {
-        std.debug.print("error: expected 3 tokens but got {d}\n", .{tokens.len});
-        std.debug.print("got tokens:\n", .{});
-        print_tokens(tokens);
-        return err;
-    };
+    _ = try expect_results_in_tokens("1+2", &[_]TokenKind{
+        .Number,
+        .Plus,
+        .Number,
+    });
 }
 
-test "simple-struct" {
+test "simple_struct" {
     const content = "struct SimpleStruct { int x; int y; }";
-    const tokens = try Lexer.tokenizeFromStr(content);
-    expect(tokens.len == 10) catch |err| {
-        std.debug.print("error: expected 10 tokens but got {d}\n", .{tokens.len});
-        std.debug.print("got tokens:\n", .{});
-        print_tokens(tokens);
-        return err;
-    };
+    const tokens = try expect_results_in_tokens(content, &[_]TokenKind{
+        .KeywordStruct,
+        .Identifier,
+        .LCurly,
+        .KeywordInt,
+        .Identifier,
+        .Semicolon,
+        .KeywordInt,
+        .Identifier,
+        .Semicolon,
+        .RCurly,
+    });
+    const ident_token = tokens[1];
+    try expect(ident_token.kind == TokenKind.Identifier);
+
+    if (ident_token._range) |range| {
+        try expect(std.mem.eql(u8, range.getSubStrFromStr(content), "SimpleStruct"));
+    } else {
+        std.debug.print("error: expected range for identifier token but got none\n", .{});
+        return error.NoRangeForToken;
+    }
 }
 
-pub fn main() !void {
-    var input: []const u8 = "( (+ 1 2) 3 )@(5 + 6) (3 - 8))";
-    var lxr = Lexer.newFromStr(input);
-    var tok = try lxr.next_token();
-    while (tok.kind != TokenKind.Eof) : (tok = try lxr.next_token()) {
-        std.debug.print("{}\n", .{tok.kind});
-    }
+test "ident_can_not_start_with_num" {
+    // NOTE: we should probably decide on how to handle this
+    // OPTION A: do harder validation work in lexer for checking if
+    //           thing after number is valid token (i.e. parsings job)
+    //           and recognize it is invalid number
+    // OPTION B: do easier validation in parser and don't identify it as
+    //           invalid number, rather number,ident as invalid sequence
+    //           THIS IS THE EASIEST AND THEREFORE BEST OPTION
+    // OPTION C: do harder validation in parser, when identifying
+    //           invalid sequence from (B), checking if it does not
+    //           have whitespace before it and is therefore an invalid number
+    //           not invalid sequence
+
+    _ = try expect_results_in_tokens("1foo", &[_]TokenKind{ .Number, .Identifier });
+}
+
+test "all_binops" {
+    _ = try expect_results_in_tokens("+ - * / <= >= = ==", &[_]TokenKind{
+        .Plus,
+        .Minus,
+        .Mul,
+        .Div,
+        .LtEq,
+        .GtEq,
+        .Eq,
+        .DoubleEq,
+    });
+}
+
+test "invalid_char" {
+    const contents = "%foo;";
+    try std.testing.expectError(error.InvalidToken, Lexer.tokenizeFromStr(contents));
+}
+
+test "invalid_char_in_ident" {
+    const contents = "foo%bar";
+    try std.testing.expectError(error.InvalidToken, Lexer.tokenizeFromStr(contents));
+}
+
+test "all_keywords" {
+    _ = try expect_results_in_tokens("delete endl false fun if new null read return struct true while", &[_]TokenKind{
+        .KeywordDelete,
+        .KeywordEndl,
+        .KeywordFalse,
+        .KeywordFun,
+        .KeywordIf,
+        .KeywordNew,
+        .KeywordNull,
+        .KeywordRead,
+        .KeywordReturn,
+        .KeywordStruct,
+        .KeywordTrue,
+        .KeywordWhile,
+    });
+}
+
+test "ident_with_num" {
+    _ = try expect_results_in_tokens("foo1", &[_]TokenKind{.Identifier});
 }
