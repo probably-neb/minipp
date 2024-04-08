@@ -828,7 +828,6 @@ pub const Parser = struct {
     pub fn parseUnary(self: *Parser) !Node {
         var result: Node = Node{ .kind = NodeKind.Unary, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
-
         // Expect ("!" | "-")*
         while (try self.currentToken().kind == TokenKind.Not or self.currentToken().kind == TokenKind.Minus) {
             switch (self.currentToken().kind) {
