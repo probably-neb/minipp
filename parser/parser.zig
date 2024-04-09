@@ -242,24 +242,56 @@ pub const Parser = struct {
             }
         }
 
+        // Init indexes
+        var programIndex = try self.astAppend(NodeKind.Program, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
+
         // Expect Types
-        while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
-            // TODO: we can do something with all the indexs returned,
-            // but for now we will just ignore them
-            _ = try self.parseTypeDeclaration();
-        }
+        lhsIndex = try self.parseTypes();
 
         // Expect Declarations
-        //try children.append(try self.parseDeclarations());
+        rhsIndex = try self.parseDeclarations();
 
         // Expect Functions
-        //try children.append(try self.parseFunctions());
+        rhsIndex = try self.parseFunctions();
 
         // Expect EOF
         // TODO: make sure that Eof gets assigned propperly
         try self.expectToken(TokenKind.Eof);
 
-        //result.children = try children.toOwnedSlice();
+        // assign the lhs and rhs
+        self.ast.items[programIndex].lhs = lhsIndex;
+        self.ast.items[programIndex].rhs = rhsIndex;
+    }
+
+    // Types = { TypeDeclaration }*
+    pub fn parseTypes(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing Types\n", .{});
+                std.debug.print("Defined as: Types = { TypeDeclaration }*\n", .{});
+            }
+        }
+        // Init indexes
+        var typesIndex = try self.astAppend(NodeKind.Types, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
+
+        // While not EOF then parse TypeDeclaration
+        // Expect (TypeDeclaration)*
+        while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
+            if (lhsIndex == null) {
+                lhsIndex = try self.parseTypeDeclaration();
+            } else {
+                rhsIndex = try self.parseTypeDeclaration();
+            }
+        }
+        // assign the lhs and rhs
+        self.ast.items[typesIndex].lhs = lhsIndex;
+        self.ast.items[typesIndex].rhs = rhsIndex;
+
+        return typesIndex;
     }
 
     // TypeDeclaration = "struct" Identifier "{" NestedDeclarations "}" ";"
@@ -478,7 +510,6 @@ pub const Parser = struct {
         return declarationIndex;
     }
 
-    /////////// UNTOUCHED TO REFACTOR ////////////////////////
     // Functions = ( Function )*
     pub fn parseFunctions(self: *Parser) !Node {
         errdefer {
@@ -487,18 +518,26 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Functions = ( Function )*\n", .{});
             }
         }
-
-        var result: Node = Node{ .kind = NodeKind.Functions, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // init indexes
+        var functionsIndex = try self.astAppend(NodeKind.Functions, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // While not EOF then parse function
         // Expect (Function)*
         while ((try self.currentToken()).kind == TokenKind.KeywordFun) {
-            try children.append(try self.parseFunction());
+            if (lhsIndex == null) {
+                lhsIndex = try self.parseFunction();
+            } else {
+                rhsIndex = try self.parseFunction();
+            }
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[functionsIndex].lhs = lhsIndex;
+        self.ast.items[functionsIndex].rhs = rhsIndex;
+
+        return functionsIndex;
     }
 
     // Function = "fun" Identifier Paramaters ReturnType "{" Declarations StatementList "}"
@@ -509,35 +548,38 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Function = \"fun\" Identifier Paramaters ReturnType \"{{\" Declarations StatementList \"}}\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Function, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var functionIndex = try self.astAppend(NodeKind.Function, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect fun
         try self.expectToken(TokenKind.KeywordFun);
 
         // Expect Identifier
-        try children.append(try self.expectIdentifier());
+        lhsIndex = try self.astAppendNode(try self.expectIdentifier());
 
         // Expect Parameters
-        try children.append(try self.parseParameters());
+        rhsIndex = try self.parseParameters();
 
         // Expect ReturnType
-        try children.append(try self.parseReturnType());
+        rhsIndex = try self.parseReturnType();
 
         // Expect {
         try self.expectToken(TokenKind.LCurly);
 
         // Expect Declarations
-        try children.append(try self.parseDeclarations());
+        rhsIndex = try self.parseDeclarations();
 
         // Expect StatementList
-        try children.append(try self.parseStatementList());
+        rhsIndex = try self.parseStatementList();
 
         // Expect }
         try self.expectToken(TokenKind.RCurly);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[functionIndex].lhs = lhsIndex;
+        self.ast.items[functionIndex].rhs = rhsIndex;
     }
 
     // Parameters = "(" (Decl ("," Decl)* )? ")"
@@ -548,30 +590,33 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Parameters = \"(\" (Decl (\",\" Decl)* )? \")\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Parameters, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var parametersIndex = try self.astAppend(NodeKind.Parameters, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect (
         try self.expectToken(TokenKind.LParen);
 
         while (try self.isCurrentTokenAType()) {
             // Expect Decl
-            try children.append(try self.parseDecl());
+            lhsIndex = try self.parseDecl();
             // Expect ("," Decl)*
 
             while ((try self.currentToken()).kind == TokenKind.Comma) {
                 // Expect ,
                 try self.expectToken(TokenKind.Comma);
                 // Expect Decl
-                try children.append(try self.parseDecl());
+                rhsIndex = try self.parseDecl();
             }
         }
 
         // Expect )
         try self.expectToken(TokenKind.RParen);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[parametersIndex].lhs = lhsIndex;
+        self.ast.items[parametersIndex].rhs = rhsIndex;
     }
 
     // ReturnType = Type | "void"
@@ -582,23 +627,31 @@ pub const Parser = struct {
                 std.debug.print("Defined as: ReturnType = Type | \"void\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.ReturnType, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var returnTypeIndex = try self.astAppend(NodeKind.ReturnType, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
+        // Token to switch on
         const token = try self.currentToken();
         switch (token.kind) {
             TokenKind.KeywordVoid => {
-                std.debug.print("lksjdlfjsdlfkjs\n\n\n\nvoid\n", .{});
-                try children.append(Node{ .kind = NodeKind.Void, .token = try self.consumeToken() });
+                lhsIndex = try self.astAppend(NodeKind.Void, token);
             },
             else => {
-                std.debug.print("\n\n\n\n\ntoken {any}\n", .{(try self.currentToken())});
-                try children.append(try self.parseType());
+                if (lhsIndex == null) {
+                    lhsIndex = try self.parseType();
+                } else {
+                    rhsIndex = try self.parseType();
+                }
             },
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[returnTypeIndex].lhs = lhsIndex;
+        self.ast.items[returnTypeIndex].rhs = rhsIndex;
+
+        return returnTypeIndex;
     }
 
     // Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation
@@ -609,44 +662,47 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Statement, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var statementIndex = try self.astAppend(NodeKind.Statement, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
-        switch ((try self.currentToken()).kind) {
+        const token = try self.currentToken();
+        switch (token.kind) {
             // Block
             TokenKind.LCurly => {
-                try children.append(try self.parseBlock());
+                lhsIndex = try self.parseBlock();
             },
             // Invocation | Assignment
             TokenKind.Identifier => {
                 switch ((try self.peekToken()).kind) {
                     TokenKind.LParen => {
-                        try children.append(try self.parseInvocation());
+                        lhsIndex = try self.parseInvocation();
                     },
                     else => {
-                        try children.append(try self.parseAssignment());
+                        lhsIndex = try self.parseAssignment();
                     },
                 }
             },
             // ConditionalIf | ConditionalIfElse
             TokenKind.KeywordIf => {
-                try children.append(try self.parseConditionals());
+                lhsIndex = try self.parseConditionals();
             },
             // While
             TokenKind.KeywordWhile => {
-                try children.append(try self.parseWhile());
+                lhsIndex = try self.parseWhile();
             },
             // Delete
             TokenKind.KeywordDelete => {
-                try children.append(try self.parseDelete());
+                lhsIndex = try self.parseDelete();
             },
             // Return
             TokenKind.KeywordReturn => {
-                try children.append(try self.parseReturn());
+                lhsIndex = try self.parseReturn();
             },
             // Print | PrintLn
             TokenKind.KeywordPrint => {
-                try children.append(try self.parsePrints());
+                lhsIndex = try self.parsePrints();
             },
             else => {
                 // TODO: make this error like the others
@@ -659,8 +715,9 @@ pub const Parser = struct {
             },
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[statementIndex].lhs = lhsIndex;
+        self.ast.items[statementIndex].rhs = rhsIndex;
     }
 
     // StatementList = ( Statement )*
@@ -671,17 +728,26 @@ pub const Parser = struct {
                 std.debug.print("Defined as: StatementList = ( Statement )*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.StatementList, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var statementListIndex = try self.astAppend(NodeKind.StatementList, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // While not EOF then parse statement
         // Expect (Statement)*
         while ((try self.currentToken()).kind != TokenKind.RCurly) {
-            try children.append(try self.parseStatement());
+            if (lhsIndex == null) {
+                lhsIndex = try self.parseStatement();
+            } else {
+                rhsIndex = try self.parseStatement();
+            }
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[statementListIndex].lhs = lhsIndex;
+        self.ast.items[statementListIndex].rhs = rhsIndex;
+
+        return statementListIndex;
     }
 
     // Block = "{" StatementList "}"
@@ -692,22 +758,28 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Block = \"{{\" StatementList \"}}\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Block, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var blockIndex = try self.astAppend(NodeKind.Block, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect {
         try self.expectToken(TokenKind.LCurly);
 
         // Expect StatementList
-        try children.append(try self.parseStatementList());
+        lhsIndex = try self.parseStatementList();
 
         // Expect }
         try self.expectToken(TokenKind.RCurly);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[blockIndex].lhs = lhsIndex;
+        self.ast.items[blockIndex].rhs = rhsIndex;
+
+        return blockIndex;
     }
 
+    /////////// UNTOUCHED TO REFACTOR ////////////////////////
     // Assignment = LValue = (Expression | "read") ";"
     pub fn parseAssignment(self: *Parser) !Node {
         errdefer {
