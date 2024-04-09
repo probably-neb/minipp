@@ -7,6 +7,7 @@ const TokenKind = lexer.TokenKind;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
+// The parser is responsible for taking the tokens and creating an abstract syntax tree
 pub const NodeKind = union(enum) {
     Type,
     Void,
