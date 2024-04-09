@@ -1,11 +1,15 @@
-// TODO: in the parsing of all the types there is a lot of using an arrayList, however theese are known size array for many of the types and this could be refactored
+///////////////////////////////////////////////////////////////////////////////
+/// Version 0.0: The parser was implemented but did not have nice ast
+/// Version 0.1: AST will be flat array(s)
+///     - NOTE: for the ones that are lists, the LHS will be the first, and the RHS will be the last
+///       - Only implemented so far for NestedDecl
+///////////////////////////////////////////////////////////////////////////////
+
 const std = @import("std");
 const lexer = @import("lexer.zig");
 const Token = lexer.Token;
 const Lexer = lexer.Lexer;
 const TokenKind = lexer.TokenKind;
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const allocator = gpa.allocator();
 
 const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory };
 
@@ -14,10 +18,14 @@ pub const NodeKind = union(enum) {
     Types,
     Program,
     Type,
+    BoolType,
+    IntType,
+    StructType,
     Void,
     Read,
     Decl,
     NestedDecl,
+    Identifier,
     TypeDeclaration,
     Declarations,
     Declaration,
@@ -69,16 +77,27 @@ pub const NodeKind = union(enum) {
 pub const Node = struct {
     kind: NodeKind,
     token: Token,
-    children: ?[]Node = null,
+    lhs: ?usize,
+    rhs: ?usize,
+};
+
+pub const Ast = struct {
+    types: ?std.ArrayList(Node),
+    declarations: ?std.ArrayList(Node),
+    functions: ?std.ArrayList(Node),
 };
 
 pub const Parser = struct {
     tokens: []Token,
     input: []const u8,
-    ast: ?Node,
+
+    ast: ?Ast,
+
     pos: usize = 0,
     readPos: usize = 1,
     idMap: std.StringHashMap(bool),
+
+    allocator: *std.mem.Allocator,
 
     // flags
     showParseTree: bool = true,
@@ -142,100 +161,102 @@ pub const Parser = struct {
             return err;
         };
         try self.idMap.put(token._range.getSubStrFromStr(self.input), true);
-        return newTypeNode(token);
+        const node = Node{ .kind = NodeKind.Identifier, .token = token };
+        return node;
     }
 
-    fn newTypeNode(token: Token) Node {
-        return Node{ .kind = NodeKind.Type, .token = token };
+    // Adds the node to the types array in the ast
+    // Returns the index of the node in the types array
+    pub fn typesAppendNode(self: *Parser, node: Node) !usize{
+        try self.ast.types.append(node);
+        return self.ast.types.len - 1;
     }
 
-    pub fn parseTokens(tokens: []Token, input: []const u8) !Parser {
+    pub fn typesAppend(self: *Parser, kind: NodeKind, token: Token) !usize{
+        const node = Node{ .kind = kind, .token = token };
+        return self.typesAppendNode(node);
+    }
+
+    pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator ) !Parser {
         var parser = Parser{
             .ast = null,
             .idMap = std.StringHashMap(bool).init(allocator),
             .tokens = tokens,
             .input = input,
             .readPos = if (tokens.len > 0) 1 else 0,
+            .allocator = allocator,
         };
+
+        // Preallocating each of the members to be the size of tokens.len at first. 
+        // This is not memory efficient, but it is a good starting point.
+        // NOTE: need to consider if just having one ast array would be better with 
+        // additional arrays for other types of nodes rather than this
+        parser.ast = Ast{ 
+            .types = try std.ArrayList(Node).init(allocator, tokens.len),
+            .declarations = try std.ArrayList(Node).init(allocator, tokens.len),
+            .functions = try std.ArrayList(Node).init(allocator, tokens.len)
+        };
+
         // TODO: make this program and not type declaration
-        parser.ast = try parser.parseProgram();
+        try parser.parseProgram();
         std.debug.print("ast: {any}\n", .{parser.ast});
         return parser;
     }
 
     // Program = Types Declarations Functions
-    pub fn parseProgram(self: *Parser) !Node {
+    // each sub function returns an u32, which is the index into the array where they start
+    pub fn parseProgram(self: *Parser) !void {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Program\n", .{});
                 std.debug.print("Defined as: Program = Types Declarations Functions\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Program, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
 
         // Expect Types
-        try children.append(try self.parseTypes());
+        while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
+            // TODO: we can do something with all the indexs returned, 
+            // but for now we will just ignore them
+            _ = try self.parseTypeDeclaration();
+        }
 
         // Expect Declarations
-        try children.append(try self.parseDeclarations());
+        //try children.append(try self.parseDeclarations());
 
         // Expect Functions
-        try children.append(try self.parseFunctions());
+        //try children.append(try self.parseFunctions());
 
         // Expect EOF
         // TODO: make sure that Eof gets assigned propperly
         try self.expectToken(TokenKind.Eof);
 
-        result.children = try children.toOwnedSlice();
-        return result;
-    }
-
-    // Types = ( TypeDeclaration )*
-    pub fn parseTypes(self: *Parser) !Node {
-        errdefer {
-            if (self.showParseTree) {
-                std.debug.print("Error in parsing Types\n", .{});
-                std.debug.print("Defined as: Types = ( TypeDeclaration )*\n", .{});
-            }
-        }
-        var result: Node = Node{ .kind = NodeKind.Types, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
-
-        // While not EOF then parse type declaration
-        // Expect (TypeDeclaration)*
-
-        while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
-            try children.append(try self.parseTypeDeclaration());
-        }
-
-        result.children = try children.toOwnedSlice();
-        return result;
+        //result.children = try children.toOwnedSlice();
     }
 
     // TypeDeclaration = "struct" Identifier "{" NestedDeclarations "}" ";"
-    pub fn parseTypeDeclaration(self: *Parser) !Node {
+    // Refactored
+    pub fn parseTypeDeclaration(self: *Parser) !usize{
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a TypeDelcaration\n", .{});
                 std.debug.print("Defined as: TypeDeclaration = \"struct\" Identifier {{ NestedDeclarations }} \";\"\n", .{});
             }
         }
-        // TODO: maybe figure out something better than just using the current token
-        var result: Node = Node{ .kind = NodeKind.TypeDeclaration, .token = try self.currentToken() };
 
-        var children = std.ArrayList(Node).init(allocator);
-
+        var typeNodeIndex = self.typesAppend(self, NodeKind.TypeDeclaration, try self.currentToken());
+        
         // Exepect struct
         try self.expectToken(TokenKind.KeywordStruct);
 
-        // Expect identifier
-        try children.append(try self.expectIdentifier());
 
+        // Expect identifier
+        const identIndex = try self.typesAppendNode(try self.expectIdentifier());
+
+        // Expect {
         try self.expectToken(TokenKind.LCurly);
 
         // Expect nested declarations
-        try children.append(try self.parseNestedDeclarations());
+        const nestedDeclarationsIndex = self.typesAppendNode(try self.parseNestedDeclarations());
 
         // Expect }
         try self.expectToken(TokenKind.RCurly);
@@ -243,80 +264,109 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        // convert to array
-        result.children = try children.toOwnedSlice();
+        // Assign the lhs and rhs
+        self.ast.types[typeNodeIndex].lhs = identIndex;
+        self.ast.types[typeNodeIndex].rhs = nestedDeclarationsIndex;
 
+        // convert to array
         return result;
     }
 
     // NestedDecl = { Decl ";" }+
-    pub fn parseNestedDeclarations(self: *Parser) !Node {
+    pub fn parseNestedDeclarations(self: *Parser) !usize{
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing NestedDeclarations\n", .{});
                 std.debug.print("Defined as: NestedDeclarations = {{ Decl \";\" }}+\n", .{});
             }
         }
-        // init
-        var result: Node = Node{ .kind = NodeKind.NestedDecl, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
 
-        try children.append(try self.parseDecl());
+        var nestedDeclarationsIndex = self.typesAppendNode(try self.parseDecl());
+
+        // Expect { Decl ";" }+
+        var declIndex = self.typesAppendNode(try self.parseDecl());
+
+        // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
+        var finalIndex = declIndex;
+        // Repeat
         while ((try self.peekToken()).kind != TokenKind.RCurly) {
-            try children.append(try self.parseDecl());
+            finalIndex = self.typesAppendNode(try self.parseDecl());
             try self.expectToken(TokenKind.Semicolon);
         }
-        result.children = try children.toOwnedSlice();
-        return result;
+
+        // assign the lhs and rhs
+        self.ast.types[nestedDeclarationsIndex].lhs = declIndex;
+        self.ast.types[nestedDeclarationsIndex].rhs = finalIndex;
+
+        return nestedDeclarationsIndex;
     }
 
     // Decl = Type Identifier
-    pub fn parseDecl(self: *Parser) !Node {
+    pub fn parseDecl(self: *Parser) !usize{
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Decl\n", .{});
                 std.debug.print("Defined as: Decl = Type Identifier\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Decl, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        // add decl to types
+        var declIndex = self.typesAppend(NodeKind.Decl, try self.currentToken());
 
-        try children.append(try self.parseType());
+        // Expect Type
+        const typeIndex = try self.typesAppendNode(try self.parseType());
 
-        try children.append(try self.expectIdentifier());
+        // Expect Identifier
+        const identIndex = try self.typesAppendNode(try self.expectIdentifier());
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.types[declIndex].lhs = typeIndex;
+        self.ast.types[declIndex].rhs = identIndex;
+
+        return declIndex;
     }
 
     // Type = "int" | "bool" | "struct" Identifier
-    pub fn parseType(self: *Parser) !Node {
+    pub fn parseType(self: *Parser) !usize{
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Type\n", .{});
                 std.debug.print("Defined as: Type = \"int\" | \"bool\" | \"struct\" Identifier\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Type, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+
+        // add Type to types
+        var typeIndex = self.typesAppend(NodeKind.Type, try self.currentToken());
+        var rhsIndex: ?usize = null;
 
         const token = try self.consumeToken();
-        switch (token.kind) {
-            TokenKind.KeywordInt, TokenKind.KeywordBool => {},
+
+        // Expect int | bool | struct (id)
+        const keywordIndex = switch (token.kind) {
+            TokenKind.KeywordInt => {
+                return self.typesAppend(NodeKind.IntType, token);
+            },
+            TokenKind.KeywordBool => {
+                return self.typesAppend(NodeKind.BoolType, token);
+            },
             TokenKind.KeywordStruct => {
-                try children.append(try self.expectIdentifier());
+                // Temp node created to make the ast allignment correct!
+                const tempNode = self.typesAppend(NodeKind.StructType, token);
+                rhsIndex = try self.typesAppendNode(try self.expectIdentifier());
+                return tempNode;
             },
             else => {
                 // TODO: make this error like the others
                 std.debug.print("Error invalid Token: expected token kind {s} | {s} | {s} but got {s}.\n", .{ @tagName(TokenKind.KeywordInt), @tagName(TokenKind.KeywordBool), @tagName(TokenKind.KeywordStruct), @tagName(token.kind) });
                 return error.InvalidToken;
             },
-        }
+        };
+        // assign the lhs and rhs
+        self.ast.types[typeIndex].rhs = rhsIndex;
+        self.ast.types[typeIndex].lhs = keywordIndex;
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        return typeIndex;
     }
 
     pub fn isCurrentTokenAType(self: *Parser) !bool {
@@ -330,6 +380,7 @@ pub const Parser = struct {
         }
     }
 
+    /////////// UNTOUCHED TO REFACTOR ////////////////////////
     // Declarations = { Declaration }*
     pub fn parseDeclarations(self: *Parser) !Node {
         errdefer {
