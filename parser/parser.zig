@@ -71,6 +71,9 @@ pub const Parser = struct {
     readPos: usize = 0,
     idMap: std.StringHashMap(bool),
 
+    // flags
+    showParseTree: bool = false,
+
     fn peekToken(self: *Parser) !Token {
         if (self.readPos >= self.tokens.len) return error.TokenIndexOutOfBounds;
         return self.tokens[self.readPos];
@@ -82,7 +85,11 @@ pub const Parser = struct {
     }
 
     fn consumeToken(self: *Parser) !Token {
-        if (self.readPos >= self.tokens.len) return error.TokenIndexOutOfBounds;
+        if (self.readPos >= self.tokens.len) {
+            std.debug.print("Error Consuming Token: Out of bounds @ Token# {d}/{d}\n The last token was: {s}.\n", .{ self.readPos, self.tokens.len, @tagName((try self.currentToken()).kind) });
+            std.debug.print("Hit EOF before expected.\n", .{});
+            return error.TokenIndexOutOfBounds;
+        }
         const token = self.tokens[self.readPos];
         self.pos = self.readPos;
         self.readPos += 1;
@@ -90,27 +97,42 @@ pub const Parser = struct {
     }
 
     fn expectToken(self: *Parser, kind: TokenKind) !void {
-        const token = try self.peekToken();
+        const token = self.consumeToken() catch |err| {
+            std.debug.print("Error could not find expected Token: {s}\n", .{@tagName(kind)});
+            return err;
+        };
         if (!token.kind.equals(kind)) {
             // TODO: should update with the desired changes to TokenKind, such that the position is found.
             // Refactored for the moment
-            std.debug.panic("expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
+            std.debug.print("Error invalid Token: expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
+            const line: []const u8 = token._range.getLineCont(self.input);
+            std.debug.print("{s}\n", .{line});
+            return error.InvalidToken;
         }
     }
 
     fn expectAndYeildToken(self: *Parser, kind: TokenKind) !Token {
-        const token = try self.peekToken();
+        const token = self.consumeToken() catch |err| {
+            std.debug.print("Error could not yeild expected Token: {s}\n", .{@tagName(kind)});
+            return err;
+        };
         if (token.kind.equals(kind)) {
-            return try self.consumeToken();
+            return token;
         }
         // TODO: should update with the desired changes to TokenKind, such that the position is found.
         // Refactored for the moment
-        return std.debug.panic("expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
+        std.debug.print("Error invalid Token: expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
+        std.debug.print("{s}\n", .{token._range.getLineCont(self.input)});
+        token._range.printLineContUnderline(self.input);
+        return error.InvalidToken;
     }
 
     fn expectIdentifier(self: *Parser) !Node {
-        const token = try self.expectAndYeildToken(TokenKind.Identifier);
-        try self.idMap.put(token._range.?.getSubStrFromStr(self.input), true);
+        const token = self.expectAndYeildToken(TokenKind.Identifier) catch |err| {
+            std.debug.print("Error could not yeild Identifier.\n", .{});
+            return err;
+        };
+        try self.idMap.put(token._range.getSubStrFromStr(self.input), true);
         return newTypeNode(token);
     }
 
@@ -133,6 +155,12 @@ pub const Parser = struct {
 
     // TypeDeclaration = "struct" Identifier "{" NestedDeclarations "}" ";"
     pub fn parseTypeDeclaration(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a TypeDelcaration\n", .{});
+                std.debug.print("Defined as: TypeDeclaration = \"struct\" Identifier {{ NestedDeclarations }} \";\"\n", .{});
+            }
+        }
         // TODO: maybe figure out something better than just using the current token
         var result: Node = Node{ .kind = NodeKind.TypeDeclaration, .token = try self.currentToken() };
 
@@ -163,6 +191,12 @@ pub const Parser = struct {
 
     // NestedDecl = { Decl ";" }+
     pub fn parseNestedDeclarations(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing NestedDeclarations\n", .{});
+                std.debug.print("Defined as: NestedDeclarations = {{ Decl \";\" }}+\n", .{});
+            }
+        }
         // init
         var result: Node = Node{ .kind = NodeKind.NestedDecl, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
@@ -180,6 +214,12 @@ pub const Parser = struct {
 
     // Decl = Type Identifier
     pub fn parseDecl(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Decl\n", .{});
+                std.debug.print("Defined as: Decl = Type Identifier\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Decl, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -193,6 +233,12 @@ pub const Parser = struct {
 
     // Type = "int" | "bool" | "struct" Identifier
     pub fn parseType(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Type\n", .{});
+                std.debug.print("Defined as: Type = \"int\" | \"bool\" | \"struct\" Identifier\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Type, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -224,6 +270,12 @@ pub const Parser = struct {
 
     // Declarations = { Declaration }*
     pub fn parseDeclarations(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing Declarations\n", .{});
+                std.debug.print("Defined as: Declarations = {{ Declaration }}*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -240,6 +292,12 @@ pub const Parser = struct {
 
     // Declaration = Type Identifier ("," Identifier)* ";"
     pub fn parseDeclaration(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Declaration\n", .{});
+                std.debug.print("Defined as: Declaration = Type Identifier (\",\" Identifier)* \";\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Declaration, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -265,8 +323,15 @@ pub const Parser = struct {
         return result;
     }
 
-    // Functions = { Function }*
+    // Functions = ( Function )*
     pub fn parseFunctions(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing Functions\n", .{});
+                std.debug.print("Defined as: Functions = ( Function )*\n", .{});
+            }
+        }
+
         var result: Node = Node{ .kind = NodeKind.Functions, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -282,6 +347,12 @@ pub const Parser = struct {
 
     // Function = "fun" Identifier Paramaters ReturnType "{" Declarations StatementList "}"
     pub fn parseFunction(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Function\n", .{});
+                std.debug.print("Defined as: Function = \"fun\" Identifier Paramaters ReturnType \"{{\" Declarations StatementList \"}}\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Function, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -316,6 +387,12 @@ pub const Parser = struct {
 
     // Parameters = "(" (Decl ("," Decl)* )? ")"
     pub fn parseParameters(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing Parameters\n", .{});
+                std.debug.print("Defined as: Parameters = \"(\" (Decl (\",\" Decl)* )? \")\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Parameters, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -341,6 +418,12 @@ pub const Parser = struct {
 
     // ReturnType = Type | "void"
     pub fn parseReturnType(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing ReturnType\n", .{});
+                std.debug.print("Defined as: ReturnType = Type | \"void\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.ReturnType, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -359,6 +442,12 @@ pub const Parser = struct {
 
     // Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation
     pub fn parseStatement(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Statement\n", .{});
+                std.debug.print("Defined as: Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Statement, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -409,6 +498,12 @@ pub const Parser = struct {
 
     // Block = "{" StatementList "}"
     pub fn parseBlock(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Block\n", .{});
+                std.debug.print("Defined as: Block = \"{{\" StatementList \"}}\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Block, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -429,6 +524,12 @@ pub const Parser = struct {
 
     // Assignment = LValue = (Expression | "read") ";"
     pub fn parseAssignment(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing an Assignment\n", .{});
+                std.debug.print("Defined as: Assignment = LValue = (Expression | \"read\") \";\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Assignment, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -457,6 +558,13 @@ pub const Parser = struct {
     // Print = "print" Expression ";"
     // PrintLn = "print" Expression "endl" ";"
     pub fn parsePrints(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Print type\n", .{});
+                std.debug.print("Defined as: Print = \"print\" Expression \";\"\n", .{});
+            }
+            std.debug.print("Or defined as: PrintLn = \"print\" Expression \"endl\" \";\"\n", .{});
+        }
         var result: Node = Node{ .kind = NodeKind.Print, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -490,6 +598,13 @@ pub const Parser = struct {
     // ConditionalIf = "if" "(" Expression ")" Block
     // ConditionalIfElse = "if" "(" Expression ")" Block "else" Block
     pub fn parseConditionals(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Conditional\n", .{});
+                std.debug.print("Defined as: ConditionalIf = \"if\" \"(\" Expression \")\" Block\n", .{});
+                std.debug.print("Or defined as: ConditionalIfElse = \"if\" \"(\" Expression \")\" Block \"else\" Block\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.ConditionalIf, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -523,6 +638,12 @@ pub const Parser = struct {
 
     // While = "while" "(" Expression ")" Block
     pub fn parseWhile(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a While\n", .{});
+                std.debug.print("Defined as: While = \"while\" \"(\" Expression \")\" Block\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.While, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -547,6 +668,12 @@ pub const Parser = struct {
 
     // Delete = "delete" Expression ";"
     pub fn parseDelete(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Delete\n", .{});
+                std.debug.print("Defined as: Delete = \"delete\" Expression \";\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Delete, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -565,6 +692,12 @@ pub const Parser = struct {
 
     // Return = "return" (Expression)?  ";"
     pub fn parseReturn(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Return\n", .{});
+                std.debug.print("Defined as: Return = \"return\" (Expression)?  \";\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Return, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -586,6 +719,12 @@ pub const Parser = struct {
 
     // Invocation = Identifier Arguments ";"
     pub fn parseIdentifier(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing an Identifier\n", .{});
+                std.debug.print("Defined as: Invocation = Identifier Arguments \";\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Invocation, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -604,6 +743,12 @@ pub const Parser = struct {
 
     // LValue = Identifier ("." Identifier)*
     pub fn parseLValue(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing an LValue\n", .{});
+                std.debug.print("Defined as: LValue = Identifier (\".\" Identifier)*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.LValue, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -624,6 +769,12 @@ pub const Parser = struct {
 
     // Expression = BoolTerm ("||" BoolTerm)*
     pub fn parseExpression(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing an Expression\n", .{});
+                std.debug.print("Defined as: Expression = BoolTerm (\"||\" BoolTerm)*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Expression, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -644,6 +795,12 @@ pub const Parser = struct {
 
     // Boolterm = EqTerm ("&&" EqTerm)*
     pub fn parseBoolTerm(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a BoolTerm\n", .{});
+                std.debug.print("Defined as: Boolterm = EqTerm (\"&&\" EqTerm)*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.BoolTerm, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -664,6 +821,12 @@ pub const Parser = struct {
 
     // EqTerm = RelTerm (("==" | "!=") RelTerm)*
     pub fn parseEqTerm(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing an EqTerm\n", .{});
+                std.debug.print("Defined as: EqTerm = RelTerm (\"==\" | \"!=\") RelTerm)*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.EqTerm, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -702,6 +865,12 @@ pub const Parser = struct {
 
     // RelTerm = Simple (("<" | ">" | ">=" | "<=") Simple)*
     pub fn parseRelTerm(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a RelTerm\n", .{});
+                std.debug.print("Defined as: RelTerm = Simple (\"<\" | \">\" | \">=\" | \"<=\") Simple)*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.RelTerm, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -756,6 +925,12 @@ pub const Parser = struct {
 
     // Simple = Term (("+" | "-") Term)*
     pub fn parseSimple(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Simple\n", .{});
+                std.debug.print("Defined as: Simple = Term (\"+\" | \"-\") Term)*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Simple, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -793,6 +968,12 @@ pub const Parser = struct {
 
     // Term = Unary (("*" | "/") Unary)*
     pub fn parseTerm(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Term\n", .{});
+                std.debug.print("Defined as: Term = Unary (\"*\" | \"/\") Unary)*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Term, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -830,6 +1011,12 @@ pub const Parser = struct {
 
     // Unary = ("!" | "-")* Selector
     pub fn parseUnary(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Unary\n", .{});
+                std.debug.print("Defined as: Unary = (\"!\" | \"-\")* Selector\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Unary, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
         // Expect ("!" | "-")*
@@ -859,6 +1046,12 @@ pub const Parser = struct {
 
     // Selector = Factor ("." Identifier)*
     pub fn parseSelector(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Selector\n", .{});
+                std.debug.print("Defined as: Selector = Factor (\".\" Identifier)*\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Selector, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -879,6 +1072,12 @@ pub const Parser = struct {
 
     // Factor = "(" Expression ")" | Identifier (Arguments)? | Number | "true" | "false" | "new" Identifier | "null"
     pub fn parseFactor(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Factor\n", .{});
+                std.debug.print("Defined as: Factor = \"(\" Expression \")\" | Identifier (Arguments)? | Number | \"true\" | \"false\" | \"new\" Identifier | \"null\"\n", .{});
+            }
+        }
         var result: Node = Node{ .kind = NodeKind.Factor, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
@@ -944,7 +1143,7 @@ pub const Parser = struct {
 };
 
 pub fn main() !void {
-    const source = "struct TS { int a; int b; struct TS S; }";
+    const source = "struct TS { int a; int b; struct TS S; int int}";
     const tokens = try Lexer.tokenizeFromStr(source);
     const parser = try Parser.parseTokens(tokens, source);
     _ = parser;

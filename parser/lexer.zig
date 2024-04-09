@@ -20,6 +20,56 @@ const Range = struct {
     pub fn getSubStrFromStr(self: Range, str: []const u8) []const u8 {
         return str[self.start..self.end];
     }
+
+    pub fn getLineCont(self: Range, input: []const u8) []const u8 {
+        var start = self.start;
+        if (start == input.len) {
+            start -= 1;
+        }
+        while (start > 0 and start < input.len and input[start] != '\n') {
+            start -= 1;
+        }
+        var end = self.end;
+        while (end < input.len and input[end] != '\n' and end >= 0) {
+            end += 1;
+        }
+        return input[start..end];
+    }
+
+    pub fn printLineContUnderline(self: Range, input: []const u8) void {
+        var start = self.start;
+        if (start == input.len) {
+            start -= 1;
+        }
+        while (start > 0 and start < input.len and input[start] != '\n') {
+            start -= 1;
+        }
+        var end = self.end;
+        while (end < input.len and end >= 0 and input[end] != '\n') {
+            end += 1;
+        }
+
+        // print spaces from start to self.start
+        // // print ^ from self.start to self.end
+        // // print spaces from self.end to end
+        while (start < self.start) {
+            std.debug.print(" ", .{});
+            start += 1;
+        }
+        if (self.start == self.end) {
+            std.debug.print("^", .{});
+            start += 1;
+        }
+        while (start < self.end) {
+            std.debug.print("^", .{});
+            start += 1;
+        }
+        while (start < end) {
+            std.debug.print(" ", .{});
+            start += 1;
+        }
+        std.debug.print("\n", .{});
+    }
 };
 
 // TODO: include range in Token struct and have getter function for it
@@ -108,11 +158,7 @@ pub const Token = struct {
     // NOTE - must assert that the range is valid in non-trivial cases (Number/Identifier)
     // ALSO NOTE - It's not that much work to compute it for everythnig
     // and takes up the same amount of memory
-    _range: ?Range,
-    line_number: u32,
-    line: Range,
-    column: u32,
-    file: []const u8,
+    _range: Range,
 };
 
 // FIXME: handle comments
@@ -140,7 +186,7 @@ pub const Lexer = struct {
     /// or the `Identifier` token type and the range if it was an ident
     const TokInfo = struct {
         kind: TokenKind,
-        range: ?Range,
+        range: Range,
     };
 
     pub fn new(input: []const u8, filePath: []const u8) Lexer {
@@ -189,14 +235,15 @@ pub const Lexer = struct {
             'a'...'z', 'A'...'Z' => lxr.ident_or_builtin(),
             '0'...'9' => .{ .kind = TokenKind.Number, .range = try lxr.read_number() },
             else => blk: {
+                const pos = lxr.pos;
                 if (std.ascii.isPrint(lxr.ch)) {
-                    break :blk .{ .kind = try lxr.read_symbol(), .range = null };
+                    break :blk .{ .kind = try lxr.read_symbol(), .range = Range{ .start = pos, .end = pos } };
                 }
                 if (lxr.ch == 0) {
                     // TODO: return null and make return type ?Token
                     // so that we can use `while (lxr.next_token()) |tok|`
                     // pattern
-                    break :blk .{ .kind = TokenKind.Eof, .range = null };
+                    break :blk .{ .kind = TokenKind.Eof, .range = Range{ .start = pos, .end = pos } };
                 }
                 // TODO: improve error handling
                 if (lxr.file.len == 0) {
@@ -209,7 +256,7 @@ pub const Lexer = struct {
             },
         };
 
-        const tok = Token{ .kind = info.kind, ._range = info.range, .line = lxr.line, .line_number = lxr.line_number, .column = lxr.column, .file = lxr.file };
+        const tok = Token{ .kind = info.kind, ._range = info.range };
         return tok;
     }
 
