@@ -7,8 +7,12 @@ const TokenKind = lexer.TokenKind;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
+const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory };
+
 // The parser is responsible for taking the tokens and creating an abstract syntax tree
 pub const NodeKind = union(enum) {
+    Types,
+    Program,
     Type,
     Void,
     Read,
@@ -39,6 +43,10 @@ pub const NodeKind = union(enum) {
     EqTerm,
     RelTerm,
     Simple,
+    Mul,
+    Div,
+    Plus,
+    Minus,
     Term,
     Unary,
     Selector,
@@ -69,11 +77,11 @@ pub const Parser = struct {
     input: []const u8,
     ast: ?Node,
     pos: usize = 0,
-    readPos: usize = 0,
+    readPos: usize = 1,
     idMap: std.StringHashMap(bool),
 
     // flags
-    showParseTree: bool = false,
+    showParseTree: bool = true,
 
     fn peekToken(self: *Parser) !Token {
         if (self.readPos >= self.tokens.len) return error.TokenIndexOutOfBounds;
@@ -86,12 +94,12 @@ pub const Parser = struct {
     }
 
     fn consumeToken(self: *Parser) !Token {
-        if (self.readPos >= self.tokens.len) {
+        if (self.pos >= self.tokens.len) {
             std.debug.print("Error Consuming Token: Out of bounds @ Token# {d}/{d}\n The last token was: {s}.\n", .{ self.readPos, self.tokens.len, @tagName((try self.currentToken()).kind) });
             std.debug.print("Hit EOF before expected.\n", .{});
             return error.TokenIndexOutOfBounds;
         }
-        const token = self.tokens[self.readPos];
+        const token = self.tokens[self.pos];
         self.pos = self.readPos;
         self.readPos += 1;
         return token;
@@ -147,11 +155,62 @@ pub const Parser = struct {
             .idMap = std.StringHashMap(bool).init(allocator),
             .tokens = tokens,
             .input = input,
+            .readPos = if (tokens.len > 0) 1 else 0,
         };
         // TODO: make this program and not type declaration
-        parser.ast = try parser.parseTypeDeclaration();
+        parser.ast = try parser.parseProgram();
         std.debug.print("ast: {any}\n", .{parser.ast});
         return parser;
+    }
+
+    // Program = Types Declarations Functions
+    pub fn parseProgram(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Program\n", .{});
+                std.debug.print("Defined as: Program = Types Declarations Functions\n", .{});
+            }
+        }
+        var result: Node = Node{ .kind = NodeKind.Program, .token = try self.currentToken() };
+        var children = std.ArrayList(Node).init(allocator);
+
+        // Expect Types
+        try children.append(try self.parseTypes());
+
+        // Expect Declarations
+        try children.append(try self.parseDeclarations());
+
+        // Expect Functions
+        try children.append(try self.parseFunctions());
+
+        // Expect EOF
+        // TODO: make sure that Eof gets assigned propperly
+        try self.expectToken(TokenKind.Eof);
+
+        result.children = try children.toOwnedSlice();
+        return result;
+    }
+
+    // Types = ( TypeDeclaration )*
+    pub fn parseTypes(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing Types\n", .{});
+                std.debug.print("Defined as: Types = ( TypeDeclaration )*\n", .{});
+            }
+        }
+        var result: Node = Node{ .kind = NodeKind.Types, .token = try self.currentToken() };
+        var children = std.ArrayList(Node).init(allocator);
+
+        // While not EOF then parse type declaration
+        // Expect (TypeDeclaration)*
+
+        while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
+            try children.append(try self.parseTypeDeclaration());
+        }
+
+        result.children = try children.toOwnedSlice();
+        return result;
     }
 
     // TypeDeclaration = "struct" Identifier "{" NestedDeclarations "}" ";"
@@ -250,7 +309,9 @@ pub const Parser = struct {
                 try children.append(try self.expectIdentifier());
             },
             else => {
-                return std.debug.panic("expected type but got {s}.\n", .{@tagName(token.kind)});
+                // TODO: make this error like the others
+                std.debug.print("Error invalid Token: expected token kind {s} | {s} | {s} but got {s}.\n", .{ @tagName(TokenKind.KeywordInt), @tagName(TokenKind.KeywordBool), @tagName(TokenKind.KeywordStruct), @tagName(token.kind) });
+                return error.InvalidToken;
             },
         }
 
@@ -258,8 +319,8 @@ pub const Parser = struct {
         return result;
     }
 
-    pub fn isCurrentTokenAType(self: *Parser) bool {
-        switch (self.currentToken().kind) {
+    pub fn isCurrentTokenAType(self: *Parser) !bool {
+        switch ((try self.currentToken()).kind) {
             TokenKind.KeywordInt, TokenKind.KeywordBool, TokenKind.KeywordStruct => {
                 return true;
             },
@@ -309,7 +370,7 @@ pub const Parser = struct {
         try children.append(try self.expectIdentifier());
 
         // Expect ("," Identifier)* ";"
-        while (try self.currentToken().kind != TokenKind.Semicolon) {
+        while ((try self.currentToken()).kind != TokenKind.Semicolon) {
             // Expect ,
             try self.expectToken(TokenKind.Comma);
             // Expect Identifier
@@ -338,7 +399,7 @@ pub const Parser = struct {
 
         // While not EOF then parse function
         // Expect (Function)*
-        while (try self.currentToken().kind == TokenKind.KeywordFun) {
+        while ((try self.currentToken()).kind == TokenKind.KeywordFun) {
             try children.append(try self.parseFunction());
         }
 
@@ -379,7 +440,6 @@ pub const Parser = struct {
         try children.append(try self.parseStatementList());
 
         // Expect }
-
         try self.expectToken(TokenKind.RCurly);
 
         result.children = try children.toOwnedSlice();
@@ -405,13 +465,16 @@ pub const Parser = struct {
             try children.append(try self.parseDecl());
             // Expect ("," Decl)*
 
-            while (try self.currentToken().kind == TokenKind.Comma) {
+            while ((try self.currentToken()).kind == TokenKind.Comma) {
                 // Expect ,
                 try self.expectToken(TokenKind.Comma);
                 // Expect Decl
                 try children.append(try self.parseDecl());
             }
         }
+
+        // Expect )
+        try self.expectToken(TokenKind.RParen);
 
         result.children = try children.toOwnedSlice();
         return result;
@@ -428,11 +491,14 @@ pub const Parser = struct {
         var result: Node = Node{ .kind = NodeKind.ReturnType, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
-        switch (self.currentToken().kind) {
+        const token = try self.currentToken();
+        switch (token.kind) {
             TokenKind.KeywordVoid => {
-                children = null;
+                std.debug.print("lksjdlfjsdlfkjs\n\n\n\nvoid\n", .{});
+                try children.append(Node{ .kind = NodeKind.Void, .token = try self.consumeToken() });
             },
             else => {
+                std.debug.print("\n\n\n\n\ntoken {any}\n", .{(try self.currentToken())});
                 try children.append(try self.parseType());
             },
         }
@@ -452,14 +518,14 @@ pub const Parser = struct {
         var result: Node = Node{ .kind = NodeKind.Statement, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
-        switch (self.currentToken().kind) {
+        switch ((try self.currentToken()).kind) {
             // Block
             TokenKind.LCurly => {
                 try children.append(try self.parseBlock());
             },
             // Invocation | Assignment
             TokenKind.Identifier => {
-                switch (self.peekToken().kind) {
+                switch ((try self.peekToken()).kind) {
                     TokenKind.LParen => {
                         try children.append(try self.parseInvocation());
                     },
@@ -489,8 +555,32 @@ pub const Parser = struct {
                 try children.append(try self.parsePrints());
             },
             else => {
-                return std.debug.panic("expected statement but got {s}.\n", .{@tagName(self.currentToken())});
+                // TODO: make this error like the others
+                // TOOD: really actually tho
+                std.debug.print("Error invalid Token: expected token kind of Statment \n", .{});
+                return error.InvalidToken;
             },
+        }
+
+        result.children = try children.toOwnedSlice();
+        return result;
+    }
+
+    // StatementList = ( Statement )*
+    pub fn parseStatementList(self: *Parser) ParserError!Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a StatementList\n", .{});
+                std.debug.print("Defined as: StatementList = ( Statement )*\n", .{});
+            }
+        }
+        var result: Node = Node{ .kind = NodeKind.StatementList, .token = try self.currentToken() };
+        var children = std.ArrayList(Node).init(allocator);
+
+        // While not EOF then parse statement
+        // Expect (Statement)*
+        while ((try self.currentToken()).kind != TokenKind.RCurly) {
+            try children.append(try self.parseStatement());
         }
 
         result.children = try children.toOwnedSlice();
@@ -511,10 +601,8 @@ pub const Parser = struct {
         // Expect {
         try self.expectToken(TokenKind.LCurly);
 
-        // if not } then parse statement list
-        while (try self.currentToken().kind != TokenKind.RCurly) {
-            try children.append(try self.parseStatement());
-        }
+        // Expect StatementList
+        try children.append(try self.parseStatementList());
 
         // Expect }
         try self.expectToken(TokenKind.RCurly);
@@ -541,7 +629,7 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.Eq);
 
         // Expect Expression | "read"
-        if (self.currentToken().kind == TokenKind.KeywordRead) {
+        if ((try self.currentToken()).kind == TokenKind.KeywordRead) {
             // make read node
             const readNode = Node{ .kind = NodeKind.Read, .token = try self.consumeToken() };
             try children.append(readNode);
@@ -575,7 +663,7 @@ pub const Parser = struct {
         // Expect Expression
         try children.append(try self.parseExpression());
 
-        switch (self.currentToken().kind) {
+        switch ((try self.currentToken()).kind) {
             // Expect ;
             TokenKind.Semicolon => {
                 try self.expectToken(TokenKind.Semicolon);
@@ -588,7 +676,7 @@ pub const Parser = struct {
                 result.kind = NodeKind.PrintLn;
             },
             else => {
-                return std.debug.panic("expected ; or endl but got {s}.", .{@tagName(self.currentToken())});
+                return std.debug.panic("expected ; or endl but got {s}.", .{@tagName((try self.currentToken()).kind)});
             },
         }
 
@@ -625,7 +713,7 @@ pub const Parser = struct {
         try children.append(try self.parseBlock());
 
         // If else then parse else block
-        if (self.currentToken().kind == TokenKind.KeywordElse) {
+        if ((try self.currentToken()).kind == TokenKind.KeywordElse) {
             // Expect else
             try self.expectToken(TokenKind.KeywordElse);
             // Expect Block
@@ -706,7 +794,7 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.KeywordReturn);
 
         // Expect Expression optionally
-        if (self.currentToken().kind != TokenKind.Semicolon) {
+        if ((try self.currentToken()).kind != TokenKind.Semicolon) {
             // Expect Expression
             try children.append(try self.parseExpression());
         }
@@ -719,7 +807,7 @@ pub const Parser = struct {
     }
 
     // Invocation = Identifier Arguments ";"
-    pub fn parseIdentifier(self: *Parser) !Node {
+    pub fn parseInvocation(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing an Identifier\n", .{});
@@ -757,7 +845,7 @@ pub const Parser = struct {
         try children.append(try self.expectIdentifier());
 
         // Expect ("." Identifier)*
-        while (try self.currentToken().kind == TokenKind.Dot) {
+        while ((try self.currentToken()).kind == TokenKind.Dot) {
             // Expect .
             try self.expectToken(TokenKind.Dot);
             // Expect Identifier
@@ -783,7 +871,7 @@ pub const Parser = struct {
         try children.append(try self.parseBoolTerm());
 
         // Expect ("||" BoolTerm)*
-        while (try self.currentToken().kind == TokenKind.Or) {
+        while ((try self.currentToken()).kind == TokenKind.Or) {
             // Expect ||
             try self.expectToken(TokenKind.Or);
             // Expect BoolTerm
@@ -809,7 +897,7 @@ pub const Parser = struct {
         try children.append(try self.parseEqTerm());
 
         // Expect ("&&" EqTerm)*
-        while (try self.currentToken().kind == TokenKind.And) {
+        while ((try self.currentToken()).kind == TokenKind.And) {
             // Expect &&
             try self.expectToken(TokenKind.And);
             // Expect EqTerm
@@ -835,8 +923,8 @@ pub const Parser = struct {
         try children.append(try self.parseRelTerm());
 
         // Expect (("==" | "!=") RelTerm)*
-        while (try self.currentToken().kind == TokenKind.DoubleEq or self.currentToken().kind == TokenKind.NotEq) {
-            switch (self.currentToken().kind) {
+        while ((try self.currentToken()).kind == TokenKind.DoubleEq or (try self.currentToken()).kind == TokenKind.NotEq) {
+            switch ((try self.currentToken()).kind) {
                 TokenKind.NotEq => {
                     // Expect !=
                     const notEqToken = try self.expectAndYeildToken(TokenKind.NotEq);
@@ -855,7 +943,7 @@ pub const Parser = struct {
                     try children.append(try self.parseRelTerm());
                 },
                 else => {
-                    return std.debug.panic("expected == or != but got {s}.\n", .{@tagName(self.currentToken())});
+                    return std.debug.panic("expected == or != but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
@@ -879,8 +967,8 @@ pub const Parser = struct {
         try children.append(try self.parseSimple());
 
         // Expect (("<" | ">" | ">=" | "<=") Simple)*
-        while (try self.currentToken().kind == TokenKind.Lt or self.currentToken().kind == TokenKind.Gt or self.currentToken().kind == TokenKind.GtEq or self.currentToken().kind == TokenKind.LtEq) {
-            switch (self.currentToken().kind) {
+        while ((try self.currentToken()).kind == TokenKind.Lt or (try self.currentToken()).kind == TokenKind.Gt or (try self.currentToken()).kind == TokenKind.GtEq or (try self.currentToken()).kind == TokenKind.LtEq) {
+            switch ((try self.currentToken()).kind) {
                 TokenKind.Lt => {
                     // Expect <
                     const ltToken = try self.expectAndYeildToken(TokenKind.Lt);
@@ -915,7 +1003,7 @@ pub const Parser = struct {
                     try children.append(try self.parseSimple());
                 },
                 else => {
-                    return std.debug.panic("expected <, >, >= or <= but got {s}.\n", .{@tagName(self.currentToken())});
+                    return std.debug.panic("expected <, >, >= or <= but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
@@ -939,8 +1027,8 @@ pub const Parser = struct {
         try children.append(try self.parseTerm());
 
         // Expect (("+" | "-") Term)*
-        while (try self.currentToken().kind == TokenKind.Plus or self.currentToken().kind == TokenKind.Minus) {
-            switch (self.currentToken().kind) {
+        while ((try self.currentToken()).kind == TokenKind.Plus or (try self.currentToken()).kind == TokenKind.Minus) {
+            switch ((try self.currentToken()).kind) {
                 TokenKind.Plus => {
                     // Expect +
                     const plusToken = try self.expectAndYeildToken(TokenKind.Plus);
@@ -958,7 +1046,7 @@ pub const Parser = struct {
                     try children.append(try self.parseTerm());
                 },
                 else => {
-                    return std.debug.panic("expected + or - but got {s}\n", .{@tagName(self.currentToken())});
+                    return std.debug.panic("expected + or - but got {s}\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
@@ -982,9 +1070,9 @@ pub const Parser = struct {
         try children.append(try self.parseUnary());
 
         // Expect (("*" | "/") Unary)*
-        while (try self.currentToken().kind == TokenKind.Mul or self.currentToken().kind == TokenKind.Div) {
-            switch (self.currentToken().kind) {
-                TokenKind.Asterisk => {
+        while ((try self.currentToken()).kind == TokenKind.Mul or (try self.currentToken()).kind == TokenKind.Div) {
+            switch ((try self.currentToken()).kind) {
+                TokenKind.Mul => {
                     // Expect *
                     const mulToken = try self.expectAndYeildToken(TokenKind.Mul);
                     const mulNode = Node{ .kind = NodeKind.Mul, .token = mulToken };
@@ -992,7 +1080,7 @@ pub const Parser = struct {
                     // Expect Unary
                     try children.append(try self.parseUnary());
                 },
-                TokenKind.Slash => {
+                TokenKind.Div => {
                     // Expect /
                     const divToken = try self.expectAndYeildToken(TokenKind.Div);
                     const divNode = Node{ .kind = NodeKind.Div, .token = divToken };
@@ -1001,7 +1089,7 @@ pub const Parser = struct {
                     try children.append(try self.parseUnary());
                 },
                 else => {
-                    return std.debug.panic("expected * or / but got {s}.\n", .{@tagName(self.currentToken())});
+                    return std.debug.panic("expected * or / but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
@@ -1021,11 +1109,11 @@ pub const Parser = struct {
         var result: Node = Node{ .kind = NodeKind.Unary, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
         // Expect ("!" | "-")*
-        while (try self.currentToken().kind == TokenKind.Not or self.currentToken().kind == TokenKind.Minus) {
-            switch (self.currentToken().kind) {
+        while ((try self.currentToken()).kind == TokenKind.Not or (try self.currentToken()).kind == TokenKind.Minus) {
+            switch ((try self.currentToken()).kind) {
                 TokenKind.Not => {
                     // Expect !
-                    const notToken = self.expectToken(TokenKind.Not);
+                    const notToken = try self.expectAndYeildToken(TokenKind.Not);
                     const notNode = Node{ .kind = NodeKind.Not, .token = notToken };
                     try children.append(notNode);
                 },
@@ -1036,7 +1124,7 @@ pub const Parser = struct {
                     try children.append(minusNode);
                 },
                 else => {
-                    return std.debug.panic("expected ! or - but got {s}.\n", .{@tagName(self.currentToken())});
+                    return std.debug.panic("expected ! or - but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
@@ -1060,7 +1148,7 @@ pub const Parser = struct {
         try children.append(try self.parseFactor());
 
         // Expect ("." Identifier)*
-        while (try self.currentToken().kind == TokenKind.Dot) {
+        while ((try self.currentToken()).kind == TokenKind.Dot) {
             // Expect .
             try self.expectToken(TokenKind.Dot);
             // Expect Identifier
@@ -1082,7 +1170,7 @@ pub const Parser = struct {
         var result: Node = Node{ .kind = NodeKind.Factor, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
-        switch (self.currentToken().kind) {
+        switch ((try self.currentToken()).kind) {
             TokenKind.LParen => {
                 // Expect (
                 try self.expectToken(TokenKind.LParen);
@@ -1095,7 +1183,7 @@ pub const Parser = struct {
                 // Expect Identifier
                 try children.append(try self.expectIdentifier());
                 // Expect (Arguments)?
-                if (self.currentToken().kind == TokenKind.LParen) {
+                if ((try self.currentToken()).kind == TokenKind.LParen) {
                     // Expect Arguments
                     try children.append(try self.parseArguments());
                 }
@@ -1134,9 +1222,44 @@ pub const Parser = struct {
                 try children.append(nullNode);
             },
             else => {
-                return std.debug.panic("expected factor but got {s}.\n", .{@tagName(self.currentToken())});
+                return std.debug.panic("expected factor but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
             },
         }
+
+        result.children = try children.toOwnedSlice();
+        return result;
+    }
+
+    // Arguments = "(" (Expression ("," Expression)*)? ")"
+    pub fn parseArguments(self: *Parser) !Node {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing Arguments\n", .{});
+                std.debug.print("Defined as: Arguments = \"(\" (Expression (\",\" Expression)*)? \")\"\n", .{});
+            }
+        }
+        var result: Node = Node{ .kind = NodeKind.Arguments, .token = try self.currentToken() };
+        var children = std.ArrayList(Node).init(allocator);
+
+        // Expect (
+        try self.expectToken(TokenKind.LParen);
+
+        // Expect (Expression ("," Expression)*)?
+        if ((try self.currentToken()).kind != TokenKind.RParen) {
+            // Expect Expression
+            try children.append(try self.parseExpression());
+
+            // Expect ("," Expression)*
+            while ((try self.currentToken()).kind == TokenKind.Comma) {
+                // Expect ,
+                try self.expectToken(TokenKind.Comma);
+                // Expect Expression
+                try children.append(try self.parseExpression());
+            }
+        }
+
+        // Expect )
+        try self.expectToken(TokenKind.RParen);
 
         result.children = try children.toOwnedSlice();
         return result;
@@ -1144,22 +1267,78 @@ pub const Parser = struct {
 };
 
 pub fn main() !void {
-    const source = "struct TS { int a; int b; struct TS S; int int}";
+    const source = "fun TS() void { int a; int b; struct TS S; }";
     const tokens = try Lexer.tokenizeFromStr(source);
     const parser = try Parser.parseTokens(tokens, source);
     _ = parser;
 }
 
-//(program:1(
-//  types:1 (
-//      type_declaration:1 struct TS { (
-//          nested_decl:1
-//              ( decl:1 (type:1 int) a) ;
-//              ( decl:1 (type:1 int) b) ;
-//              ( decl:1 (type:3 struct TS) S) ;
-//      ) } ;
-//  )
-//  )
-//  declarations:1
-//  functions:1
-//  <EOF>)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////// Tests
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+test "no_identifier_struct" {
+    const source = "struct { int a; int b; struct TS S; };";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "no_keyword_struct" {
+    const source = "TS{ int a; int b; struct TS S; };";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "no_members_struct" {
+    const source = "struct TS { };";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "no_semicolon_struct_end" {
+    const source = "struct TS { int a int b; struct TS S; }";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "no_semicolon_struct_member" {
+    const source = "struct TS { int a; int b; struct TS S };";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "no_struct_function" {
+    const source = "fun TS() void { int a; int b; struct TS S; }";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    _ = try Parser.parseTokens(tokens, source);
+}
+
+test "function_no_identifier" {
+    const source = "fun () void { int a; int b; struct TS S; }";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "function_no_parameters" {
+    const source = "fun TS void { int a; int b; struct TS S; }";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "function_no_return_type" {
+    const source = "fun TS() { int a; int b; struct TS S; }";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "function_no_lcurly" {
+    const source = "fun TS() void int a; int b; struct TS S; }";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}
+
+test "function_no_rcurly" {
+    const source = "fun TS() void { int a; int b; struct TS S; ";
+    const tokens = try Lexer.tokenizeFromStr(source);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+}

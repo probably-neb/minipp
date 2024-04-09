@@ -99,8 +99,10 @@ pub const TokenKind = enum {
     Eof,
     Or,
     And,
+    Comma,
     KeywordBool,
     KeywordDelete,
+    KeywordElse,
     KeywordEndl,
     KeywordFalse,
     KeywordFun,
@@ -123,6 +125,7 @@ pub const TokenKind = enum {
     pub const keywords = std.ComptimeStringMap(TokenKind, .{
         .{ "bool", TokenKind.KeywordBool },
         .{ "delete", TokenKind.KeywordDelete },
+        .{ "else", TokenKind.KeywordElse },
         .{ "endl", TokenKind.KeywordEndl },
         .{ "false", TokenKind.KeywordFalse },
         .{ "fun", TokenKind.KeywordFun },
@@ -213,12 +216,13 @@ pub const Lexer = struct {
         var tokens = std.ArrayList(Token).init(std.heap.page_allocator);
         defer tokens.deinit();
 
+        // NOTE: EOF is the always token, it makes part of parsing simpler, so I will revise tests to match
         while (true) {
             const tok = try lexer.next_token();
+            try tokens.append(tok);
             if (tok.kind == TokenKind.Eof) {
                 break;
             }
-            try tokens.append(tok);
         }
 
         return tokens.toOwnedSlice();
@@ -352,6 +356,7 @@ pub const Lexer = struct {
             '*' => .Mul,
             '/' => .Div,
             ';' => .Semicolon,
+            ',' => .Comma,
             // TODO: improve error handling
             else => {
                 if (lxr.file.len == 0) {
@@ -417,6 +422,7 @@ test "add" {
         .Number,
         .Plus,
         .Number,
+        .Eof,
     });
 }
 
@@ -433,16 +439,19 @@ test "simple_struct" {
         .Identifier,
         .Semicolon,
         .RCurly,
+        .Eof,
     });
     const ident_token = tokens[1];
     try expect(ident_token.kind == TokenKind.Identifier);
 
-    if (ident_token._range) |range| {
-        try expect(std.mem.eql(u8, range.getSubStrFromStr(content), "SimpleStruct"));
-    } else {
-        std.debug.print("error: expected range for identifier token but got none\n", .{});
-        return error.NoRangeForToken;
-    }
+    // NODE: this should be implemented in some manner, I've hacked it out to reduce mem size
+    //if (ident_token._range) |range| {
+    //    try expect(std.mem.eql(u8, range.getSubStrFromStr(content), "SimpleStruct"));
+    //} else {
+    //    std.debug.print("error: expected range for identifier token but got none\n", .{});
+    //    return error.NoRangeForToken;
+    //}
+    try expect(std.mem.eql(u8, ident_token._range.getSubStrFromStr(content), "SimpleStruct"));
 }
 
 test "ident_can_not_start_with_num" {
@@ -458,7 +467,11 @@ test "ident_can_not_start_with_num" {
     //           have whitespace before it and is therefore an invalid number
     //           not invalid sequence
 
-    _ = try expect_results_in_tokens("1foo", &[_]TokenKind{ .Number, .Identifier });
+    _ = try expect_results_in_tokens("1foo", &[_]TokenKind{
+        .Number,
+        .Identifier,
+        .Eof,
+    });
 }
 
 test "all_binops" {
@@ -471,6 +484,7 @@ test "all_binops" {
         .GtEq,
         .Eq,
         .DoubleEq,
+        .Eof,
     });
 }
 
@@ -484,6 +498,7 @@ test "invalid_char_in_ident" {
     try std.testing.expectError(error.InvalidToken, Lexer.tokenizeFromStr(contents));
 }
 
+// TODO: update this
 test "all_keywords" {
     _ = try expect_results_in_tokens("delete endl false fun if new null read return struct true while", &[_]TokenKind{
         .KeywordDelete,
@@ -498,9 +513,13 @@ test "all_keywords" {
         .KeywordStruct,
         .KeywordTrue,
         .KeywordWhile,
+        .Eof,
     });
 }
 
 test "ident_with_num" {
-    _ = try expect_results_in_tokens("foo1", &[_]TokenKind{.Identifier});
+    _ = try expect_results_in_tokens("foo1", &[_]TokenKind{
+        .Identifier,
+        .Eof,
+    });
 }
