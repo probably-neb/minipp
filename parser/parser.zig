@@ -66,37 +66,51 @@ pub const Node = struct {
 pub const Parser = struct {
     tokens: []Token,
     input: []const u8,
-    ast: ?*Node,
+    ast: ?Node,
     pos: usize = 0,
     readPos: usize = 0,
     idMap: std.StringHashMap(bool),
 
     fn peekToken(self: *Parser) !Token {
-        return self.tokens.get(self.readPos) orelse return error.TokenIndexOutOfBounds;
+        if (self.readPos >= self.tokens.len) return error.TokenIndexOutOfBounds;
+        return self.tokens[self.readPos];
     }
 
     fn currentToken(self: *Parser) !Token {
-        return self.tokens.get(self.pos) orelse return error.TokenIndexOutOfBounds;
+        if (self.pos >= self.tokens.len) return error.TokenIndexOutOfBounds;
+        return self.tokens[self.pos];
     }
 
     fn consumeToken(self: *Parser) !Token {
-        const token = self.tokens.get(self.readPos) orelse return error.TokenIndexOutOfBounds;
+        if (self.readPos >= self.tokens.len) return error.TokenIndexOutOfBounds;
+        const token = self.tokens[self.readPos];
         self.pos = self.readPos;
         self.readPos += 1;
         return token;
     }
 
-    fn expectToken(self: *Parser, kind: TokenKind) !Token {
+    fn expectToken(self: *Parser, kind: TokenKind) !void {
+        const token = try self.peekToken();
+        if (!token.kind.equals(kind)) {
+            // TODO: should update with the desired changes to TokenKind, such that the position is found.
+            // Refactored for the moment
+            std.debug.panic("expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
+        }
+    }
+
+    fn expectAndYeildToken(self: *Parser, kind: TokenKind) !Token {
         const token = try self.peekToken();
         if (token.kind.equals(kind)) {
             return try self.consumeToken();
         }
-        return std.debug.panic("expected token kind {s} but got {s}.\n At \"{s}\":{any}:{any} in input", .{ @tagName(kind), @tagName(token.kind), token.file, token.line, token.column });
+        // TODO: should update with the desired changes to TokenKind, such that the position is found.
+        // Refactored for the moment
+        return std.debug.panic("expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
     }
 
     fn expectIdentifier(self: *Parser) !Node {
-        const token = try self.expectToken(TokenKind.Identifier);
-        self.idMap.put(token.kind.getSubStrFromStr(self.input), true);
+        const token = try self.expectAndYeildToken(TokenKind.Identifier);
+        try self.idMap.put(token._range.?.getSubStrFromStr(self.input), true);
         return newTypeNode(token);
     }
 
@@ -111,24 +125,21 @@ pub const Parser = struct {
             .tokens = tokens,
             .input = input,
         };
-        // TODO make this program and not type declaration
-        parser.ast = try parser.parseTypeDeclaration(tokens);
+        // TODO: make this program and not type declaration
+        parser.ast = try parser.parseTypeDeclaration();
         std.debug.print("ast: {any}\n", .{parser.ast});
         return parser;
     }
 
     // TypeDeclaration = "struct" Identifier "{" NestedDeclarations "}" ";"
-    pub fn parseTypeDeclaration(self: *Parser, tokens: []Token) !Node {
+    pub fn parseTypeDeclaration(self: *Parser) !Node {
         // TODO: maybe figure out something better than just using the current token
         var result: Node = Node{ .kind = NodeKind.TypeDeclaration, .token = try self.currentToken() };
-
-        // TODO: remov this
-        std.debug.print("tokens: {any}\n\n\n", .{tokens});
 
         var children = std.ArrayList(Node).init(allocator);
 
         // Exepect struct
-        try children.append(try self.expectToken(TokenKind.KeywordStruct));
+        try self.expectToken(TokenKind.KeywordStruct);
 
         // Expect identifier
         try children.append(try self.expectIdentifier());
@@ -139,15 +150,13 @@ pub const Parser = struct {
         try children.append(try self.parseNestedDeclarations());
 
         // Expect }
-        // TODO: maybe don't keep the curly braces in the AST
         try self.expectToken(TokenKind.RCurly);
 
         // Expect ;
-        // TODO: maybe don't keep the semicolons in the AST
         try self.expectToken(TokenKind.Semicolon);
 
         // convert to array
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
 
         return result;
     }
@@ -161,11 +170,11 @@ pub const Parser = struct {
         try children.append(try self.parseDecl());
         try self.expectToken(TokenKind.Semicolon);
 
-        while (try self.peekToken().kind != TokenKind.RCurly) {
+        while ((try self.peekToken()).kind != TokenKind.RCurly) {
             try children.append(try self.parseDecl());
             try self.expectToken(TokenKind.Semicolon);
         }
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -178,7 +187,7 @@ pub const Parser = struct {
 
         try children.append(try self.expectIdentifier());
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -187,19 +196,18 @@ pub const Parser = struct {
         var result: Node = Node{ .kind = NodeKind.Type, .token = try self.currentToken() };
         var children = std.ArrayList(Node).init(allocator);
 
-        switch (self.consumeToken()) {
-            TokenKind.KeywordInt, TokenKind.KeywordBool => {
-                children = null;
-            },
+        const token = try self.consumeToken();
+        switch (token.kind) {
+            TokenKind.KeywordInt, TokenKind.KeywordBool => {},
             TokenKind.KeywordStruct => {
-                try children.append(try self.expectIdentifier);
+                try children.append(try self.expectIdentifier());
             },
             else => {
-                return std.debug.panic("expected type but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                return std.debug.panic("expected type but got {s}.\n", .{@tagName(token.kind)});
             },
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -226,7 +234,7 @@ pub const Parser = struct {
             try children.append(try self.parseDeclaration());
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -253,7 +261,7 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -268,7 +276,7 @@ pub const Parser = struct {
             try children.append(try self.parseFunction());
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -302,7 +310,7 @@ pub const Parser = struct {
 
         try self.expectToken(TokenKind.RCurly);
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -327,7 +335,7 @@ pub const Parser = struct {
             }
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -345,7 +353,7 @@ pub const Parser = struct {
             },
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -391,11 +399,11 @@ pub const Parser = struct {
                 try children.append(try self.parsePrints());
             },
             else => {
-                return std.debug.panic("expected statement but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                return std.debug.panic("expected statement but got {s}.\n", .{@tagName(self.currentToken())});
             },
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -415,7 +423,7 @@ pub const Parser = struct {
         // Expect }
         try self.expectToken(TokenKind.RCurly);
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -442,7 +450,7 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -471,11 +479,11 @@ pub const Parser = struct {
                 result.kind = NodeKind.PrintLn;
             },
             else => {
-                return std.debug.panic("expected ; or endl but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                return std.debug.panic("expected ; or endl but got {s}.", .{@tagName(self.currentToken())});
             },
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -509,7 +517,7 @@ pub const Parser = struct {
             result.kind = NodeKind.ConditionalIfElse;
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -533,7 +541,7 @@ pub const Parser = struct {
         // Expect Block
         try children.append(try self.parseBlock());
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -551,7 +559,7 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -572,7 +580,7 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -590,7 +598,7 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -610,7 +618,7 @@ pub const Parser = struct {
             try children.append(try self.expectIdentifier());
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -630,7 +638,7 @@ pub const Parser = struct {
             try children.append(try self.parseBoolTerm());
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -650,7 +658,7 @@ pub const Parser = struct {
             try children.append(try self.parseEqTerm());
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -667,7 +675,7 @@ pub const Parser = struct {
             switch (self.currentToken().kind) {
                 TokenKind.NotEq => {
                     // Expect !=
-                    const notEqToken = try self.expectToken(TokenKind.NotEq);
+                    const notEqToken = try self.expectAndYeildToken(TokenKind.NotEq);
                     const notEqNode = Node{ .kind = NodeKind.NotEq, .token = notEqToken };
                     try children.append(notEqNode);
 
@@ -676,19 +684,19 @@ pub const Parser = struct {
                 },
                 TokenKind.DoubleEq => {
                     // Expect ==
-                    const eqToken = try self.expectToken(TokenKind.DoubleEq);
+                    const eqToken = try self.expectAndYeildToken(TokenKind.DoubleEq);
                     const eqNode = Node{ .kind = NodeKind.Equals, .token = eqToken };
                     try children.append(eqNode);
                     // Expect RelTerm
                     try children.append(try self.parseRelTerm());
                 },
                 else => {
-                    return std.debug.panic("expected == or != but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                    return std.debug.panic("expected == or != but got {s}.\n", .{@tagName(self.currentToken())});
                 },
             }
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -705,7 +713,7 @@ pub const Parser = struct {
             switch (self.currentToken().kind) {
                 TokenKind.Lt => {
                     // Expect <
-                    const ltToken = try self.expectToken(TokenKind.Lt);
+                    const ltToken = try self.expectAndYeildToken(TokenKind.Lt);
                     const ltNode = Node{ .kind = NodeKind.LessThan, .token = ltToken };
                     try children.append(ltNode);
                     // Expect Simple
@@ -713,7 +721,7 @@ pub const Parser = struct {
                 },
                 TokenKind.Gt => {
                     // Expect >
-                    const gtToken = try self.expectToken(TokenKind.Gt);
+                    const gtToken = try self.expectAndYeildToken(TokenKind.Gt);
                     const gtNode = Node{ .kind = NodeKind.GreaterThan, .token = gtToken };
                     try children.append(gtNode);
 
@@ -722,7 +730,7 @@ pub const Parser = struct {
                 },
                 TokenKind.GtEq => {
                     // Expect >=
-                    const gtEqToken = try self.expectToken(TokenKind.GtEq);
+                    const gtEqToken = try self.expectAndYeildToken(TokenKind.GtEq);
                     const gtEqNode = Node{ .kind = NodeKind.GreaterThanEq, .token = gtEqToken };
                     try children.append(gtEqNode);
                     // Expect Simple
@@ -730,19 +738,19 @@ pub const Parser = struct {
                 },
                 TokenKind.LtEq => {
                     // Expect <=
-                    const ltEqToken = try self.expectToken(TokenKind.LtEq);
+                    const ltEqToken = try self.expectAndYeildToken(TokenKind.LtEq);
                     const ltEqNode = Node{ .kind = NodeKind.LessThanEq, .token = ltEqToken };
                     try children.append(ltEqNode);
                     // Expect Simple
                     try children.append(try self.parseSimple());
                 },
                 else => {
-                    return std.debug.panic("expected <, >, >= or <= but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                    return std.debug.panic("expected <, >, >= or <= but got {s}.\n", .{@tagName(self.currentToken())});
                 },
             }
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -759,7 +767,7 @@ pub const Parser = struct {
             switch (self.currentToken().kind) {
                 TokenKind.Plus => {
                     // Expect +
-                    const plusToken = try self.expectToken(TokenKind.Plus);
+                    const plusToken = try self.expectAndYeildToken(TokenKind.Plus);
                     const plusNode = Node{ .kind = NodeKind.Plus, .token = plusToken };
                     try children.append(plusNode);
                     // Expect Term
@@ -767,19 +775,19 @@ pub const Parser = struct {
                 },
                 TokenKind.Minus => {
                     // Expect -
-                    const minusToken = try self.expectToken(TokenKind.Minus);
+                    const minusToken = try self.expectAndYeildToken(TokenKind.Minus);
                     const minusNode = Node{ .kind = NodeKind.Minus, .token = minusToken };
                     try children.append(minusNode);
                     // Expect Term
                     try children.append(try self.parseTerm());
                 },
                 else => {
-                    return std.debug.panic("expected + or - but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                    return std.debug.panic("expected + or - but got {s}\n", .{@tagName(self.currentToken())});
                 },
             }
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -796,7 +804,7 @@ pub const Parser = struct {
             switch (self.currentToken().kind) {
                 TokenKind.Asterisk => {
                     // Expect *
-                    const mulToken = try self.expectToken(TokenKind.Mul);
+                    const mulToken = try self.expectAndYeildToken(TokenKind.Mul);
                     const mulNode = Node{ .kind = NodeKind.Mul, .token = mulToken };
                     try children.append(mulNode);
                     // Expect Unary
@@ -804,19 +812,19 @@ pub const Parser = struct {
                 },
                 TokenKind.Slash => {
                     // Expect /
-                    const divToken = try self.expectToken(TokenKind.Div);
+                    const divToken = try self.expectAndYeildToken(TokenKind.Div);
                     const divNode = Node{ .kind = NodeKind.Div, .token = divToken };
                     try children.append(divNode);
                     // Expect Unary
                     try children.append(try self.parseUnary());
                 },
                 else => {
-                    return std.debug.panic("expected * or / but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                    return std.debug.panic("expected * or / but got {s}.\n", .{@tagName(self.currentToken())});
                 },
             }
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -835,17 +843,17 @@ pub const Parser = struct {
                 },
                 TokenKind.Minus => {
                     // Expect -
-                    const minusToken = try self.expectToken(TokenKind.Minus);
+                    const minusToken = try self.expectAndYeildToken(TokenKind.Minus);
                     const minusNode = Node{ .kind = NodeKind.Unary, .token = minusToken };
                     try children.append(minusNode);
                 },
                 else => {
-                    return std.debug.panic("expected ! or - but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                    return std.debug.panic("expected ! or - but got {s}.\n", .{@tagName(self.currentToken())});
                 },
             }
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -865,7 +873,7 @@ pub const Parser = struct {
             try children.append(try self.expectIdentifier());
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 
@@ -894,7 +902,7 @@ pub const Parser = struct {
             },
             TokenKind.Number => {
                 // Expect Number
-                const numberToken = try self.expectToken(TokenKind.Number);
+                const numberToken = try self.expectAndYeildToken(TokenKind.Number);
                 const numberNode = Node{ .kind = NodeKind.Number, .token = numberToken };
                 try children.append(numberNode);
             },
@@ -926,11 +934,11 @@ pub const Parser = struct {
                 try children.append(nullNode);
             },
             else => {
-                return std.debug.panic("expected factor but got {s}.\n At \"{s}\":{any}:{any} in input", .{ TokenKind[self.currentToken().kind], self.currentToken().file, self.currentToken().line, self.currentToken().column });
+                return std.debug.panic("expected factor but got {s}.\n", .{@tagName(self.currentToken())});
             },
         }
 
-        result.children = children.toOwnedSlice();
+        result.children = try children.toOwnedSlice();
         return result;
     }
 };
