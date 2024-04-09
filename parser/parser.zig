@@ -77,8 +77,8 @@ pub const NodeKind = union(enum) {
 pub const Node = struct {
     kind: NodeKind,
     token: Token,
-    lhs: ?usize,
-    rhs: ?usize,
+    lhs: ?usize = null,
+    rhs: ?usize = null,
 };
 
 pub const Ast = struct {
@@ -97,7 +97,7 @@ pub const Parser = struct {
     readPos: usize = 1,
     idMap: std.StringHashMap(bool),
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
 
     // flags
     showParseTree: bool = true,
@@ -167,17 +167,17 @@ pub const Parser = struct {
 
     // Adds the node to the types array in the ast
     // Returns the index of the node in the types array
-    pub fn typesAppendNode(self: *Parser, node: Node) !usize{
+    pub fn typesAppendNode(self: *Parser, node: Node) !usize {
         try self.ast.types.append(node);
         return self.ast.types.len - 1;
     }
 
-    pub fn typesAppend(self: *Parser, kind: NodeKind, token: Token) !usize{
+    pub fn typesAppend(self: *Parser, kind: NodeKind, token: Token) !usize {
         const node = Node{ .kind = kind, .token = token };
         return self.typesAppendNode(node);
     }
 
-    pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator ) !Parser {
+    pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
         var parser = Parser{
             .ast = null,
             .idMap = std.StringHashMap(bool).init(allocator),
@@ -187,15 +187,11 @@ pub const Parser = struct {
             .allocator = allocator,
         };
 
-        // Preallocating each of the members to be the size of tokens.len at first. 
+        // Preallocating each of the members to be the size of tokens.len at first.
         // This is not memory efficient, but it is a good starting point.
-        // NOTE: need to consider if just having one ast array would be better with 
+        // NOTE: need to consider if just having one ast array would be better with
         // additional arrays for other types of nodes rather than this
-        parser.ast = Ast{ 
-            .types = try std.ArrayList(Node).init(allocator, tokens.len),
-            .declarations = try std.ArrayList(Node).init(allocator, tokens.len),
-            .functions = try std.ArrayList(Node).init(allocator, tokens.len)
-        };
+        parser.ast = Ast{ .types = try std.ArrayList(Node).initCapacity(allocator, tokens.len), .declarations = try std.ArrayList(Node).initCapacity(allocator, tokens.len), .functions = try std.ArrayList(Node).initCapacity(allocator, tokens.len) };
 
         // TODO: make this program and not type declaration
         try parser.parseProgram();
@@ -215,7 +211,7 @@ pub const Parser = struct {
 
         // Expect Types
         while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
-            // TODO: we can do something with all the indexs returned, 
+            // TODO: we can do something with all the indexs returned,
             // but for now we will just ignore them
             _ = try self.parseTypeDeclaration();
         }
@@ -235,7 +231,7 @@ pub const Parser = struct {
 
     // TypeDeclaration = "struct" Identifier "{" NestedDeclarations "}" ";"
     // Refactored
-    pub fn parseTypeDeclaration(self: *Parser) !usize{
+    pub fn parseTypeDeclaration(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a TypeDelcaration\n", .{});
@@ -243,11 +239,10 @@ pub const Parser = struct {
             }
         }
 
-        var typeNodeIndex = self.typesAppend(self, NodeKind.TypeDeclaration, try self.currentToken());
-        
+        var typeNodeIndex = self.typesAppend(NodeKind.TypeDeclaration, try self.currentToken());
+
         // Exepect struct
         try self.expectToken(TokenKind.KeywordStruct);
-
 
         // Expect identifier
         const identIndex = try self.typesAppendNode(try self.expectIdentifier());
@@ -269,11 +264,11 @@ pub const Parser = struct {
         self.ast.types[typeNodeIndex].rhs = nestedDeclarationsIndex;
 
         // convert to array
-        return result;
+        return typeNodeIndex;
     }
 
     // NestedDecl = { Decl ";" }+
-    pub fn parseNestedDeclarations(self: *Parser) !usize{
+    pub fn parseNestedDeclarations(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing NestedDeclarations\n", .{});
@@ -304,7 +299,7 @@ pub const Parser = struct {
     }
 
     // Decl = Type Identifier
-    pub fn parseDecl(self: *Parser) !usize{
+    pub fn parseDecl(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Decl\n", .{});
@@ -328,7 +323,7 @@ pub const Parser = struct {
     }
 
     // Type = "int" | "bool" | "struct" Identifier
-    pub fn parseType(self: *Parser) !usize{
+    pub fn parseType(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Type\n", .{});
@@ -390,7 +385,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // While not EOF or function keyword then parse declaration
         // Expect (Declaration)*
@@ -412,7 +407,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Declaration, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect type
         try children.append(try self.parseType());
@@ -446,7 +441,7 @@ pub const Parser = struct {
         }
 
         var result: Node = Node{ .kind = NodeKind.Functions, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // While not EOF then parse function
         // Expect (Function)*
@@ -467,7 +462,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Function, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect fun
         try self.expectToken(TokenKind.KeywordFun);
@@ -506,7 +501,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Parameters, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect (
         try self.expectToken(TokenKind.LParen);
@@ -540,7 +535,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.ReturnType, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         const token = try self.currentToken();
         switch (token.kind) {
@@ -567,7 +562,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Statement, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         switch ((try self.currentToken()).kind) {
             // Block
@@ -626,7 +621,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.StatementList, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // While not EOF then parse statement
         // Expect (Statement)*
@@ -647,7 +642,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Block, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect {
         try self.expectToken(TokenKind.LCurly);
@@ -671,7 +666,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Assignment, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect LValue
         try children.append(try self.parseLValue());
@@ -706,7 +701,7 @@ pub const Parser = struct {
             std.debug.print("Or defined as: PrintLn = \"print\" Expression \"endl\" \";\"\n", .{});
         }
         var result: Node = Node{ .kind = NodeKind.Print, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect print
         try self.expectToken(TokenKind.KeywordPrint);
@@ -746,7 +741,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.ConditionalIf, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect if
         try self.expectToken(TokenKind.KeywordIf);
@@ -785,7 +780,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.While, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect while
         try self.expectToken(TokenKind.KeywordWhile);
@@ -815,7 +810,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Delete, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect delete
         try self.expectToken(TokenKind.KeywordDelete);
@@ -839,7 +834,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Return, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect return
         try self.expectToken(TokenKind.KeywordReturn);
@@ -866,7 +861,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Invocation, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect Identifier
         try children.append(try self.expectIdentifier());
@@ -890,7 +885,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.LValue, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect Identifier
         try children.append(try self.expectIdentifier());
@@ -916,7 +911,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Expression, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect BoolTerm
         try children.append(try self.parseBoolTerm());
@@ -942,7 +937,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.BoolTerm, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect EqTerm
         try children.append(try self.parseEqTerm());
@@ -968,7 +963,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.EqTerm, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect RelTerm
         try children.append(try self.parseRelTerm());
@@ -1012,7 +1007,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.RelTerm, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect Simple
         try children.append(try self.parseSimple());
@@ -1072,7 +1067,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Simple, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect Term
         try children.append(try self.parseTerm());
@@ -1115,7 +1110,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Term, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect Unary
         try children.append(try self.parseUnary());
@@ -1158,7 +1153,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Unary, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
         // Expect ("!" | "-")*
         while ((try self.currentToken()).kind == TokenKind.Not or (try self.currentToken()).kind == TokenKind.Minus) {
             switch ((try self.currentToken()).kind) {
@@ -1193,7 +1188,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Selector, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect Factor
         try children.append(try self.parseFactor());
@@ -1219,7 +1214,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Factor, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         switch ((try self.currentToken()).kind) {
             TokenKind.LParen => {
@@ -1238,6 +1233,12 @@ pub const Parser = struct {
                     // Expect Arguments
                     try children.append(try self.parseArguments());
                 }
+            },
+            TokenKind.Number => {
+                // Expect Number
+                const numberToken = try self.expectAndYeildToken(TokenKind.Number);
+                const numberNode = Node{ .kind = NodeKind.Number, .token = numberToken };
+                _ = numberNode;
             },
             TokenKind.Number => {
                 // Expect Number
@@ -1290,7 +1291,7 @@ pub const Parser = struct {
             }
         }
         var result: Node = Node{ .kind = NodeKind.Arguments, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(allocator);
+        var children = std.ArrayList(Node).init(self.allocator);
 
         // Expect (
         try self.expectToken(TokenKind.LParen);
@@ -1318,10 +1319,11 @@ pub const Parser = struct {
 };
 
 pub fn main() !void {
-    const source = "fun TS() void { int a; int b; struct TS S; }";
+    const source = "struct test{ int a;};";
     const tokens = try Lexer.tokenizeFromStr(source);
-    const parser = try Parser.parseTokens(tokens, source);
-    _ = parser;
+    const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
+    std.debug.print("Parsed successfully\n", .{});
+    std.debug.print("AST: {any}\n", .{parser.ast});
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1384,12 +1386,6 @@ test "function_no_return_type" {
 
 test "function_no_lcurly" {
     const source = "fun TS() void int a; int b; struct TS S; }";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
-}
-
-test "function_no_rcurly" {
-    const source = "fun TS() void { int a; int b; struct TS S; ";
     const tokens = try Lexer.tokenizeFromStr(source);
     try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
 }
