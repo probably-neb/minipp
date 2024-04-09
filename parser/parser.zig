@@ -83,29 +83,40 @@ pub const Node = struct {
     token: Token,
     lhs: ?usize = null,
     rhs: ?usize = null,
-};
 
-pub const Ast = struct {
-    types: std.ArrayList(Node),
-    types_len: usize = 0,
-    declarations: std.ArrayList(Node),
-    declarations_len: usize = 0,
-    functions: std.ArrayList(Node),
-    functions_len: usize = 0,
+    pub fn fromToken(token: Token) Node {
+        const kind = switch (token.kind) {
+            TokenKind.KeywordStruct => NodeKind.StructType,
+            TokenKind.KeywordInt => NodeKind.IntType,
+            TokenKind.KeywordBool => NodeKind.BoolType,
+            TokenKind.Identifier => NodeKind.Identifier,
+            TokenKind.KeywordVoid => NodeKind.Void,
+            TokenKind.KeywordRead => NodeKind.Read,
+            TokenKind.KeywordReturn => NodeKind.Return,
+            TokenKind.KeywordDelete => NodeKind.Delete,
+            TokenKind.Number => NodeKind.Number,
+            TokenKind.KeywordTrue => NodeKind.True,
+            TokenKind.KeywordFalse => NodeKind.False,
+            TokenKind.KeywordNew => NodeKind.New,
+            TokenKind.KeywordNull => NodeKind.Null,
+            TokenKind.KeywordWhile => NodeKind.While,
+            TokenKind.Mul => NodeKind.Mul,
+            TokenKind.Div => NodeKind.Div,
+            TokenKind.Plus => NodeKind.Plus,
+            TokenKind.Minus => NodeKind.Minus,
+            TokenKind.DoubleEq => NodeKind.Equals,
+            TokenKind.NotEq => NodeKind.NotEq,
+            TokenKind.Lt => NodeKind.LessThan,
+            TokenKind.Gt => NodeKind.GreaterThan,
+            TokenKind.LtEq => NodeKind.LessThanEq,
+            TokenKind.GtEq => NodeKind.GreaterThanEq,
+            TokenKind.Not => NodeKind.Not,
 
-    pub fn prettyPrintTypes(self: *const Ast, input: []const u8) void {
-        std.debug.print("Types{{", .{});
-        for (self.types.items) |node| {
-            switch (node.kind) {
-                NodeKind.Identifier => {
-                    std.debug.print("Identifier={s}, ", .{node.token._range.getSubStrFromStr(input)});
-                },
-                else => {
-                    std.debug.print("{s}, ", .{@tagName(node.kind)});
-                },
-            }
-        }
-        std.debug.print("}}\n", .{});
+            else => {
+                unreachable;
+            },
+        };
+        return Node{ .kind = kind, .token = token };
     }
 };
 
@@ -113,7 +124,8 @@ pub const Parser = struct {
     tokens: []Token,
     input: []const u8,
 
-    ast: Ast,
+    ast: std.ArrayList(Node),
+    astLen: usize = 0,
 
     pos: usize = 0,
     readPos: usize = 1,
@@ -190,28 +202,25 @@ pub const Parser = struct {
 
     // Adds the node to the types array in the ast
     // Returns the index of the node in the types array
-    pub fn typesAppendNode(self: *Parser, node: Node) !usize {
-        try self.ast.types.append(node);
-        self.ast.types_len += 1;
-        return self.ast.types_len - 1;
+    pub fn astAppendNode(self: *Parser, node: Node) !usize {
+        try self.ast.append(node);
+        self.astLen += 1;
+        return self.astLen - 1;
     }
 
-    pub fn typesAppend(self: *Parser, kind: NodeKind, token: Token) !usize {
+    pub fn astAppend(self: *Parser, kind: NodeKind, token: Token) !usize {
         const node = Node{ .kind = kind, .token = token };
-        return self.typesAppendNode(node);
+        return self.astAppendNode(node);
+    }
+
+    pub fn fromTypesAppend(self: *Parser, token: Token) !usize {
+        const node = Node.fromToken(token);
+        return self.astAppendNode(node);
     }
 
     pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
         var parser = Parser{
-            .ast = Ast{
-                // Preallocating each of the members to be the size of tokens.len at first.
-                // This is not memory efficient, but it is a good starting point.
-                // NOTE: need to consider if just having one ast array would be better with
-                // additional arrays for other types of nodes rather than this
-                .types = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
-                .declarations = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
-                .functions = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
-            },
+            .ast = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
             .idMap = std.StringHashMap(bool).init(allocator),
             .tokens = tokens,
             .input = input,
@@ -219,7 +228,6 @@ pub const Parser = struct {
             .allocator = allocator,
         };
 
-        // TODO: make this program and not type declaration
         try parser.parseProgram();
         return parser;
     }
@@ -264,13 +272,14 @@ pub const Parser = struct {
             }
         }
 
-        var typeNodeIndex = try self.typesAppend(NodeKind.TypeDeclaration, try self.currentToken());
+        // Init indexes
+        var typeNodeIndex = try self.astAppend(NodeKind.TypeDeclaration, try self.currentToken());
 
         // Exepect struct
         try self.expectToken(TokenKind.KeywordStruct);
 
         // Expect identifier
-        const identIndex = try self.typesAppendNode(try self.expectIdentifier());
+        const identIndex = try self.astAppendNode(try self.expectIdentifier());
 
         // Expect {
         try self.expectToken(TokenKind.LCurly);
@@ -285,8 +294,8 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.Semicolon);
 
         // Assign the lhs and rhs
-        self.ast.types.items[typeNodeIndex].lhs = identIndex;
-        self.ast.types.items[typeNodeIndex].rhs = nestedDeclarationsIndex;
+        self.ast.items[typeNodeIndex].lhs = identIndex;
+        self.ast.items[typeNodeIndex].rhs = nestedDeclarationsIndex;
 
         // convert to array
         return typeNodeIndex;
@@ -301,7 +310,8 @@ pub const Parser = struct {
             }
         }
 
-        var nestedDeclarationsIndex = try self.typesAppend(NodeKind.NestedDecl, try self.currentToken());
+        // Init indexes
+        var nestedDeclarationsIndex = try self.astAppend(NodeKind.NestedDecl, try self.currentToken());
 
         // Expect { Decl ";" }+
         var declIndex = try self.parseDecl();
@@ -317,8 +327,8 @@ pub const Parser = struct {
         }
 
         // assign the lhs and rhs
-        self.ast.types.items[nestedDeclarationsIndex].lhs = declIndex;
-        self.ast.types.items[nestedDeclarationsIndex].rhs = finalIndex;
+        self.ast.items[nestedDeclarationsIndex].lhs = declIndex;
+        self.ast.items[nestedDeclarationsIndex].rhs = finalIndex;
 
         return nestedDeclarationsIndex;
     }
@@ -331,18 +341,18 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Decl = Type Identifier\n", .{});
             }
         }
-        // add decl to types
-        var declIndex = try self.typesAppend(NodeKind.Decl, try self.currentToken());
+        // Init indexes
+        var declIndex = try self.astAppend(NodeKind.Decl, try self.currentToken());
 
         // Expect Type
         const typeIndex = try self.parseType();
 
         // Expect Identifier
-        const identIndex = try self.typesAppendNode(try self.expectIdentifier());
+        const identIndex = try self.astAppendNode(try self.expectIdentifier());
 
         // assign the lhs and rhs
-        self.ast.types.items[declIndex].lhs = typeIndex;
-        self.ast.types.items[declIndex].rhs = identIndex;
+        self.ast.items[declIndex].lhs = typeIndex;
+        self.ast.items[declIndex].rhs = identIndex;
 
         return declIndex;
     }
@@ -356,8 +366,8 @@ pub const Parser = struct {
             }
         }
 
-        // add Type to types
-        var typeIndex = try self.typesAppend(NodeKind.Type, try self.currentToken());
+        // Init indexes
+        var typeIndex = try self.astAppend(NodeKind.Type, try self.currentToken());
         var rhsIndex: ?usize = null;
         var lhsIndex: ?usize = null;
 
@@ -366,14 +376,14 @@ pub const Parser = struct {
         // Expect int | bool | struct (id)
         switch (token.kind) {
             TokenKind.KeywordInt => {
-                lhsIndex = try self.typesAppend(NodeKind.IntType, token);
+                lhsIndex = try self.astAppend(NodeKind.IntType, token);
             },
             TokenKind.KeywordBool => {
-                lhsIndex = try self.typesAppend(NodeKind.BoolType, token);
+                lhsIndex = try self.astAppend(NodeKind.BoolType, token);
             },
             TokenKind.KeywordStruct => {
-                lhsIndex = try self.typesAppend(NodeKind.StructType, token);
-                rhsIndex = try self.typesAppendNode(try self.expectIdentifier());
+                lhsIndex = try self.astAppend(NodeKind.StructType, token);
+                rhsIndex = try self.astAppendNode(try self.expectIdentifier());
             },
             else => {
                 // TODO: make this error like the others
@@ -385,8 +395,8 @@ pub const Parser = struct {
             },
         }
         // assign the lhs and rhs
-        self.ast.types.items[typeIndex].rhs = rhsIndex;
-        self.ast.types.items[typeIndex].lhs = lhsIndex;
+        self.ast.items[typeIndex].rhs = rhsIndex;
+        self.ast.items[typeIndex].lhs = lhsIndex;
 
         return typeIndex;
     }
@@ -402,7 +412,6 @@ pub const Parser = struct {
         }
     }
 
-    /////////// UNTOUCHED TO REFACTOR ////////////////////////
     // Declarations = { Declaration }*
     pub fn parseDeclarations(self: *Parser) !Node {
         errdefer {
@@ -411,18 +420,24 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Declarations = {{ Declaration }}*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Declarations, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var declarationsIndex = try self.astAppend(NodeKind.Declarations, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // While not EOF or function keyword then parse declaration
         // Expect (Declaration)*
+        if (try self.isCurrentTokenAType()) {
+            lhsIndex = try self.parseDeclaration();
+        }
         while (try self.isCurrentTokenAType()) {
             // Expect Declaration
-            try children.append(try self.parseDeclaration());
+            rhsIndex = try self.parseDeclaration();
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[declarationsIndex].lhs = lhsIndex;
+        self.ast.items[declarationsIndex].rhs = rhsIndex;
     }
 
     // Declaration = Type Identifier ("," Identifier)* ";"
@@ -433,31 +448,37 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Declaration = Type Identifier (\",\" Identifier)* \";\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Declaration, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var declarationIndex = try self.astAppend(NodeKind.Declaration, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect type
-        try children.append(try self.parseType());
+        lhsIndex = try self.parseType();
 
         // Expect Identifier
-        try children.append(try self.expectIdentifier());
+        rhsIndex = try self.astAppendNode(try self.expectIdentifier());
 
         // Expect ("," Identifier)* ";"
         while ((try self.currentToken()).kind != TokenKind.Semicolon) {
             // Expect ,
             try self.expectToken(TokenKind.Comma);
             // Expect Identifier
-            try children.append(try self.expectIdentifier());
+            rhsIndex = try self.astAppendNode(try self.expectIdentifier());
             // Repeat
         }
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[declarationIndex].lhs = lhsIndex;
+        self.ast.items[declarationIndex].rhs = rhsIndex;
+
+        return declarationIndex;
     }
 
+    /////////// UNTOUCHED TO REFACTOR ////////////////////////
     // Functions = ( Function )*
     pub fn parseFunctions(self: *Parser) !Node {
         errdefer {
@@ -1270,12 +1291,6 @@ pub const Parser = struct {
                 const numberNode = Node{ .kind = NodeKind.Number, .token = numberToken };
                 _ = numberNode;
             },
-            TokenKind.Number => {
-                // Expect Number
-                const numberToken = try self.expectAndYeildToken(TokenKind.Number);
-                const numberNode = Node{ .kind = NodeKind.Number, .token = numberToken };
-                try children.append(numberNode);
-            },
             TokenKind.KeywordTrue => {
                 // Expect true
                 const trueToken = try self.consumeToken();
@@ -1353,7 +1368,7 @@ pub fn main() !void {
     const tokens = try Lexer.tokenizeFromStr(source);
     const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
     std.debug.print("Parsed successfully\n", .{});
-    parser.ast.prettyPrintTypes(source);
+    std.debug.print("{any}\n", .{parser});
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
