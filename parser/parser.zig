@@ -779,7 +779,6 @@ pub const Parser = struct {
         return blockIndex;
     }
 
-    /////////// UNTOUCHED TO REFACTOR ////////////////////////
     // Assignment = LValue = (Expression | "read") ";"
     pub fn parseAssignment(self: *Parser) !Node {
         errdefer {
@@ -788,11 +787,13 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Assignment = LValue = (Expression | \"read\") \";\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Assignment, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var assignmentIndex = try self.astAppend(NodeKind.Assignment, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect LValue
-        try children.append(try self.parseLValue());
+        lhsIndex = try self.parseLValue();
 
         // Expect =
         try self.expectToken(TokenKind.Eq);
@@ -800,17 +801,19 @@ pub const Parser = struct {
         // Expect Expression | "read"
         if ((try self.currentToken()).kind == TokenKind.KeywordRead) {
             // make read node
-            const readNode = Node{ .kind = NodeKind.Read, .token = try self.consumeToken() };
-            try children.append(readNode);
+            rhsIndex = try self.astAppend(NodeKind.Read, try self.consumeToken());
         } else {
-            try children.append(try self.parseExpression());
+            // make expression node
+            rhsIndex = try self.parseExpression();
         }
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[assignmentIndex].lhs = lhsIndex;
+        self.ast.items[assignmentIndex].rhs = rhsIndex;
+        return assignmentIndex;
     }
 
     // Print = "print" Expression ";"
@@ -823,34 +826,38 @@ pub const Parser = struct {
             }
             std.debug.print("Or defined as: PrintLn = \"print\" Expression \"endl\" \";\"\n", .{});
         }
-        var result: Node = Node{ .kind = NodeKind.Print, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var printIndex = try self.astAppend(NodeKind.Print, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect print
         try self.expectToken(TokenKind.KeywordPrint);
 
         // Expect Expression
-        try children.append(try self.parseExpression());
+        lhsIndex = try self.parseExpression();
 
         switch ((try self.currentToken()).kind) {
             // Expect ;
             TokenKind.Semicolon => {
                 try self.expectToken(TokenKind.Semicolon);
-                result.kind = NodeKind.Print;
+                self.ast.items[printIndex].kind = NodeKind.Print;
             },
             // Expect endl ;
             TokenKind.KeywordEndl => {
                 try self.expectToken(TokenKind.KeywordEndl);
                 try self.expectToken(TokenKind.Semicolon);
-                result.kind = NodeKind.PrintLn;
+                self.ast.items[printIndex].kind = NodeKind.PrintLn;
             },
             else => {
                 return std.debug.panic("expected ; or endl but got {s}.", .{@tagName((try self.currentToken()).kind)});
             },
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[printIndex].lhs = lhsIndex;
+        self.ast.items[printIndex].rhs = rhsIndex;
+        return printIndex;
     }
 
     // ConditionalIf = "if" "(" Expression ")" Block
@@ -863,8 +870,10 @@ pub const Parser = struct {
                 std.debug.print("Or defined as: ConditionalIfElse = \"if\" \"(\" Expression \")\" Block \"else\" Block\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.ConditionalIf, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var conditionalIndex = try self.astAppend(NodeKind.ConditionalIf, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect if
         try self.expectToken(TokenKind.KeywordIf);
@@ -873,25 +882,28 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.LParen);
 
         // Expect Expression
-        try children.append(try self.parseExpression());
+        lhsIndex = try self.parseExpression();
 
         // Expect )
         try self.expectToken(TokenKind.RParen);
 
         // Expect Block
-        try children.append(try self.parseBlock());
+        rhsIndex = try self.parseBlock();
 
         // If else then parse else block
         if ((try self.currentToken()).kind == TokenKind.KeywordElse) {
             // Expect else
             try self.expectToken(TokenKind.KeywordElse);
             // Expect Block
-            try children.append(try self.parseBlock());
-            result.kind = NodeKind.ConditionalIfElse;
+            rhsIndex = try self.parseBlock();
+            self.ast.items[conditionalIndex].kind = NodeKind.ConditionalIfElse;
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[conditionalIndex].lhs = lhsIndex;
+        self.ast.items[conditionalIndex].rhs = rhsIndex;
+
+        return conditionalIndex;
     }
 
     // While = "while" "(" Expression ")" Block
@@ -902,8 +914,10 @@ pub const Parser = struct {
                 std.debug.print("Defined as: While = \"while\" \"(\" Expression \")\" Block\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.While, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var whileIndex = try self.astAppend(NodeKind.While, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect while
         try self.expectToken(TokenKind.KeywordWhile);
@@ -912,16 +926,19 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.LParen);
 
         // Expect Expression
-        try children.append(try self.parseExpression());
+        lhsIndex = try self.parseExpression();
 
         // Expect )
         try self.expectToken(TokenKind.RParen);
 
         // Expect Block
-        try children.append(try self.parseBlock());
+        rhsIndex = try self.parseBlock();
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[whileIndex].lhs = lhsIndex;
+        self.ast.items[whileIndex].rhs = rhsIndex;
+
+        return whileIndex;
     }
 
     // Delete = "delete" Expression ";"
@@ -932,20 +949,25 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Delete = \"delete\" Expression \";\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Delete, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var deleteIndex = try self.astAppend(NodeKind.Delete, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect delete
         try self.expectToken(TokenKind.KeywordDelete);
 
         // Expect Expression
-        try children.append(try self.parseExpression());
+        lhsIndex = try self.parseExpression();
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[deleteIndex].lhs = lhsIndex;
+        self.ast.items[deleteIndex].rhs = rhsIndex;
+
+        return deleteIndex;
     }
 
     // Return = "return" (Expression)?  ";"
@@ -956,8 +978,10 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Return = \"return\" (Expression)?  \";\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Return, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var returnIndex = try self.astAppend(NodeKind.Return, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect return
         try self.expectToken(TokenKind.KeywordReturn);
@@ -965,14 +989,17 @@ pub const Parser = struct {
         // Expect Expression optionally
         if ((try self.currentToken()).kind != TokenKind.Semicolon) {
             // Expect Expression
-            try children.append(try self.parseExpression());
+            lhsIndex = try self.parseExpression();
         }
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[returnIndex].lhs = lhsIndex;
+        self.ast.items[returnIndex].rhs = rhsIndex;
+
+        return returnIndex;
     }
 
     // Invocation = Identifier Arguments ";"
@@ -983,20 +1010,25 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Invocation = Identifier Arguments \";\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Invocation, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var invocationIndex = try self.astAppend(NodeKind.Invocation, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect Identifier
-        try children.append(try self.expectIdentifier());
+        lhsIndex = try self.astAppendNode(try self.expectIdentifier());
 
         // Expect Arguments
-        try children.append(try self.parseArguments());
+        rhsIndex = try self.parseArguments();
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[invocationIndex].lhs = lhsIndex;
+        self.ast.items[invocationIndex].rhs = rhsIndex;
+
+        return invocationIndex;
     }
 
     // LValue = Identifier ("." Identifier)*
@@ -1007,24 +1039,30 @@ pub const Parser = struct {
                 std.debug.print("Defined as: LValue = Identifier (\".\" Identifier)*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.LValue, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var lValueIndex = try self.astAppend(NodeKind.LValue, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect Identifier
-        try children.append(try self.expectIdentifier());
+        lhsIndex = try self.astAppendNode(try self.expectIdentifier());
 
         // Expect ("." Identifier)*
         while ((try self.currentToken()).kind == TokenKind.Dot) {
             // Expect .
             try self.expectToken(TokenKind.Dot);
             // Expect Identifier
-            try children.append(try self.expectIdentifier());
+            rhsIndex = try self.astAppendNode(try self.expectIdentifier());
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[lValueIndex].lhs = lhsIndex;
+        self.ast.items[lValueIndex].rhs = rhsIndex;
+
+        return lValueIndex;
     }
 
+    /////////// UNTOUCHED TO REFACTOR ////////////////////////
     // Expression = BoolTerm ("||" BoolTerm)*
     pub fn parseExpression(self: *Parser) !Node {
         errdefer {
@@ -1033,22 +1071,27 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Expression = BoolTerm (\"||\" BoolTerm)*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Expression, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var expressionIndex = try self.astAppend(NodeKind.Expression, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect BoolTerm
-        try children.append(try self.parseBoolTerm());
+        lhsIndex = try self.parseBoolTerm();
 
         // Expect ("||" BoolTerm)*
         while ((try self.currentToken()).kind == TokenKind.Or) {
             // Expect ||
             try self.expectToken(TokenKind.Or);
             // Expect BoolTerm
-            try children.append(try self.parseBoolTerm());
+            rhsIndex = try self.parseBoolTerm();
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[expressionIndex].lhs = lhsIndex;
+        self.ast.items[expressionIndex].rhs = rhsIndex;
+
+        return expressionIndex;
     }
 
     // Boolterm = EqTerm ("&&" EqTerm)*
@@ -1059,22 +1102,27 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Boolterm = EqTerm (\"&&\" EqTerm)*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.BoolTerm, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var boolTermIndex = try self.astAppend(NodeKind.BoolTerm, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect EqTerm
-        try children.append(try self.parseEqTerm());
+        lhsIndex = try self.parseEqTerm();
 
         // Expect ("&&" EqTerm)*
         while ((try self.currentToken()).kind == TokenKind.And) {
             // Expect &&
             try self.expectToken(TokenKind.And);
             // Expect EqTerm
-            try children.append(try self.parseEqTerm());
+            rhsIndex = try self.parseEqTerm();
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[boolTermIndex].lhs = lhsIndex;
+        self.ast.items[boolTermIndex].rhs = rhsIndex;
+
+        return boolTermIndex;
     }
 
     // EqTerm = RelTerm (("==" | "!=") RelTerm)*
@@ -1085,11 +1133,13 @@ pub const Parser = struct {
                 std.debug.print("Defined as: EqTerm = RelTerm (\"==\" | \"!=\") RelTerm)*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.EqTerm, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var eqTermIndex = try self.astAppend(NodeKind.EqTerm, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect RelTerm
-        try children.append(try self.parseRelTerm());
+        lhsIndex = try self.parseRelTerm();
 
         // Expect (("==" | "!=") RelTerm)*
         while ((try self.currentToken()).kind == TokenKind.DoubleEq or (try self.currentToken()).kind == TokenKind.NotEq) {
@@ -1098,27 +1148,28 @@ pub const Parser = struct {
                     // Expect !=
                     const notEqToken = try self.expectAndYeildToken(TokenKind.NotEq);
                     const notEqNode = Node{ .kind = NodeKind.NotEq, .token = notEqToken };
-                    try children.append(notEqNode);
-
+                    rhsIndex = try self.astAppendNode(notEqNode);
                     // Expect RelTerm
-                    try children.append(try self.parseRelTerm());
+                    rhsIndex = try self.parseRelTerm();
                 },
                 TokenKind.DoubleEq => {
                     // Expect ==
                     const eqToken = try self.expectAndYeildToken(TokenKind.DoubleEq);
                     const eqNode = Node{ .kind = NodeKind.Equals, .token = eqToken };
-                    try children.append(eqNode);
+                    rhsIndex = try self.astAppendNode(eqNode);
                     // Expect RelTerm
-                    try children.append(try self.parseRelTerm());
+                    rhsIndex = try self.parseRelTerm();
                 },
                 else => {
+                    // TODO: make this error like the others
                     return std.debug.panic("expected == or != but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[eqTermIndex].lhs = lhsIndex;
+        self.ast.items[eqTermIndex].rhs = rhsIndex;
     }
 
     // RelTerm = Simple (("<" | ">" | ">=" | "<=") Simple)*
@@ -1129,11 +1180,13 @@ pub const Parser = struct {
                 std.debug.print("Defined as: RelTerm = Simple (\"<\" | \">\" | \">=\" | \"<=\") Simple)*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.RelTerm, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var relTermIndex = try self.astAppend(NodeKind.RelTerm, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect Simple
-        try children.append(try self.parseSimple());
+        lhsIndex = try self.parseSimple();
 
         // Expect (("<" | ">" | ">=" | "<=") Simple)*
         while ((try self.currentToken()).kind == TokenKind.Lt or (try self.currentToken()).kind == TokenKind.Gt or (try self.currentToken()).kind == TokenKind.GtEq or (try self.currentToken()).kind == TokenKind.LtEq) {
@@ -1142,43 +1195,48 @@ pub const Parser = struct {
                     // Expect <
                     const ltToken = try self.expectAndYeildToken(TokenKind.Lt);
                     const ltNode = Node{ .kind = NodeKind.LessThan, .token = ltToken };
-                    try children.append(ltNode);
+                    rhsIndex = try self.astAppendNode(ltNode);
                     // Expect Simple
-                    try children.append(try self.parseSimple());
+                    rhsIndex = try self.parseSimple();
                 },
                 TokenKind.Gt => {
                     // Expect >
                     const gtToken = try self.expectAndYeildToken(TokenKind.Gt);
                     const gtNode = Node{ .kind = NodeKind.GreaterThan, .token = gtToken };
-                    try children.append(gtNode);
+                    rhsIndex = try self.astAppendNode(gtNode);
 
                     // Expect Simple
-                    try children.append(try self.parseSimple());
+                    rhsIndex = try self.parseSimple();
                 },
                 TokenKind.GtEq => {
                     // Expect >=
                     const gtEqToken = try self.expectAndYeildToken(TokenKind.GtEq);
                     const gtEqNode = Node{ .kind = NodeKind.GreaterThanEq, .token = gtEqToken };
-                    try children.append(gtEqNode);
+                    rhsIndex = try self.astAppendNode(gtEqNode);
                     // Expect Simple
-                    try children.append(try self.parseSimple());
+                    rhsIndex = try self.parseSimple();
                 },
                 TokenKind.LtEq => {
                     // Expect <=
                     const ltEqToken = try self.expectAndYeildToken(TokenKind.LtEq);
                     const ltEqNode = Node{ .kind = NodeKind.LessThanEq, .token = ltEqToken };
-                    try children.append(ltEqNode);
+                    rhsIndex = try self.astAppendNode(ltEqNode);
+
                     // Expect Simple
-                    try children.append(try self.parseSimple());
+                    rhsIndex = try self.parseSimple();
                 },
                 else => {
+                    // TODO: make this error like the others
                     return std.debug.panic("expected <, >, >= or <= but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[relTermIndex].lhs = lhsIndex;
+        self.ast.items[relTermIndex].rhs = rhsIndex;
+
+        return relTermIndex;
     }
 
     // Simple = Term (("+" | "-") Term)*
@@ -1189,11 +1247,13 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Simple = Term (\"+\" | \"-\") Term)*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Simple, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var simpleIndex = try self.astAppend(NodeKind.Simple, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect Term
-        try children.append(try self.parseTerm());
+        lhsIndex = try self.parseTerm();
 
         // Expect (("+" | "-") Term)*
         while ((try self.currentToken()).kind == TokenKind.Plus or (try self.currentToken()).kind == TokenKind.Minus) {
@@ -1202,26 +1262,30 @@ pub const Parser = struct {
                     // Expect +
                     const plusToken = try self.expectAndYeildToken(TokenKind.Plus);
                     const plusNode = Node{ .kind = NodeKind.Plus, .token = plusToken };
-                    try children.append(plusNode);
+                    rhsIndex = try self.astAppendNode(plusNode);
                     // Expect Term
-                    try children.append(try self.parseTerm());
+                    rhsIndex = try self.parseTerm();
                 },
                 TokenKind.Minus => {
                     // Expect -
                     const minusToken = try self.expectAndYeildToken(TokenKind.Minus);
                     const minusNode = Node{ .kind = NodeKind.Minus, .token = minusToken };
-                    try children.append(minusNode);
+                    rhsIndex = try self.astAppendNode(minusNode);
                     // Expect Term
-                    try children.append(try self.parseTerm());
+                    rhsIndex = try self.parseTerm();
                 },
                 else => {
+                    // TODO: make this error like the others
                     return std.debug.panic("expected + or - but got {s}\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[simpleIndex].lhs = lhsIndex;
+        self.ast.items[simpleIndex].rhs = rhsIndex;
+
+        return simpleIndex;
     }
 
     // Term = Unary (("*" | "/") Unary)*
@@ -1232,11 +1296,13 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Term = Unary (\"*\" | \"/\") Unary)*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Term, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var termIndex = try self.astAppend(NodeKind.Term, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect Unary
-        try children.append(try self.parseUnary());
+        lhsIndex = try self.parseUnary();
 
         // Expect (("*" | "/") Unary)*
         while ((try self.currentToken()).kind == TokenKind.Mul or (try self.currentToken()).kind == TokenKind.Div) {
@@ -1245,26 +1311,29 @@ pub const Parser = struct {
                     // Expect *
                     const mulToken = try self.expectAndYeildToken(TokenKind.Mul);
                     const mulNode = Node{ .kind = NodeKind.Mul, .token = mulToken };
-                    try children.append(mulNode);
+                    rhsIndex = try self.astAppendNode(mulNode);
                     // Expect Unary
-                    try children.append(try self.parseUnary());
+                    rhsIndex = try self.parseUnary();
                 },
                 TokenKind.Div => {
                     // Expect /
                     const divToken = try self.expectAndYeildToken(TokenKind.Div);
                     const divNode = Node{ .kind = NodeKind.Div, .token = divToken };
-                    try children.append(divNode);
+                    rhsIndex = try self.astAppendNode(divNode);
                     // Expect Unary
-                    try children.append(try self.parseUnary());
+                    rhsIndex = try self.parseUnary();
                 },
                 else => {
+                    // TODO: make this error look like the others
                     return std.debug.panic("expected * or / but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
+        // assign the lhs and rhs
+        self.ast.items[termIndex].lhs = lhsIndex;
+        self.ast.items[termIndex].rhs = rhsIndex;
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        return termIndex;
     }
 
     // Unary = ("!" | "-")* Selector
@@ -1275,8 +1344,11 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Unary = (\"!\" | \"-\")* Selector\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Unary, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var unaryIndex = try self.astAppend(NodeKind.Unary, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
+
         // Expect ("!" | "-")*
         while ((try self.currentToken()).kind == TokenKind.Not or (try self.currentToken()).kind == TokenKind.Minus) {
             switch ((try self.currentToken()).kind) {
@@ -1284,22 +1356,30 @@ pub const Parser = struct {
                     // Expect !
                     const notToken = try self.expectAndYeildToken(TokenKind.Not);
                     const notNode = Node{ .kind = NodeKind.Not, .token = notToken };
-                    try children.append(notNode);
+                    lhsIndex = try self.astAppendNode(notNode);
                 },
                 TokenKind.Minus => {
                     // Expect -
                     const minusToken = try self.expectAndYeildToken(TokenKind.Minus);
                     const minusNode = Node{ .kind = NodeKind.Unary, .token = minusToken };
-                    try children.append(minusNode);
+                    lhsIndex = try self.astAppendNode(minusNode);
                 },
                 else => {
+                    // TODO: make this error like the others
                     return std.debug.panic("expected ! or - but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
                 },
             }
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // TODO: check that this is right
+        // Expect Selector
+        rhsIndex = try self.parseSelector();
+
+        // assign the lhs and rhs
+        self.ast.items[unaryIndex].lhs = lhsIndex;
+        self.ast.items[unaryIndex].rhs = rhsIndex;
+
+        return unaryIndex;
     }
 
     // Selector = Factor ("." Identifier)*
@@ -1310,22 +1390,27 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Selector = Factor (\".\" Identifier)*\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Selector, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var selectorIndex = try self.astAppend(NodeKind.Selector, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect Factor
-        try children.append(try self.parseFactor());
+        lhsIndex = try self.parseFactor();
 
         // Expect ("." Identifier)*
         while ((try self.currentToken()).kind == TokenKind.Dot) {
             // Expect .
             try self.expectToken(TokenKind.Dot);
             // Expect Identifier
-            try children.append(try self.expectIdentifier());
+            rhsIndex = try self.astAppendNode(try self.expectIdentifier());
         }
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[selectorIndex].lhs = lhsIndex;
+        self.ast.items[selectorIndex].rhs = rhsIndex;
+
+        return selectorIndex;
     }
 
     // Factor = "(" Expression ")" | Identifier (Arguments)? | Number | "true" | "false" | "new" Identifier | "null"
@@ -1336,67 +1421,55 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Factor = \"(\" Expression \")\" | Identifier (Arguments)? | Number | \"true\" | \"false\" | \"new\" Identifier | \"null\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Factor, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var factorIndex = try self.astAppend(NodeKind.Factor, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
-        switch ((try self.currentToken()).kind) {
+        const token = try self.currentToken();
+        switch (token.kind) {
             TokenKind.LParen => {
                 // Expect (
                 try self.expectToken(TokenKind.LParen);
                 // Expect Expression
-                try children.append(try self.parseExpression());
+                lhsIndex = try self.parseExpression();
                 // Expect )
                 try self.expectToken(TokenKind.RParen);
             },
             TokenKind.Identifier => {
                 // Expect Identifier
-                try children.append(try self.expectIdentifier());
+                lhsIndex = try self.astAppendNode(try self.expectIdentifier());
                 // Expect (Arguments)?
                 if ((try self.currentToken()).kind == TokenKind.LParen) {
                     // Expect Arguments
-                    try children.append(try self.parseArguments());
+                    rhsIndex = try self.parseArguments();
                 }
             },
-            TokenKind.Number => {
-                // Expect Number
-                const numberToken = try self.expectAndYeildToken(TokenKind.Number);
-                const numberNode = Node{ .kind = NodeKind.Number, .token = numberToken };
-                _ = numberNode;
-            },
-            TokenKind.KeywordTrue => {
-                // Expect true
-                const trueToken = try self.consumeToken();
-                const trueNode = Node{ .kind = NodeKind.True, .token = trueToken };
-                try children.append(trueNode);
-            },
-            TokenKind.KeywordFalse => {
-                // Expect  false
-                const falseToken = try self.consumeToken();
-                const falseNode = Node{ .kind = NodeKind.False, .token = falseToken };
-                try children.append(falseNode);
+            // Theese could all be refactored into a helper function
+            // TODO: check that this works
+            TokenKind.Number, TokenKind.KeywordTrue, TokenKind.KeywordFalse, TokenKind.KeywordNull => {
+                try self.consumeToken();
+                try self.fromTypesAppend(token);
             },
             TokenKind.KeywordNew => {
                 // Expect new
                 const newToken = try self.consumeToken();
                 const newNode = Node{ .kind = NodeKind.New, .token = newToken };
-                try children.append(newNode);
+                lhsIndex = try self.astAppendNode(newNode);
 
                 // Expect Identifier
-                try children.append(try self.expectIdentifier());
-            },
-            TokenKind.KeywordNull => {
-                // Expect null
-                const nullToken = try self.consumeToken();
-                const nullNode = Node{ .kind = NodeKind.Null, .token = nullToken };
-                try children.append(nullNode);
+                rhsIndex = try self.astAppendNode(try self.expectIdentifier());
             },
             else => {
+                // TODO: make this error like the others
                 return std.debug.panic("expected factor but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
             },
         }
+        // assign the lhs and rhs
+        self.ast.items[factorIndex].lhs = lhsIndex;
+        self.ast.items[factorIndex].rhs = rhsIndex;
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        return factorIndex;
     }
 
     // Arguments = "(" (Expression ("," Expression)*)? ")"
@@ -1407,8 +1480,10 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Arguments = \"(\" (Expression (\",\" Expression)*)? \")\"\n", .{});
             }
         }
-        var result: Node = Node{ .kind = NodeKind.Arguments, .token = try self.currentToken() };
-        var children = std.ArrayList(Node).init(self.allocator);
+        // Init indexes
+        var argumentsIndex = try self.astAppend(NodeKind.Arguments, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect (
         try self.expectToken(TokenKind.LParen);
@@ -1416,22 +1491,25 @@ pub const Parser = struct {
         // Expect (Expression ("," Expression)*)?
         if ((try self.currentToken()).kind != TokenKind.RParen) {
             // Expect Expression
-            try children.append(try self.parseExpression());
+            lhsIndex = try self.parseExpression();
 
             // Expect ("," Expression)*
             while ((try self.currentToken()).kind == TokenKind.Comma) {
                 // Expect ,
                 try self.expectToken(TokenKind.Comma);
                 // Expect Expression
-                try children.append(try self.parseExpression());
+                rhsIndex = try self.parseExpression();
             }
         }
 
         // Expect )
         try self.expectToken(TokenKind.RParen);
 
-        result.children = try children.toOwnedSlice();
-        return result;
+        // assign the lhs and rhs
+        self.ast.items[argumentsIndex].lhs = lhsIndex;
+        self.ast.itemsl[argumentsIndex].rhs = rhsIndex;
+
+        return argumentsIndex;
     }
 };
 
