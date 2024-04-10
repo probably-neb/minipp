@@ -76,6 +76,9 @@ pub const NodeKind = union(enum) {
     False,
     New,
     Null,
+    /// This is a special node that is used to reserve space for the AST,
+    /// specifically for Expression-s and below!
+    BackfillReserve,
 };
 
 pub const Node = struct {
@@ -232,6 +235,21 @@ pub const Parser = struct {
         return parser;
     }
 
+    pub fn isCurrentTokenAType(self: *Parser) !bool {
+        switch ((try self.currentToken()).kind) {
+            TokenKind.KeywordInt, TokenKind.KeywordBool, TokenKind.KeywordStruct => {
+                return true;
+            },
+            else => {
+                return false;
+            },
+        }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////
+    /// Parser Grammar Functions
+    ///////////////////////////////////////////////////////////////////////////
+
     // Program = Types Declarations Functions
     // each sub function returns an u32, which is the index into the array where they start
     pub fn parseProgram(self: *Parser) !void {
@@ -306,18 +324,20 @@ pub const Parser = struct {
 
         // Init indexes
         var typeNodeIndex = try self.astAppend(NodeKind.TypeDeclaration, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Exepect struct
         try self.expectToken(TokenKind.KeywordStruct);
 
         // Expect identifier
-        const identIndex = try self.astAppendNode(try self.expectIdentifier());
+        lhsIndex = try self.astAppendNode(try self.expectIdentifier());
 
         // Expect {
         try self.expectToken(TokenKind.LCurly);
 
         // Expect nested declarations
-        const nestedDeclarationsIndex = try self.parseNestedDeclarations();
+        rhsIndex = try self.parseNestedDeclarations();
 
         // Expect }
         try self.expectToken(TokenKind.RCurly);
@@ -326,8 +346,8 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.Semicolon);
 
         // Assign the lhs and rhs
-        self.ast.items[typeNodeIndex].lhs = identIndex;
-        self.ast.items[typeNodeIndex].rhs = nestedDeclarationsIndex;
+        self.ast.items[typeNodeIndex].lhs = lhsIndex;
+        self.ast.items[typeNodeIndex].rhs = rhsIndex;
 
         // convert to array
         return typeNodeIndex;
@@ -344,23 +364,24 @@ pub const Parser = struct {
 
         // Init indexes
         var nestedDeclarationsIndex = try self.astAppend(NodeKind.NestedDecl, try self.currentToken());
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
 
         // Expect { Decl ";" }+
-        var declIndex = try self.parseDecl();
+        lhsIndex = try self.parseDecl();
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        var finalIndex = declIndex;
         // Repeat
         while ((try self.currentToken()).kind != TokenKind.RCurly) {
-            finalIndex = try self.parseDecl();
+            rhsIndex = try self.parseDecl();
             try self.expectToken(TokenKind.Semicolon);
         }
 
         // assign the lhs and rhs
-        self.ast.items[nestedDeclarationsIndex].lhs = declIndex;
-        self.ast.items[nestedDeclarationsIndex].rhs = finalIndex;
+        self.ast.items[nestedDeclarationsIndex].lhs = lhsIndex;
+        self.ast.items[nestedDeclarationsIndex].rhs = rhsIndex;
 
         return nestedDeclarationsIndex;
     }
@@ -373,6 +394,8 @@ pub const Parser = struct {
                 std.debug.print("Defined as: Decl = Type Identifier\n", .{});
             }
         }
+        // REFACTOR: this could use the lhs and rhs index, however.... its
+        // actually faster this way
         // Init indexes
         var declIndex = try self.astAppend(NodeKind.Decl, try self.currentToken());
 
@@ -433,17 +456,6 @@ pub const Parser = struct {
         return typeIndex;
     }
 
-    pub fn isCurrentTokenAType(self: *Parser) !bool {
-        switch ((try self.currentToken()).kind) {
-            TokenKind.KeywordInt, TokenKind.KeywordBool, TokenKind.KeywordStruct => {
-                return true;
-            },
-            else => {
-                return false;
-            },
-        }
-    }
-
     // Declarations = { Declaration }*
     pub fn parseDeclarations(self: *Parser) !Node {
         errdefer {
@@ -473,6 +485,9 @@ pub const Parser = struct {
     }
 
     // Declaration = Type Identifier ("," Identifier)* ";"
+    // NOTE: removes syntax sugar, and creates n type declarations that use the
+    // same type for the different identifiers, they should be added in order,
+    // in the array
     pub fn parseDeclaration(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -495,9 +510,14 @@ pub const Parser = struct {
         while ((try self.currentToken()).kind != TokenKind.Semicolon) {
             // Expect ,
             try self.expectToken(TokenKind.Comma);
+
+            const internalNode = Node{ .kind = NodeKind.Declaration, .token = try self.currentToken(), .lhs = lhsIndex, .rhs = null };
+            const internalIndex = try self.astAppendNode(internalNode);
+
             // Expect Identifier
-            rhsIndex = try self.astAppendNode(try self.expectIdentifier());
+            const internalRHS = try self.astAppendNode(try self.expectIdentifier());
             // Repeat
+            self.ast.items[internalIndex].rhs = internalRHS;
         }
 
         // Expect ;
@@ -780,6 +800,8 @@ pub const Parser = struct {
     }
 
     // Assignment = LValue = (Expression | "read") ";"
+    // REFACTOR: This is not properly written
+    // FIXME:
     pub fn parseAssignment(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -862,6 +884,12 @@ pub const Parser = struct {
 
     // ConditionalIf = "if" "(" Expression ")" Block
     // ConditionalIfElse = "if" "(" Expression ")" Block "else" Block
+    /// If it is an if it goes like this:
+    /// [[ConditionalIf, expression, then block]]
+    ///                  lhs           rhs
+    /// If it is an if else it goes like this:
+    /// [[ConditionalIfElse, expression, then block, else block]]
+    ///                         lhs                   rhs
     pub fn parseConditionals(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -907,6 +935,9 @@ pub const Parser = struct {
     }
 
     // While = "while" "(" Expression ")" Block
+    /// While goes like this:
+    /// [[While, expression, block]]
+    ///           lhs         rhs
     pub fn parseWhile(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -942,6 +973,9 @@ pub const Parser = struct {
     }
 
     // Delete = "delete" Expression ";"
+    /// Delete goes like this:
+    /// [[Delete, expression]]
+    ///              lhs
     pub fn parseDelete(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -971,6 +1005,9 @@ pub const Parser = struct {
     }
 
     // Return = "return" (Expression)?  ";"
+    /// Return goes like this:
+    /// [[Return, expression]]
+    ///             lhs
     pub fn parseReturn(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -1003,6 +1040,9 @@ pub const Parser = struct {
     }
 
     // Invocation = Identifier Arguments ";"
+    /// Invocation goes like this:
+    /// [[Invocation, identifier, arguments]]
+    ///               lhs         rhs
     pub fn parseInvocation(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -1032,6 +1072,9 @@ pub const Parser = struct {
     }
 
     // LValue = Identifier ("." Identifier)*
+    /// LValue goes like this:
+    /// [[LValue, identifier,... , identifier]]
+    ///             lhs              rhs
     pub fn parseLValue(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -1064,6 +1107,8 @@ pub const Parser = struct {
 
     /////////// UNTOUCHED TO REFACTOR ////////////////////////
     // Expression = BoolTerm ("||" BoolTerm)*
+    /// Expression goes like this:
+    /// [[ Expression, BackfillReserve, Boolterm,...]]
     pub fn parseExpression(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -1077,7 +1122,8 @@ pub const Parser = struct {
         var rhsIndex: ?usize = null;
 
         // Expect BoolTerm
-        lhsIndex = try self.parseBoolTerm();
+        const firstBoolTermIndex = try self.parseBoolTerm();
+        _ = firstBoolTermIndex;
 
         // Expect ("||" BoolTerm)*
         while ((try self.currentToken()).kind == TokenKind.Or) {
