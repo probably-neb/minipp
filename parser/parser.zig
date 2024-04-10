@@ -1100,6 +1100,7 @@ pub const Parser = struct {
         }
 
         // assign the lhs and rhs
+        // NOTE:
         self.ast.items[lValueIndex].lhs = lhsIndex;
         self.ast.items[lValueIndex].rhs = rhsIndex;
 
@@ -1118,6 +1119,11 @@ pub const Parser = struct {
     ///
     /// TODO: extract this logic out into a helper function, so that it can be
     /// applied to the other parse functions that are below this in the grammar
+    ///
+    /// NOTE: Would be possible to have the Backfill be represented as rhs,
+    /// before it is turned into an or.
+    /// however, this would be in conflict with the memory representation, so
+    /// it has not been implemented yet.
     pub fn parseExpression(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
