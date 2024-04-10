@@ -117,6 +117,7 @@ pub const TokenKind = enum {
     KeywordTrue,
     KeywordVoid,
     KeywordWhile,
+    Unset,
 
     // NOTE: bool, int, void shouldn't be valid keywords, (valid /type/ names)
     // and I feel that anything returned from the keywords map should be a keyword

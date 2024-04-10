@@ -78,6 +78,7 @@ pub const NodeKind = union(enum) {
     Null,
     /// This is a special node that is used to reserve space for the AST,
     /// specifically for Expression-s and below!
+    /// NOTE: This should be skipped when analyzing the AST
     BackfillReserve,
 };
 
@@ -1109,6 +1110,14 @@ pub const Parser = struct {
     // Expression = BoolTerm ("||" BoolTerm)*
     /// Expression goes like this:
     /// [[ Expression, BackfillReserve, Boolterm,...]]
+    ///                   lhs             rhs
+    /// TESTME: this is untested
+    /// Should be able to skip any nodes called backfill reserve in the use of
+    /// the ast, and will act as it would if we were using a tree rather than a
+    /// array
+    ///
+    /// TODO: extract this logic out into a helper function, so that it can be
+    /// applied to the other parse functions that are below this in the grammar
     pub fn parseExpression(self: *Parser) !Node {
         errdefer {
             if (self.showParseTree) {
@@ -1117,20 +1126,55 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var expressionIndex = try self.astAppend(NodeKind.Expression, try self.currentToken());
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        const expressionIndex = try self.astAppend(NodeKind.Expression, try self.currentToken());
+        const lhsIndex: ?usize = try self.astAppend(NodeKind.BackfillReserve, try self.currentToken());
 
         // Expect BoolTerm
-        const firstBoolTermIndex = try self.parseBoolTerm();
-        _ = firstBoolTermIndex;
+        const rhsIndex: ?usize = try self.parseBoolTerm();
+
+        // set the backfill to the rhs, so that when we theoretically parse an
+        // or it is set up
+        self.ast.items[lhsIndex].lhs = rhsIndex;
+        // set the rhs to the parent, so that we can set the parents rhs to null
+        // if we have an or
+        self.ast.items[lhsIndex].rhs = expressionIndex;
+
+        var backfillIndex = lhsIndex;
 
         // Expect ("||" BoolTerm)*
         while ((try self.currentToken()).kind == TokenKind.Or) {
+
             // Expect ||
-            try self.expectToken(TokenKind.Or);
+            const orNode = Node{ .kind = NodeKind.Or, .token = try self.expectAndYeildToken(TokenKind.Or) };
+            orNode.lhs = self.ast.items[backfillIndex].lhs;
+            // set parents rhs to null, so that only lhs is set (to the or and
+            // now the next item is the lhs of the or node)
+            self.ast.items[self.ast.items[backfillIndex.rhs]].rhs = null;
+            self.ast.items[backfillIndex] = try self.astAppendNode(orNode);
+
+            // or has now replaced backfill
+            // now create a new backfill, and set its lhs to the upcoming boolTerm
+            // and its rhs to the current backfill
+            const newBackfillNode = Node{
+                .kind = NodeKind.BackfillReserve,
+                .token = try self.currentToken(),
+                .lhs = null,
+                .rhs = backfillIndex,
+            };
+
+            var newBackfillIndex = try self.astAppendNode(newBackfillNode);
+
+            // set or node's rhs to the new backfill
+            self.ast.items[backfillIndex].rhs = newBackfillIndex;
+
             // Expect BoolTerm
-            rhsIndex = try self.parseBoolTerm();
+            const orRHS = try self.parseBoolTerm();
+
+            // set newBackfillNode's lhs to the new boolTerm
+            self.ast.items[newBackfillIndex].lhs = orRHS;
+
+            // new backfill is now implemented fully, replace the old backfill
+            backfillIndex = newBackfillIndex;
         }
 
         // assign the lhs and rhs
