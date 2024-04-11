@@ -118,6 +118,15 @@ pub const Node = struct {
     rhs: ?usize = null,
 };
 
+/// A parser is responsible for taking the tokens and creating an abstract syntax tree.
+/// The resulting ast is a flat array of nodes.
+/// To deinit the parser call the `deinit` member function.
+/// Reccomended usage:
+/// ```zig
+/// cosnt tokens = try Lexer.tokenize(input, file_name, allocator);
+/// const parser = try Parser.parseTokens(tokens, input, allocator);
+/// defer parser.deinit();
+/// ```
 pub const Parser = struct {
     tokens: []Token,
     input: []const u8,
@@ -132,8 +141,13 @@ pub const Parser = struct {
     allocator: std.mem.Allocator,
 
     // flags
-    showParseTree: bool = true,
+    showParseTree: bool = false,
 
+    fn deinit(self: *Parser) void {
+        self.allocator.free(self.tokens);
+        self.ast.deinit();
+        self.idMap.deinit();
+    }
     fn peekToken(self: *Parser) !Token {
         if (self.readPos >= self.tokens.len) return error.TokenIndexOutOfBounds;
         return self.tokens[self.readPos];
@@ -226,7 +240,11 @@ pub const Parser = struct {
             .allocator = allocator,
         };
 
-        try parser.parseProgram();
+        parser.parseProgram() catch |err| {
+            std.debug.print("Error in parsing the program.\n", .{});
+            parser.deinit();
+            return err;
+        };
         return parser;
     }
 
@@ -1608,62 +1626,64 @@ pub fn main() !void {
 //////// Tests
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+const debugAlloc = std.testing.allocator;
 test "no_identifier_struct" {
     const source = "struct { int a; int b; struct TS S; };";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
 test "no_keyword_struct" {
     const source = "TS{ int a; int b; struct TS S; };";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
 test "no_members_struct" {
     const source = "struct TS { };";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
 test "no_semicolon_struct_end" {
     const source = "struct TS { int a int b; struct TS S; }";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
 test "no_semicolon_struct_member" {
     const source = "struct TS { int a; int b; struct TS S };";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
 test "no_struct_function" {
     const source = "fun TS() void { int a; int b; struct TS S; }";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    _ = try Parser.parseTokens(tokens, source);
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    var parser = try Parser.parseTokens(tokens, source, debugAlloc);
+    parser.deinit();
 }
 
 test "function_no_identifier" {
     const source = "fun () void { int a; int b; struct TS S; }";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
 test "function_no_parameters" {
     const source = "fun TS void { int a; int b; struct TS S; }";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
 test "function_no_return_type" {
     const source = "fun TS() { int a; int b; struct TS S; }";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
 test "function_no_lcurly" {
     const source = "fun TS() void int a; int b; struct TS S; }";
-    const tokens = try Lexer.tokenizeFromStr(source);
-    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source));
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }

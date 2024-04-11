@@ -212,9 +212,16 @@ pub const Lexer = struct {
         return Lexer.new(input, "");
     }
 
-    pub fn tokenize(input: []const u8, filePath: []const u8) ![]Token {
+    /// Tokenizes the input string and returns a list of tokens.
+    /// It returns an owned slice of tokens.
+    /// @param input:[]const u8 - The input string to tokenize
+    /// @param filePath:[]const u8 - The file path of the input string
+    /// @param allocator:std.mem.Allocator - The allocator to use for allocating memory
+    /// @return []Token - The list of tokens
+    /// NOTE: if you are using a string use the functinon tokenizeFromStr instead
+    pub fn tokenize(input: []const u8, filePath: []const u8, allocator: std.mem.Allocator) ![]Token {
         var lexer = Lexer.new(input, filePath);
-        var tokens = std.ArrayList(Token).init(std.heap.page_allocator);
+        var tokens = std.ArrayList(Token).init(allocator);
         defer tokens.deinit();
 
         // NOTE: EOF is the always token, it makes part of parsing simpler, so I will revise tests to match
@@ -229,8 +236,13 @@ pub const Lexer = struct {
         return tokens.toOwnedSlice();
     }
 
-    pub fn tokenizeFromStr(input: []const u8) ![]Token {
-        return Lexer.tokenize(input, "");
+    /// Tokenizes the input string and returns a list of tokens.
+    /// This is an alias for lexer.tokenize, using a file path of "".
+    /// @param input:[]const u8 - The input string to tokenize
+    /// @param allocator:std.mem.Allocator - The allocator to use for allocating memory
+    /// @return []Token - The list of tokens
+    pub fn tokenizeFromStr(input: []const u8, allocator: std.mem.Allocator) ![]Token {
+        return Lexer.tokenize(input, "", allocator);
     }
 
     pub fn next_token(lxr: *Lexer) !Token {
@@ -383,6 +395,8 @@ pub const Lexer = struct {
 // TESTS //
 ///////////
 
+const testAlloc = std.testing.allocator;
+
 fn expect_token_kinds_equals(expected: []const TokenKind, actual: []Token) !void {
     if (expected.len != actual.len) {
         std.debug.print("error: expected {d} tokens but got {d}\n", .{ expected.len, actual.len });
@@ -404,8 +418,14 @@ fn expect_token_kinds_equals(expected: []const TokenKind, actual: []Token) !void
     }
 }
 
+/// Check if the tokens produced by the lexer match the expected tokens.
+/// This function is useful for testing the lexer.
+///
+/// @param contents:[]const u8        - The string to lex
+/// @param expected:[]const TokenKind - The expected tokens
+/// @return tokens:[]Token            - The tokens produced by the lexer
 fn expect_results_in_tokens(contents: []const u8, expected: []const TokenKind) ![]Token {
-    const tokens = try Lexer.tokenizeFromStr(contents);
+    const tokens = try Lexer.tokenizeFromStr(contents, testAlloc);
     try expect_token_kinds_equals(expected, tokens);
     return tokens;
 }
@@ -419,12 +439,13 @@ fn print_tokens(tokens: []Token) void {
 const expect = std.testing.expect;
 
 test "add" {
-    _ = try expect_results_in_tokens("1+2", &[_]TokenKind{
+    const tokens = try expect_results_in_tokens("1+2", &[_]TokenKind{
         .Number,
         .Plus,
         .Number,
         .Eof,
     });
+    defer testAlloc.free(tokens);
 }
 
 test "simple_struct" {
@@ -442,6 +463,7 @@ test "simple_struct" {
         .RCurly,
         .Eof,
     });
+    defer testAlloc.free(tokens);
     const ident_token = tokens[1];
     try expect(ident_token.kind == TokenKind.Identifier);
 
@@ -455,6 +477,7 @@ test "simple_struct" {
     try expect(std.mem.eql(u8, ident_token._range.getSubStrFromStr(content), "SimpleStruct"));
 }
 
+// TODO add deallocation
 test "ident_can_not_start_with_num" {
     // NOTE: we should probably decide on how to handle this
     // OPTION A: do harder validation work in lexer for checking if
@@ -468,15 +491,16 @@ test "ident_can_not_start_with_num" {
     //           have whitespace before it and is therefore an invalid number
     //           not invalid sequence
 
-    _ = try expect_results_in_tokens("1foo", &[_]TokenKind{
+    const tokens = try expect_results_in_tokens("1foo", &[_]TokenKind{
         .Number,
         .Identifier,
         .Eof,
     });
+    defer testAlloc.free(tokens);
 }
 
 test "all_binops" {
-    _ = try expect_results_in_tokens("+ - * / <= >= = ==", &[_]TokenKind{
+    const tokens = try expect_results_in_tokens("+ - * / <= >= = ==", &[_]TokenKind{
         .Plus,
         .Minus,
         .Mul,
@@ -487,21 +511,22 @@ test "all_binops" {
         .DoubleEq,
         .Eof,
     });
+    defer testAlloc.free(tokens);
 }
 
 test "invalid_char" {
     const contents = "%foo;";
-    try std.testing.expectError(error.InvalidToken, Lexer.tokenizeFromStr(contents));
+    try std.testing.expectError(error.InvalidToken, Lexer.tokenizeFromStr(contents, testAlloc));
 }
 
 test "invalid_char_in_ident" {
     const contents = "foo%bar";
-    try std.testing.expectError(error.InvalidToken, Lexer.tokenizeFromStr(contents));
+    try std.testing.expectError(error.InvalidToken, Lexer.tokenizeFromStr(contents, testAlloc));
 }
 
 // TODO: update this
 test "all_keywords" {
-    _ = try expect_results_in_tokens("delete endl false fun if new null read return struct true while", &[_]TokenKind{
+    const tokens = try expect_results_in_tokens("delete endl false fun if new null read return struct true while", &[_]TokenKind{
         .KeywordDelete,
         .KeywordEndl,
         .KeywordFalse,
@@ -516,11 +541,13 @@ test "all_keywords" {
         .KeywordWhile,
         .Eof,
     });
+    defer testAlloc.free(tokens);
 }
 
 test "ident_with_num" {
-    _ = try expect_results_in_tokens("foo1", &[_]TokenKind{
+    const tokens = try expect_results_in_tokens("foo1", &[_]TokenKind{
         .Identifier,
         .Eof,
     });
+    defer testAlloc.free(tokens);
 }
