@@ -7,6 +7,33 @@
 ///       be removed because they fore the use of getters and setters, so that
 ///       the code is not insanely long.
 ///       - Furthermore I do not like how the inline version panics out.
+/// Version 0.2: The AST is now a flat array.
+///    - NOTE: right now the tree down to a type is made, I think this should be
+///            removed such that it is only the thing is there.
+///      - Example:
+///       Assignment: d
+///       LValue: d
+///       Identifier: d
+///       Expression: 5
+///       BackfillReserve: 5
+///       BoolTerm: 5
+///       BackfillReserve: 5
+///       EqTerm: 5
+///       BackfillReserve: 5
+///       RelTerm: 5
+///       BackfillReserve: 5
+///       Simple: 5
+///       BackfillReserve: 5
+///       Term: 5
+///       BackfillReserve: 5
+///       Unary: 5
+///       BackfillReserve: 5
+///       Selector: 5
+///       Factor: 5
+///       Number: 5
+///     Should be able to rectify down to its actual state without the endless chains
+///
+///
 ///////////////////////////////////////////////////////////////////////////////
 
 const std = @import("std");
@@ -56,6 +83,8 @@ pub const NodeKind = union(enum) {
     RelTerm,
     Simple,
     Mul,
+    And,
+    Or,
     Div,
     Plus,
     Minus,
@@ -87,41 +116,6 @@ pub const Node = struct {
     token: Token,
     lhs: ?usize = null,
     rhs: ?usize = null,
-
-    pub fn fromToken(token: Token) Node {
-        const kind = switch (token.kind) {
-            TokenKind.KeywordStruct => NodeKind.StructType,
-            TokenKind.KeywordInt => NodeKind.IntType,
-            TokenKind.KeywordBool => NodeKind.BoolType,
-            TokenKind.Identifier => NodeKind.Identifier,
-            TokenKind.KeywordVoid => NodeKind.Void,
-            TokenKind.KeywordRead => NodeKind.Read,
-            TokenKind.KeywordReturn => NodeKind.Return,
-            TokenKind.KeywordDelete => NodeKind.Delete,
-            TokenKind.Number => NodeKind.Number,
-            TokenKind.KeywordTrue => NodeKind.True,
-            TokenKind.KeywordFalse => NodeKind.False,
-            TokenKind.KeywordNew => NodeKind.New,
-            TokenKind.KeywordNull => NodeKind.Null,
-            TokenKind.KeywordWhile => NodeKind.While,
-            TokenKind.Mul => NodeKind.Mul,
-            TokenKind.Div => NodeKind.Div,
-            TokenKind.Plus => NodeKind.Plus,
-            TokenKind.Minus => NodeKind.Minus,
-            TokenKind.DoubleEq => NodeKind.Equals,
-            TokenKind.NotEq => NodeKind.NotEq,
-            TokenKind.Lt => NodeKind.LessThan,
-            TokenKind.Gt => NodeKind.GreaterThan,
-            TokenKind.LtEq => NodeKind.LessThanEq,
-            TokenKind.GtEq => NodeKind.GreaterThanEq,
-            TokenKind.Not => NodeKind.Not,
-
-            else => {
-                unreachable;
-            },
-        };
-        return Node{ .kind = kind, .token = token };
-    }
 };
 
 pub const Parser = struct {
@@ -247,6 +241,21 @@ pub const Parser = struct {
         }
     }
 
+    pub fn prettyPrintAst(self: *const Parser) !void {
+        const ast = self.ast.items;
+        var i: usize = 0;
+        std.debug.print("AST:{{\n", .{});
+        while (i < self.astLen) {
+            const node = ast[i];
+            const token = node.token;
+            const tokenStr = token._range.getSubStrFromStr(self.input);
+            const kind = @tagName(node.kind);
+            std.debug.print("{s}: {s}\n", .{ kind, tokenStr });
+            i += 1;
+        }
+        std.debug.print("}}\n", .{});
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     /// Parser Grammar Functions
     ///////////////////////////////////////////////////////////////////////////
@@ -285,11 +294,11 @@ pub const Parser = struct {
     }
 
     // Types = { TypeDeclaration }*
-    pub fn parseTypes(self: *Parser) !Node {
+    pub fn parseTypes(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Types\n", .{});
-                std.debug.print("Defined as: Types = { TypeDeclaration }*\n", .{});
+                std.debug.print("Defined as: Types = {{ TypeDeclaration }}*\n", .{});
             }
         }
         // Init indexes
@@ -458,7 +467,7 @@ pub const Parser = struct {
     }
 
     // Declarations = { Declaration }*
-    pub fn parseDeclarations(self: *Parser) !Node {
+    pub fn parseDeclarations(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Declarations\n", .{});
@@ -483,13 +492,15 @@ pub const Parser = struct {
         // assign the lhs and rhs
         self.ast.items[declarationsIndex].lhs = lhsIndex;
         self.ast.items[declarationsIndex].rhs = rhsIndex;
+
+        return declarationsIndex;
     }
 
     // Declaration = Type Identifier ("," Identifier)* ";"
     // NOTE: removes syntax sugar, and creates n type declarations that use the
     // same type for the different identifiers, they should be added in order,
     // in the array
-    pub fn parseDeclaration(self: *Parser) !Node {
+    pub fn parseDeclaration(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Declaration\n", .{});
@@ -532,7 +543,7 @@ pub const Parser = struct {
     }
 
     // Functions = ( Function )*
-    pub fn parseFunctions(self: *Parser) !Node {
+    pub fn parseFunctions(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Functions\n", .{});
@@ -562,7 +573,7 @@ pub const Parser = struct {
     }
 
     // Function = "fun" Identifier Paramaters ReturnType "{" Declarations StatementList "}"
-    pub fn parseFunction(self: *Parser) !Node {
+    pub fn parseFunction(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Function\n", .{});
@@ -601,10 +612,12 @@ pub const Parser = struct {
         // assign the lhs and rhs
         self.ast.items[functionIndex].lhs = lhsIndex;
         self.ast.items[functionIndex].rhs = rhsIndex;
+
+        return functionIndex;
     }
 
     // Parameters = "(" (Decl ("," Decl)* )? ")"
-    pub fn parseParameters(self: *Parser) !Node {
+    pub fn parseParameters(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Parameters\n", .{});
@@ -638,10 +651,12 @@ pub const Parser = struct {
         // assign the lhs and rhs
         self.ast.items[parametersIndex].lhs = lhsIndex;
         self.ast.items[parametersIndex].rhs = rhsIndex;
+
+        return parametersIndex;
     }
 
     // ReturnType = Type | "void"
-    pub fn parseReturnType(self: *Parser) !Node {
+    pub fn parseReturnType(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing ReturnType\n", .{});
@@ -657,7 +672,7 @@ pub const Parser = struct {
         const token = try self.currentToken();
         switch (token.kind) {
             TokenKind.KeywordVoid => {
-                lhsIndex = try self.astAppend(NodeKind.Void, token);
+                lhsIndex = try self.astAppend(NodeKind.Void, try self.expectAndYeildToken(TokenKind.KeywordVoid));
             },
             else => {
                 if (lhsIndex == null) {
@@ -676,7 +691,7 @@ pub const Parser = struct {
     }
 
     // Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation
-    pub fn parseStatement(self: *Parser) !Node {
+    pub fn parseStatement(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Statement\n", .{});
@@ -739,10 +754,12 @@ pub const Parser = struct {
         // assign the lhs and rhs
         self.ast.items[statementIndex].lhs = lhsIndex;
         self.ast.items[statementIndex].rhs = rhsIndex;
+
+        return statementIndex;
     }
 
     // StatementList = ( Statement )*
-    pub fn parseStatementList(self: *Parser) ParserError!Node {
+    pub fn parseStatementList(self: *Parser) ParserError!usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a StatementList\n", .{});
@@ -772,7 +789,7 @@ pub const Parser = struct {
     }
 
     // Block = "{" StatementList "}"
-    pub fn parseBlock(self: *Parser) !Node {
+    pub fn parseBlock(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Block\n", .{});
@@ -803,7 +820,7 @@ pub const Parser = struct {
     // Assignment = LValue = (Expression | "read") ";"
     // REFACTOR: This is not properly written
     // FIXME:
-    pub fn parseAssignment(self: *Parser) !Node {
+    pub fn parseAssignment(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing an Assignment\n", .{});
@@ -841,7 +858,7 @@ pub const Parser = struct {
 
     // Print = "print" Expression ";"
     // PrintLn = "print" Expression "endl" ";"
-    pub fn parsePrints(self: *Parser) !Node {
+    pub fn parsePrints(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Print type\n", .{});
@@ -891,7 +908,7 @@ pub const Parser = struct {
     /// If it is an if else it goes like this:
     /// [[ConditionalIfElse, expression, then block, else block]]
     ///                         lhs                   rhs
-    pub fn parseConditionals(self: *Parser) !Node {
+    pub fn parseConditionals(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Conditional\n", .{});
@@ -939,7 +956,7 @@ pub const Parser = struct {
     /// While goes like this:
     /// [[While, expression, block]]
     ///           lhs         rhs
-    pub fn parseWhile(self: *Parser) !Node {
+    pub fn parseWhile(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a While\n", .{});
@@ -977,7 +994,7 @@ pub const Parser = struct {
     /// Delete goes like this:
     /// [[Delete, expression]]
     ///              lhs
-    pub fn parseDelete(self: *Parser) !Node {
+    pub fn parseDelete(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Delete\n", .{});
@@ -1009,7 +1026,7 @@ pub const Parser = struct {
     /// Return goes like this:
     /// [[Return, expression]]
     ///             lhs
-    pub fn parseReturn(self: *Parser) !Node {
+    pub fn parseReturn(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Return\n", .{});
@@ -1044,7 +1061,7 @@ pub const Parser = struct {
     /// Invocation goes like this:
     /// [[Invocation, identifier, arguments]]
     ///               lhs         rhs
-    pub fn parseInvocation(self: *Parser) !Node {
+    pub fn parseInvocation(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing an Identifier\n", .{});
@@ -1076,7 +1093,7 @@ pub const Parser = struct {
     /// LValue goes like this:
     /// [[LValue, identifier,... , identifier]]
     ///             lhs              rhs
-    pub fn parseLValue(self: *Parser) !Node {
+    pub fn parseLValue(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing an LValue\n", .{});
@@ -1107,59 +1124,35 @@ pub const Parser = struct {
         return lValueIndex;
     }
 
-    /////////// UNTOUCHED TO REFACTOR ////////////////////////
-    // Expression = BoolTerm ("||" BoolTerm)*
-    /// Expression goes like this:
-    /// [[ Expression, BackfillReserve, Boolterm,...]]
-    ///                   lhs             rhs
-    /// TESTME: this is untested
-    /// Should be able to skip any nodes called backfill reserve in the use of
-    /// the ast, and will act as it would if we were using a tree rather than a
-    /// array
-    ///
-    /// TODO: extract this logic out into a helper function, so that it can be
-    /// applied to the other parse functions that are below this in the grammar
-    ///
-    /// NOTE: Would be possible to have the Backfill be represented as rhs,
-    /// before it is turned into an or.
-    /// however, this would be in conflict with the memory representation, so
-    /// it has not been implemented yet.
-    pub fn parseExpression(self: *Parser) !Node {
-        errdefer {
-            if (self.showParseTree) {
-                std.debug.print("Error in parsing an Expression\n", .{});
-                std.debug.print("Defined as: Expression = BoolTerm (\"||\" BoolTerm)*\n", .{});
-            }
-        }
-        // Init indexes
-        const expressionIndex = try self.astAppend(NodeKind.Expression, try self.currentToken());
-        const lhsIndex: ?usize = try self.astAppend(NodeKind.BackfillReserve, try self.currentToken());
+    pub fn backfillParse(self: *Parser, parentIndex: usize, optParentNode: NodeKind, optParentToken: TokenKind, childParseFn: *const fn (self: *Parser) ParserError!usize) !usize {
+        // Init the backfill next!
+        const lhsIndex: usize = try self.astAppend(NodeKind.BackfillReserve, try self.currentToken());
 
-        // Expect BoolTerm
-        const rhsIndex: ?usize = try self.parseBoolTerm();
+        // Expect child parse function type
+        const rhsIndex: ?usize = try childParseFn(self);
 
         // set the backfill to the rhs, so that when we theoretically parse an
         // or it is set up
         self.ast.items[lhsIndex].lhs = rhsIndex;
         // set the rhs to the parent, so that we can set the parents rhs to null
-        // if we have an or
-        self.ast.items[lhsIndex].rhs = expressionIndex;
+        // if we have an opt
+        self.ast.items[lhsIndex].rhs = parentIndex;
 
         var backfillIndex = lhsIndex;
 
-        // Expect ("||" BoolTerm)*
-        while ((try self.currentToken()).kind == TokenKind.Or) {
+        // Expect something to repeat
+        while ((try self.currentToken()).kind == optParentToken) {
 
             // Expect ||
-            const orNode = Node{ .kind = NodeKind.Or, .token = try self.expectAndYeildToken(TokenKind.Or) };
-            orNode.lhs = self.ast.items[backfillIndex].lhs;
+            var optNode = Node{ .kind = optParentNode, .token = try self.expectAndYeildToken(optParentToken) };
+            optNode.lhs = self.ast.items[backfillIndex].lhs;
             // set parents rhs to null, so that only lhs is set (to the or and
-            // now the next item is the lhs of the or node)
-            self.ast.items[self.ast.items[backfillIndex.rhs]].rhs = null;
-            self.ast.items[backfillIndex] = try self.astAppendNode(orNode);
+            // now the next item is the lhs of the opt node)
+            self.ast.items[self.ast.items[backfillIndex].rhs.?].rhs = null;
+            self.ast.items[backfillIndex] = optNode;
 
-            // or has now replaced backfill
-            // now create a new backfill, and set its lhs to the upcoming boolTerm
+            // opt has now replaced backfill
+            // now create a new backfill, and set its lhs to the upcoming term
             // and its rhs to the current backfill
             const newBackfillNode = Node{
                 .kind = NodeKind.BackfillReserve,
@@ -1170,28 +1163,149 @@ pub const Parser = struct {
 
             var newBackfillIndex = try self.astAppendNode(newBackfillNode);
 
-            // set or node's rhs to the new backfill
             self.ast.items[backfillIndex].rhs = newBackfillIndex;
 
-            // Expect BoolTerm
-            const orRHS = try self.parseBoolTerm();
+            const childRHS = try childParseFn(self);
 
-            // set newBackfillNode's lhs to the new boolTerm
-            self.ast.items[newBackfillIndex].lhs = orRHS;
+            self.ast.items[newBackfillIndex].lhs = childRHS;
 
-            // new backfill is now implemented fully, replace the old backfill
             backfillIndex = newBackfillIndex;
         }
 
         // assign the lhs and rhs
-        self.ast.items[expressionIndex].lhs = lhsIndex;
-        self.ast.items[expressionIndex].rhs = rhsIndex;
+        self.ast.items[parentIndex].lhs = lhsIndex;
+        self.ast.items[parentIndex].rhs = rhsIndex;
 
-        return expressionIndex;
+        return parentIndex;
+    }
+
+    pub fn backfillParseMany(self: *Parser, parentIndex: usize, optBackfillNodeKinds: []const NodeKind, optBackfillTokenKinds: []const TokenKind, childParseFn: *const fn (self: *Parser) ParserError!usize) !usize {
+        // Init the backfill next!
+        const lhsIndex: usize = try self.astAppend(NodeKind.BackfillReserve, try self.currentToken());
+
+        // Expect child parse function type
+        const rhsIndex: ?usize = try childParseFn(self);
+
+        // set the backfill to the rhs, so that when we theoretically parse an
+        // or it is set up
+        self.ast.items[lhsIndex].lhs = rhsIndex;
+        // set the rhs to the parent, so that we can set the parents rhs to null
+        // if we have an opt
+        self.ast.items[lhsIndex].rhs = parentIndex;
+
+        var backfillIndex = lhsIndex;
+
+        var optBackfillType: ?usize = null;
+
+        std.debug.print("optBackfillTokenKinds.len: {any}\n", .{optBackfillTokenKinds.len});
+        std.debug.print("optBackfillNodeKinds.len: {any}\n", .{optBackfillNodeKinds.len});
+        std.debug.print("optBackfillTokenKinds: {any}\n", .{optBackfillTokenKinds});
+        std.debug.print("optBackfillNodeKinds: {any}\n", .{optBackfillNodeKinds});
+        std.debug.print("backfillIndex: {any}\n", .{backfillIndex});
+        std.debug.print("lhsIndex: {any}\n", .{lhsIndex});
+        std.debug.print("rhsIndex: {any}\n", .{rhsIndex});
+        std.debug.print("rhsKind: {any}\n", .{self.ast.items[rhsIndex.?].kind});
+        std.debug.print("remaining tokens: {any}\n", .{self.tokens[self.pos..]});
+
+        // Expect something to repeat
+        while (true) {
+            const tempToken = try self.currentToken();
+            std.debug.print("tempToken kind: {any}\n", .{tempToken.kind});
+            var i: usize = 0;
+            while (i < optBackfillTokenKinds.len) {
+                if (tempToken.kind == optBackfillTokenKinds[i]) {
+                    optBackfillType = i;
+                    break;
+                }
+                i += 1;
+            }
+            std.debug.print("optBackfillType: {any}\n", .{optBackfillType});
+
+            if (optBackfillType == null) {
+                std.debug.print("optBackfillType is null\n", .{});
+                break;
+            }
+
+            if (i == optBackfillTokenKinds.len) {
+                std.debug.print("i == optBackfillTokenKinds.len\n", .{});
+                break;
+            }
+
+            // Expect some kind of opt
+            var optNode: Node = Node{ .kind = optBackfillNodeKinds[i], .token = try self.expectAndYeildToken(optBackfillTokenKinds[i]) };
+            std.debug.print("optNode: {any}\n", .{optNode});
+            optNode.lhs = self.ast.items[backfillIndex].lhs;
+            // set parents rhs to null, so that only lhs is set (to the or and
+            // now the next item is the lhs of the opt node)
+            self.ast.items[self.ast.items[backfillIndex].rhs.?].rhs = null;
+            self.ast.items[backfillIndex] = optNode;
+
+            // opt has now replaced backfill
+            // now create a new backfill, and set its lhs to the upcoming term
+            // and its rhs to the current backfill
+            const newBackfillNode = Node{
+                .kind = NodeKind.BackfillReserve,
+                .token = try self.currentToken(),
+                .lhs = null,
+                .rhs = backfillIndex,
+            };
+
+            var newBackfillIndex = try self.astAppendNode(newBackfillNode);
+
+            self.ast.items[backfillIndex].rhs = newBackfillIndex;
+
+            const childRHS = try childParseFn(self);
+
+            self.ast.items[newBackfillIndex].lhs = childRHS;
+
+            backfillIndex = newBackfillIndex;
+        }
+
+        // assign the lhs and rhs
+        self.ast.items[parentIndex].lhs = lhsIndex;
+        self.ast.items[parentIndex].rhs = rhsIndex;
+
+        return parentIndex;
+    }
+
+    /////////// UNTOUCHED TO REFACTOR ////////////////////////
+    // Expression = BoolTerm ("||" BoolTerm)*
+    /// Expression goes like this:
+    /// [[ Expression, BackfillReserve, Boolterm,...]]
+    ///                   lhs             rhs
+    /// TESTME: this is untested
+    /// Should be able to skip any nodes called backfill reserve in the use of
+    /// the ast, and will act as it would if we were using a tree rather than a
+    /// array
+    ///
+    /// NOTE: Would be possible to have the Backfill be represented as rhs,
+    /// before it is turned into an or.
+    /// however, this would be in conflict with the memory representation, so
+    /// it has not been implemented yet.
+    pub fn parseExpression(self: *Parser) ParserError!usize {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing an Expression\n", .{});
+                std.debug.print("Defined as: Expression = BoolTerm (\"||\" BoolTerm)*\n", .{});
+            }
+        }
+        // Init indexes
+        const expressionIndex = try self.astAppend(NodeKind.Expression, try self.currentToken());
+
+        const parsedIndex = backfillParse(
+            self,
+            expressionIndex, // The index for this node, this will act as parent
+            NodeKind.Or, // The optional node that we will create  will be filled
+            // with a BackfillReserve to start
+            TokenKind.Or, // The optional token that we will use
+            Parser.parseBoolTerm, // the funciton to call to make the child(ren)
+        );
+
+        return parsedIndex;
     }
 
     // Boolterm = EqTerm ("&&" EqTerm)*
-    pub fn parseBoolTerm(self: *Parser) !Node {
+    pub fn parseBoolTerm(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a BoolTerm\n", .{});
@@ -1200,76 +1314,46 @@ pub const Parser = struct {
         }
         // Init indexes
         var boolTermIndex = try self.astAppend(NodeKind.BoolTerm, try self.currentToken());
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
-        // Expect EqTerm
-        lhsIndex = try self.parseEqTerm();
+        const parsedIndex = backfillParse(
+            self,
+            boolTermIndex, // The index for this node, this will act as parent
+            NodeKind.And, // The optional node that we will create  will be filled
+            // with a BackfillReserve to start
+            TokenKind.And, // The optional token that we will use
+            Parser.parseEqTerm, // the funciton to call to make the child(ren)
+        );
 
-        // Expect ("&&" EqTerm)*
-        while ((try self.currentToken()).kind == TokenKind.And) {
-            // Expect &&
-            try self.expectToken(TokenKind.And);
-            // Expect EqTerm
-            rhsIndex = try self.parseEqTerm();
-        }
-
-        // assign the lhs and rhs
-        self.ast.items[boolTermIndex].lhs = lhsIndex;
-        self.ast.items[boolTermIndex].rhs = rhsIndex;
-
-        return boolTermIndex;
+        return parsedIndex;
     }
 
     // EqTerm = RelTerm (("==" | "!=") RelTerm)*
-    pub fn parseEqTerm(self: *Parser) !Node {
+    pub fn parseEqTerm(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing an EqTerm\n", .{});
                 std.debug.print("Defined as: EqTerm = RelTerm (\"==\" | \"!=\") RelTerm)*\n", .{});
             }
         }
+
         // Init indexes
         var eqTermIndex = try self.astAppend(NodeKind.EqTerm, try self.currentToken());
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        const nodeKinds: [2]NodeKind = [_]NodeKind{ NodeKind.Equals, NodeKind.NotEq };
+        const tokenKinds: [2]TokenKind = [_]TokenKind{ TokenKind.DoubleEq, TokenKind.NotEq };
 
-        // Expect RelTerm
-        lhsIndex = try self.parseRelTerm();
-
-        // Expect (("==" | "!=") RelTerm)*
-        while ((try self.currentToken()).kind == TokenKind.DoubleEq or (try self.currentToken()).kind == TokenKind.NotEq) {
-            switch ((try self.currentToken()).kind) {
-                TokenKind.NotEq => {
-                    // Expect !=
-                    const notEqToken = try self.expectAndYeildToken(TokenKind.NotEq);
-                    const notEqNode = Node{ .kind = NodeKind.NotEq, .token = notEqToken };
-                    rhsIndex = try self.astAppendNode(notEqNode);
-                    // Expect RelTerm
-                    rhsIndex = try self.parseRelTerm();
-                },
-                TokenKind.DoubleEq => {
-                    // Expect ==
-                    const eqToken = try self.expectAndYeildToken(TokenKind.DoubleEq);
-                    const eqNode = Node{ .kind = NodeKind.Equals, .token = eqToken };
-                    rhsIndex = try self.astAppendNode(eqNode);
-                    // Expect RelTerm
-                    rhsIndex = try self.parseRelTerm();
-                },
-                else => {
-                    // TODO: make this error like the others
-                    return std.debug.panic("expected == or != but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
-                },
-            }
-        }
-
-        // assign the lhs and rhs
-        self.ast.items[eqTermIndex].lhs = lhsIndex;
-        self.ast.items[eqTermIndex].rhs = rhsIndex;
+        const parsedIndex = backfillParseMany(
+            self,
+            eqTermIndex, // The index for this node, this will act as parent
+            &nodeKinds, // The optional node that we will create  will be filled
+            // with a BackfillReserve to start
+            &tokenKinds, // The optional token that we will use
+            Parser.parseRelTerm, // the funciton to call to make the child(ren)
+        );
+        return parsedIndex;
     }
 
     // RelTerm = Simple (("<" | ">" | ">=" | "<=") Simple)*
-    pub fn parseRelTerm(self: *Parser) !Node {
+    pub fn parseRelTerm(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a RelTerm\n", .{});
@@ -1278,65 +1362,22 @@ pub const Parser = struct {
         }
         // Init indexes
         var relTermIndex = try self.astAppend(NodeKind.RelTerm, try self.currentToken());
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        const nodeKinds: [4]NodeKind = [_]NodeKind{ NodeKind.LessThan, NodeKind.GreaterThan, NodeKind.GreaterThanEq, NodeKind.LessThanEq };
+        const tokenKinds: [4]TokenKind = [_]TokenKind{ TokenKind.Lt, TokenKind.Gt, TokenKind.GtEq, TokenKind.LtEq };
 
-        // Expect Simple
-        lhsIndex = try self.parseSimple();
-
-        // Expect (("<" | ">" | ">=" | "<=") Simple)*
-        while ((try self.currentToken()).kind == TokenKind.Lt or (try self.currentToken()).kind == TokenKind.Gt or (try self.currentToken()).kind == TokenKind.GtEq or (try self.currentToken()).kind == TokenKind.LtEq) {
-            switch ((try self.currentToken()).kind) {
-                TokenKind.Lt => {
-                    // Expect <
-                    const ltToken = try self.expectAndYeildToken(TokenKind.Lt);
-                    const ltNode = Node{ .kind = NodeKind.LessThan, .token = ltToken };
-                    rhsIndex = try self.astAppendNode(ltNode);
-                    // Expect Simple
-                    rhsIndex = try self.parseSimple();
-                },
-                TokenKind.Gt => {
-                    // Expect >
-                    const gtToken = try self.expectAndYeildToken(TokenKind.Gt);
-                    const gtNode = Node{ .kind = NodeKind.GreaterThan, .token = gtToken };
-                    rhsIndex = try self.astAppendNode(gtNode);
-
-                    // Expect Simple
-                    rhsIndex = try self.parseSimple();
-                },
-                TokenKind.GtEq => {
-                    // Expect >=
-                    const gtEqToken = try self.expectAndYeildToken(TokenKind.GtEq);
-                    const gtEqNode = Node{ .kind = NodeKind.GreaterThanEq, .token = gtEqToken };
-                    rhsIndex = try self.astAppendNode(gtEqNode);
-                    // Expect Simple
-                    rhsIndex = try self.parseSimple();
-                },
-                TokenKind.LtEq => {
-                    // Expect <=
-                    const ltEqToken = try self.expectAndYeildToken(TokenKind.LtEq);
-                    const ltEqNode = Node{ .kind = NodeKind.LessThanEq, .token = ltEqToken };
-                    rhsIndex = try self.astAppendNode(ltEqNode);
-
-                    // Expect Simple
-                    rhsIndex = try self.parseSimple();
-                },
-                else => {
-                    // TODO: make this error like the others
-                    return std.debug.panic("expected <, >, >= or <= but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
-                },
-            }
-        }
-
-        // assign the lhs and rhs
-        self.ast.items[relTermIndex].lhs = lhsIndex;
-        self.ast.items[relTermIndex].rhs = rhsIndex;
-
-        return relTermIndex;
+        const parsedIndex = backfillParseMany(
+            self,
+            relTermIndex, // The index for this node, this will act as parent
+            &nodeKinds, // The optional node that we will create  will be filled
+            // with a BackfillReserve to start
+            &tokenKinds, // The optional token that we will use
+            Parser.parseSimple, // the funciton to call to make the child(ren)
+        );
+        return parsedIndex;
     }
 
     // Simple = Term (("+" | "-") Term)*
-    pub fn parseSimple(self: *Parser) !Node {
+    pub fn parseSimple(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Simple\n", .{});
@@ -1345,47 +1386,23 @@ pub const Parser = struct {
         }
         // Init indexes
         var simpleIndex = try self.astAppend(NodeKind.Simple, try self.currentToken());
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        const nodeKinds: [2]NodeKind = [_]NodeKind{ NodeKind.Plus, NodeKind.Minus };
+        const tokenKinds: [2]TokenKind = [_]TokenKind{ TokenKind.Plus, TokenKind.Minus };
 
-        // Expect Term
-        lhsIndex = try self.parseTerm();
+        const parsedIndex = backfillParseMany(
+            self,
+            simpleIndex, // The index for this node, this will act as parent
+            &nodeKinds, // The optional node that we will create  will be filled
+            // with a BackfillReserve to start
+            &tokenKinds, // The optional token that we will use
+            Parser.parseTerm, // the funciton to call to make the child(ren)
+        );
 
-        // Expect (("+" | "-") Term)*
-        while ((try self.currentToken()).kind == TokenKind.Plus or (try self.currentToken()).kind == TokenKind.Minus) {
-            switch ((try self.currentToken()).kind) {
-                TokenKind.Plus => {
-                    // Expect +
-                    const plusToken = try self.expectAndYeildToken(TokenKind.Plus);
-                    const plusNode = Node{ .kind = NodeKind.Plus, .token = plusToken };
-                    rhsIndex = try self.astAppendNode(plusNode);
-                    // Expect Term
-                    rhsIndex = try self.parseTerm();
-                },
-                TokenKind.Minus => {
-                    // Expect -
-                    const minusToken = try self.expectAndYeildToken(TokenKind.Minus);
-                    const minusNode = Node{ .kind = NodeKind.Minus, .token = minusToken };
-                    rhsIndex = try self.astAppendNode(minusNode);
-                    // Expect Term
-                    rhsIndex = try self.parseTerm();
-                },
-                else => {
-                    // TODO: make this error like the others
-                    return std.debug.panic("expected + or - but got {s}\n", .{@tagName((try self.currentToken()).kind)});
-                },
-            }
-        }
-
-        // assign the lhs and rhs
-        self.ast.items[simpleIndex].lhs = lhsIndex;
-        self.ast.items[simpleIndex].rhs = rhsIndex;
-
-        return simpleIndex;
+        return parsedIndex;
     }
 
     // Term = Unary (("*" | "/") Unary)*
-    pub fn parseTerm(self: *Parser) !Node {
+    pub fn parseTerm(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Term\n", .{});
@@ -1394,46 +1411,22 @@ pub const Parser = struct {
         }
         // Init indexes
         var termIndex = try self.astAppend(NodeKind.Term, try self.currentToken());
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        const nodeKinds: [2]NodeKind = [_]NodeKind{ NodeKind.Mul, NodeKind.Div };
+        const tokenKinds: [2]TokenKind = [_]TokenKind{ TokenKind.Mul, TokenKind.Div };
 
-        // Expect Unary
-        lhsIndex = try self.parseUnary();
+        const parsedIndex = backfillParseMany(
+            self,
+            termIndex, // The index for this node, this will act as parent
+            &nodeKinds, // The optional node that we will create  will be filled
+            &tokenKinds, // The optional token that we will use
+            Parser.parseUnary, // the funciton to call to make the child(ren)
+        );
 
-        // Expect (("*" | "/") Unary)*
-        while ((try self.currentToken()).kind == TokenKind.Mul or (try self.currentToken()).kind == TokenKind.Div) {
-            switch ((try self.currentToken()).kind) {
-                TokenKind.Mul => {
-                    // Expect *
-                    const mulToken = try self.expectAndYeildToken(TokenKind.Mul);
-                    const mulNode = Node{ .kind = NodeKind.Mul, .token = mulToken };
-                    rhsIndex = try self.astAppendNode(mulNode);
-                    // Expect Unary
-                    rhsIndex = try self.parseUnary();
-                },
-                TokenKind.Div => {
-                    // Expect /
-                    const divToken = try self.expectAndYeildToken(TokenKind.Div);
-                    const divNode = Node{ .kind = NodeKind.Div, .token = divToken };
-                    rhsIndex = try self.astAppendNode(divNode);
-                    // Expect Unary
-                    rhsIndex = try self.parseUnary();
-                },
-                else => {
-                    // TODO: make this error look like the others
-                    return std.debug.panic("expected * or / but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
-                },
-            }
-        }
-        // assign the lhs and rhs
-        self.ast.items[termIndex].lhs = lhsIndex;
-        self.ast.items[termIndex].rhs = rhsIndex;
-
-        return termIndex;
+        return parsedIndex;
     }
 
     // Unary = ("!" | "-")* Selector
-    pub fn parseUnary(self: *Parser) !Node {
+    pub fn parseUnary(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Unary\n", .{});
@@ -1442,44 +1435,22 @@ pub const Parser = struct {
         }
         // Init indexes
         var unaryIndex = try self.astAppend(NodeKind.Unary, try self.currentToken());
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        const nodeKinds: [2]NodeKind = [_]NodeKind{ NodeKind.Not, NodeKind.Minus };
+        const tokenKinds: [2]TokenKind = [_]TokenKind{ TokenKind.Not, TokenKind.Minus };
 
-        // Expect ("!" | "-")*
-        while ((try self.currentToken()).kind == TokenKind.Not or (try self.currentToken()).kind == TokenKind.Minus) {
-            switch ((try self.currentToken()).kind) {
-                TokenKind.Not => {
-                    // Expect !
-                    const notToken = try self.expectAndYeildToken(TokenKind.Not);
-                    const notNode = Node{ .kind = NodeKind.Not, .token = notToken };
-                    lhsIndex = try self.astAppendNode(notNode);
-                },
-                TokenKind.Minus => {
-                    // Expect -
-                    const minusToken = try self.expectAndYeildToken(TokenKind.Minus);
-                    const minusNode = Node{ .kind = NodeKind.Unary, .token = minusToken };
-                    lhsIndex = try self.astAppendNode(minusNode);
-                },
-                else => {
-                    // TODO: make this error like the others
-                    return std.debug.panic("expected ! or - but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
-                },
-            }
-        }
+        const parsedIndex = backfillParseMany(
+            self,
+            unaryIndex, // The index for this node, this will act as parent
+            &nodeKinds, // The optional node that we will create  will be filled
+            &tokenKinds, // The optional token that we will use
+            Parser.parseSelector, // the funciton to call to make the child(ren)
+        );
 
-        // TODO: check that this is right
-        // Expect Selector
-        rhsIndex = try self.parseSelector();
-
-        // assign the lhs and rhs
-        self.ast.items[unaryIndex].lhs = lhsIndex;
-        self.ast.items[unaryIndex].rhs = rhsIndex;
-
-        return unaryIndex;
+        return parsedIndex;
     }
 
     // Selector = Factor ("." Identifier)*
-    pub fn parseSelector(self: *Parser) !Node {
+    pub fn parseSelector(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Selector\n", .{});
@@ -1510,7 +1481,7 @@ pub const Parser = struct {
     }
 
     // Factor = "(" Expression ")" | Identifier (Arguments)? | Number | "true" | "false" | "new" Identifier | "null"
-    pub fn parseFactor(self: *Parser) !Node {
+    pub fn parseFactor(self: *Parser) ParserError!usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a Factor\n", .{});
@@ -1543,9 +1514,25 @@ pub const Parser = struct {
             },
             // Theese could all be refactored into a helper function
             // TODO: check that this works
-            TokenKind.Number, TokenKind.KeywordTrue, TokenKind.KeywordFalse, TokenKind.KeywordNull => {
-                try self.consumeToken();
-                try self.fromTypesAppend(token);
+            TokenKind.Number => {
+                const numberToken = try self.expectAndYeildToken(TokenKind.Number);
+                const numberNode = Node{ .kind = NodeKind.Number, .token = numberToken };
+                lhsIndex = try self.astAppendNode(numberNode);
+            },
+            TokenKind.KeywordTrue => {
+                const trueToken = try self.expectAndYeildToken(TokenKind.KeywordTrue);
+                const trueNode = Node{ .kind = NodeKind.True, .token = trueToken };
+                lhsIndex = try self.astAppendNode(trueNode);
+            },
+            TokenKind.KeywordFalse => {
+                const falseToken = try self.expectAndYeildToken(TokenKind.KeywordFalse);
+                const falseNode = Node{ .kind = NodeKind.False, .token = falseToken };
+                lhsIndex = try self.astAppendNode(falseNode);
+            },
+            TokenKind.KeywordNull => {
+                const nullToken = try self.expectAndYeildToken(TokenKind.KeywordNull);
+                const nullNode = Node{ .kind = NodeKind.Null, .token = nullToken };
+                lhsIndex = try self.astAppendNode(nullNode);
             },
             TokenKind.KeywordNew => {
                 // Expect new
@@ -1558,7 +1545,7 @@ pub const Parser = struct {
             },
             else => {
                 // TODO: make this error like the others
-                return std.debug.panic("expected factor but got {s}.\n", .{@tagName((try self.currentToken()).kind)});
+                return error.InvalidToken;
             },
         }
         // assign the lhs and rhs
@@ -1569,7 +1556,7 @@ pub const Parser = struct {
     }
 
     // Arguments = "(" (Expression ("," Expression)*)? ")"
-    pub fn parseArguments(self: *Parser) !Node {
+    pub fn parseArguments(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Arguments\n", .{});
@@ -1603,18 +1590,18 @@ pub const Parser = struct {
 
         // assign the lhs and rhs
         self.ast.items[argumentsIndex].lhs = lhsIndex;
-        self.ast.itemsl[argumentsIndex].rhs = rhsIndex;
+        self.ast.items[argumentsIndex].rhs = rhsIndex;
 
         return argumentsIndex;
     }
 };
 
 pub fn main() !void {
-    const source = "struct test{ int a; };";
+    const source = "struct test{ int a; }; fun A() void{ int d;d=2+5;}";
     const tokens = try Lexer.tokenizeFromStr(source);
     const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
     std.debug.print("Parsed successfully\n", .{});
-    std.debug.print("{any}\n", .{parser});
+    try parser.prettyPrintAst();
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
