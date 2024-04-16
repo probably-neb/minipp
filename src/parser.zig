@@ -42,81 +42,11 @@ const Token = lexer.Token;
 const Lexer = lexer.Lexer;
 const TokenKind = lexer.TokenKind;
 
+const Node = @import("ast.zig").Node;
+const NodeKind = @import("ast.zig").NodeKind;
+const NodeList = @import("ast.zig").NodeList;
+
 const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory };
-
-// The parser is responsible for taking the tokens and creating an abstract syntax tree
-pub const NodeKind = enum {
-    Types,
-    Program,
-    Type,
-    BoolType,
-    IntType,
-    StructType,
-    Void,
-    Read,
-    Decl,
-    NestedDecl,
-    Identifier,
-    TypeDeclaration,
-    Declarations,
-    Declaration,
-    Functions,
-    Function,
-    Parameters,
-    ReturnType,
-    Statement,
-    Block,
-    Assignment,
-    Print,
-    PrintLn,
-    ConditionalIf,
-    ConditionalIfElse,
-    While,
-    Delete,
-    Return,
-    Invocation,
-    StatementList,
-    LValue,
-    Expression,
-    BoolTerm,
-    EqTerm,
-    RelTerm,
-    Simple,
-    Mul,
-    And,
-    Or,
-    Div,
-    Plus,
-    Minus,
-    Term,
-    Unary,
-    Selector,
-    Factor,
-    Arguments,
-    Not,
-    NotEq,
-    Equals,
-    GreaterThan,
-    LessThan,
-    GreaterThanEq,
-    LessThanEq,
-    Number,
-    True,
-    False,
-    New,
-    Null,
-    /// This is a special node that is used to reserve space for the AST,
-    /// specifically for Expression-s and below!
-    /// NOTE: This should be skipped when analyzing the AST
-    BackfillReserve,
-};
-
-pub const Node = struct {
-    kind: NodeKind,
-    token: Token,
-    lhs: ?usize = null,
-    rhs: ?usize = null,
-};
 
 /// A parser is responsible for taking the tokens and creating an abstract syntax tree.
 /// The resulting ast is a flat array of nodes.
@@ -131,7 +61,7 @@ pub const Parser = struct {
     tokens: []Token,
     input: []const u8,
 
-    ast: std.ArrayList(Node),
+    ast: NodeList,
     astLen: usize = 0,
 
     pos: usize = 0,
