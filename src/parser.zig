@@ -43,8 +43,8 @@ const Lexer = lexer.Lexer;
 const TokenKind = lexer.TokenKind;
 
 const Node = @import("ast.zig").Node;
-const NodeKind = @import("ast.zig").NodeKind;
-const NodeList = @import("ast.zig").NodeList;
+const NodeKind = Node.Kind;
+const NodeLIst = @import("ast.zig").NodeList;
 
 const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory };
 
@@ -61,7 +61,7 @@ pub const Parser = struct {
     tokens: []Token,
     input: []const u8,
 
-    ast: NodeList,
+    ast: std.ArrayList(Node),
     astLen: usize = 0,
 
     pos: usize = 0,
