@@ -46,6 +46,8 @@ const Node = @import("ast.zig").Node;
 const NodeKind = Node.Kind;
 const NodeLIst = @import("ast.zig").NodeList;
 
+const utils = @import("utils.zig");
+
 const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory };
 
 /// A parser is responsible for taking the tokens and creating an abstract syntax tree.
@@ -138,7 +140,7 @@ pub const Parser = struct {
             return err;
         };
         try self.idMap.put(token._range.getSubStrFromStr(self.input), true);
-        const node = Node{ .kind = NodeKind.Identifier, .token = token };
+        const node = Node{ .kind = NodeKind{ .Identifier = .{} }, .token = token };
         return node;
     }
 
@@ -204,6 +206,21 @@ pub const Parser = struct {
         std.debug.print("}}\n", .{});
     }
 
+    /// reserves a location using the BackFillReserve Node
+    /// NOTE: does not call any token consuming functions, expects
+    /// the caller to handle tokens
+    fn reserve(self: *Parser) !usize {
+        const index = self.astLen;
+        try self.ast.append(Node{ .kind = NodeKind{ .BackfillReserve = .{} }, .token = undefined });
+        self.astLen += 1;
+        return index;
+    }
+
+    fn set(self: *Parser, at: usize, node: Node) !void {
+        try utils.assert(at < self.astLen, "tried to set a node out of bounds: astLen = {d}, your mistake = {d}", .{ at, self.astLen });
+        self.ast.items[at] = node;
+    }
+
     ///////////////////////////////////////////////////////////////////////////
     /// Parser Grammar Functions
     ///////////////////////////////////////////////////////////////////////////
@@ -218,8 +235,9 @@ pub const Parser = struct {
             }
         }
 
+        var progToken = try self.currentToken();
         // Init indexes
-        var programIndex = try self.astAppend(NodeKind.Program, try self.currentToken());
+        var programIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -230,15 +248,17 @@ pub const Parser = struct {
         rhsIndex = try self.parseDeclarations();
 
         // Expect Functions
-        rhsIndex = try self.parseFunctions();
+        if (try self.parseFunctions()) |rhs| {
+            // only update rhs if there were functions...
+            rhsIndex = rhs;
+        }
 
         // Expect EOF
         // TODO: make sure that Eof gets assigned propperly
         try self.expectToken(TokenKind.Eof);
 
-        // assign the lhs and rhs
-        self.ast.items[programIndex].lhs = lhsIndex;
-        self.ast.items[programIndex].rhs = rhsIndex;
+        const progNode = Node{ .kind = NodeKind.Program{ .lhs = lhsIndex, .rhs = rhsIndex }, .token = progToken, .lhs = lhsIndex, .rhs = rhsIndex };
+        try self.set(programIndex, progNode);
     }
 
     // Types = { TypeDeclaration }*
@@ -250,7 +270,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var typesIndex = try self.astAppend(NodeKind.Types, try self.currentToken());
+        const typesToken = try self.currentToken();
+        var typesIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -263,9 +284,8 @@ pub const Parser = struct {
                 rhsIndex = try self.parseTypeDeclaration();
             }
         }
-        // assign the lhs and rhs
-        self.ast.items[typesIndex].lhs = lhsIndex;
-        self.ast.items[typesIndex].rhs = rhsIndex;
+        const node = Node{ .kind = NodeKind{ .Types = .{ .lhs = lhsIndex, .rhs = rhsIndex }, .token = typesToken } };
+        try self.set(typesIndex, node);
 
         return typesIndex;
     }
@@ -281,7 +301,8 @@ pub const Parser = struct {
         }
 
         // Init indexes
-        var typeNodeIndex = try self.astAppend(NodeKind.TypeDeclaration, try self.currentToken());
+        const tok = try self.currentToken();
+        var typeNodeIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -303,9 +324,12 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        // Assign the lhs and rhs
-        self.ast.items[typeNodeIndex].lhs = lhsIndex;
-        self.ast.items[typeNodeIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .TypeDeclaration = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+
+        try self.set(typeNodeIndex, node);
 
         // convert to array
         return typeNodeIndex;
@@ -321,7 +345,9 @@ pub const Parser = struct {
         }
 
         // Init indexes
-        var nestedDeclarationsIndex = try self.astAppend(NodeKind.NestedDecl, try self.currentToken());
+        const tok = try self.currentToken();
+        var nestedDeclarationsIndex = try self.reserve();
+        // var nestedDeclarationsIndex = try self.astAppend(, try self.currentToken());
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -336,6 +362,10 @@ pub const Parser = struct {
             rhsIndex = try self.parseDecl();
             try self.expectToken(TokenKind.Semicolon);
         }
+
+        const node = Node{ .kind = NodeKind.NestedDecls{ .lhs = lhsIndex, .rhs = rhsIndex }, .token = tok, .lhs = lhsIndex, .rhs = rhsIndex };
+
+        try self.set(nestedDeclarationsIndex, node);
 
         // assign the lhs and rhs
         self.ast.items[nestedDeclarationsIndex].lhs = lhsIndex;
@@ -355,7 +385,8 @@ pub const Parser = struct {
         // REFACTOR: this could use the lhs and rhs index, however.... its
         // actually faster this way
         // Init indexes
-        var declIndex = try self.astAppend(NodeKind.Decl, try self.currentToken());
+        const tok = try self.currentToken();
+        var declIndex = try self.reserve();
 
         // Expect Type
         const typeIndex = try self.parseType();
@@ -363,9 +394,9 @@ pub const Parser = struct {
         // Expect Identifier
         const identIndex = try self.astAppendNode(try self.expectIdentifier());
 
-        // assign the lhs and rhs
-        self.ast.items[declIndex].lhs = typeIndex;
-        self.ast.items[declIndex].rhs = identIndex;
+        const node = Node{ .kind = NodeKind.Decl{ .lhs = typeIndex, .rhs = identIndex }, .token = tok };
+
+        try self.set(declIndex, node);
 
         return declIndex;
     }
@@ -380,7 +411,8 @@ pub const Parser = struct {
         }
 
         // Init indexes
-        var typeIndex = try self.astAppend(NodeKind.Type, try self.currentToken());
+        const tok = try self.currentToken();
+        var typeIndex = try self.reserve();
         var rhsIndex: ?usize = null;
         var lhsIndex: ?usize = null;
 
@@ -389,13 +421,13 @@ pub const Parser = struct {
         // Expect int | bool | struct (id)
         switch (token.kind) {
             TokenKind.KeywordInt => {
-                lhsIndex = try self.astAppend(NodeKind.IntType, token);
+                lhsIndex = try self.astAppend(NodeKind{ .IntType = .{} }, token);
             },
             TokenKind.KeywordBool => {
-                lhsIndex = try self.astAppend(NodeKind.BoolType, token);
+                lhsIndex = try self.astAppend(NodeKind{ .BoolType = .{} }, token);
             },
             TokenKind.KeywordStruct => {
-                lhsIndex = try self.astAppend(NodeKind.StructType, token);
+                lhsIndex = try self.astAppend(NodeKind{ .StructType = .{} }, token);
                 rhsIndex = try self.astAppendNode(try self.expectIdentifier());
             },
             else => {
@@ -407,9 +439,11 @@ pub const Parser = struct {
                 return error.InvalidToken;
             },
         }
-        // assign the lhs and rhs
-        self.ast.items[typeIndex].rhs = rhsIndex;
-        self.ast.items[typeIndex].lhs = lhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Type = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(typeIndex, node);
 
         return typeIndex;
     }
@@ -1546,7 +1580,7 @@ pub const Parser = struct {
 
 pub fn main() !void {
     const source = "struct test{ int a; }; fun A() void{ int d;d=2+5;}";
-    const tokens = try Lexer.tokenizeFromStr(source);
+    const tokens = try Lexer.tokenizeFromStr(source, std.heap.page_allocator);
     const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
     std.debug.print("Parsed successfully\n", .{});
     try parser.prettyPrintAst();
