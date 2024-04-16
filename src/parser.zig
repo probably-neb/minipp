@@ -45,7 +45,7 @@ const TokenKind = lexer.TokenKind;
 const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory };
 
 // The parser is responsible for taking the tokens and creating an abstract syntax tree
-pub const NodeKind = union(enum) {
+pub const NodeKind = enum {
     Types,
     Program,
     Type,
