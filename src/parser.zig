@@ -217,7 +217,7 @@ pub const Parser = struct {
     }
 
     fn set(self: *Parser, at: usize, node: Node) !void {
-        try utils.assert(at < self.astLen, "tried to set a node out of bounds: astLen = {d}, your mistake = {d}", .{ at, self.astLen });
+        utils.assert(at < self.astLen, "tried to set a node out of bounds: astLen = {d}, your mistake = {d}", .{ at, self.astLen });
         self.ast.items[at] = node;
     }
 
