@@ -144,22 +144,6 @@ pub const Node = struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
         },
-        BoolTerm: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        EqTerm: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        RelTerm: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Simple: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
         BinaryOperation: struct {
             // lhs, rhs actually make sense!
             // token points to operator go look there
@@ -172,38 +156,6 @@ pub const Node = struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
         },
-        Mul: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        And: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Or: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Div: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Plus: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Minus: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Term: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Unary: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
         Selector: struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
@@ -213,34 +165,6 @@ pub const Node = struct {
             rhs: ?usize = null,
         },
         Arguments: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Not: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        NotEq: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Equals: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        GreaterThan: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        LessThan: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        GreaterThanEq: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        LessThanEq: struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
         },

@@ -8,32 +8,11 @@
 ///       the code is not insanely long.
 ///       - Furthermore I do not like how the inline version panics out.
 /// Version 0.2: The AST is now a flat array.
-///    - NOTE: right now the tree down to a type is made, I think this should be
-///            removed such that it is only the thing is there.
-///      - Example:
-///       Assignment: d
-///       LValue: d
-///       Identifier: d
-///       Expression: 5
-///       BackfillReserve: 5
-///       BoolTerm: 5
-///       BackfillReserve: 5
-///       EqTerm: 5
-///       BackfillReserve: 5
-///       RelTerm: 5
-///       BackfillReserve: 5
-///       Simple: 5
-///       BackfillReserve: 5
-///       Term: 5
-///       BackfillReserve: 5
-///       Unary: 5
-///       BackfillReserve: 5
-///       Selector: 5
-///       Factor: 5
-///       Number: 5
-///     Should be able to rectify down to its actual state without the endless chains
-///
-///
+/// NOTE: there is a lot of indirection present in the tree
+///     ex. Expression -> Selector -> Factor -> Number
+///     the plan is to remove this as needed while working on the following
+///     compile steps that operate on the AST (name resolution, type checking, semantic analysis)
+///     to suit the needs of those steps
 ///////////////////////////////////////////////////////////////////////////////
 
 const std = @import("std");
@@ -1353,7 +1332,7 @@ pub const Parser = struct {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing an Expression\n", .{});
-                std.debug.print("Defined as: Expression = BoolTerm (\"||\" BoolTerm)*\n", .{});
+                std.debug.print("Defined as: Expression = boolterm (\"||\" boolterm)*\n", .{});
             }
         }
         // Init indexes
