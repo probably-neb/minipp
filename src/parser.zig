@@ -13,6 +13,17 @@
 ///     the plan is to remove this as needed while working on the following
 ///     compile steps that operate on the AST (name resolution, type checking, semantic analysis)
 ///     to suit the needs of those steps
+///
+///     the primary goal will be to remove as many of the so-called "lhs only" nodes
+///     such as Expression.
+///
+///     The goal of the AST is not to produce a clean representation
+///     of the grammar based on the input file, it is to create a structure suitable
+///     for the following compile steps/passes
+///     Therefore information that can be assumed
+///     (like the condition in an if statement is an expression)
+///     should not be stored as it only adds more places for mistakes, and more required
+///     logic/indirection to the consumers
 ///////////////////////////////////////////////////////////////////////////////
 
 const std = @import("std");
@@ -206,6 +217,8 @@ pub const Parser = struct {
         return index;
     }
 
+    /// the sidekick of `reserve` takes in an index returned by `reserve`
+    /// and a node to put there and bada-bing-bada-boom you maintained a preorder traversal
     fn set(self: *Parser, at: usize, node: Node) !void {
         utils.assert(at < self.astLen, "tried to set a node out of bounds: astLen = {d}, silly goose passed = {d}", .{ at, self.astLen });
         self.ast.items[at] = node;
@@ -1222,16 +1235,15 @@ pub const Parser = struct {
         return argumentsIndex;
     }
 
-    // contrary to popular belief this is not a grammar...
-    fn LR(comptime T: type) type {
-        return struct {
-            lhs: ?T,
-            rhs: ?T,
-        };
-    }
-
+    /// type alias
     const BindingPower = u8;
 
+    /// "binding power" ~ precedence of an operator
+    /// higher binding power means higher precedence
+    /// pratt parsing based on these binding powers results in
+    /// sub expressions with higher precedence being grouped together
+    /// i.e. `a + b * c` is parsed as `a + (b * c)` because `*`
+    /// has higher precedence than `+`
     fn binding_power(op: TokenKind) BindingPower {
         return switch (op) {
             // expression -> boolterm { '||' boolterm}∗
@@ -1250,6 +1262,9 @@ pub const Parser = struct {
         };
     }
 
+    /// binding power of prefix ops (`!`, `-`)
+    /// separate function because it is used in a different context
+    /// and must avoid returning the bp of `-` when used as negation operator
     fn prefix_binding_power(op: TokenKind) BindingPower {
         return switch (op) {
             // NOTE: must be bigger than biggest binop binding power
@@ -1268,14 +1283,22 @@ pub const Parser = struct {
     pub const Expr = union(enum) {
         Binop: ExprBinop,
         Uop: ExprUop,
-        // An atom is a selector in the grammar, i.e. the lowest level of the expression
-        // heirarchy that contains no operators (not considering `.` field acess as an op)
         Atom: ExprAtom,
     };
-    // The index into the token list, to set in the parser before calling parseAtom
-    // while reconstructing the tree
-    pub const ExprAtom = struct { start: usize, len: u32 };
+    /// An atom is a selector in the grammar, i.e. the lowest level of the expression
+    /// heirarchy that contains no operators (not considering `.` field acess as an op)
+    /// (described as selector in grammar)
+    // TODO: make it {start, end} rather than length. End is almost exclusively used
+    // in tests/assertions for taking a slice of the token list
+    pub const ExprAtom = struct {
+        /// The index into the token list, to set in the parser before calling parseAtom
+        /// while reconstructing the tree
+        start: usize,
+        len: u32,
+    };
+    /// binary operation
     pub const ExprBinop = struct { op: Token, lhs: *Expr, rhs: *Expr };
+    /// unary operation
     pub const ExprUop = struct {
         op: Token,
         on: *Expr,
@@ -1312,17 +1335,25 @@ pub const Parser = struct {
             },
             .Atom => {
                 // this is tricky see
+                // save token position before overwriting
                 const posSave = self.pos;
                 const readPosSave = self.readPos;
 
+                // overwrite the token position so when we call parseSelector
+                // it starts at the token we skipped while extracting the atom
                 self.pos = expr.Atom.start;
                 self.readPos = expr.Atom.start + 1;
 
                 const atomIndex = try self.parseSelector();
+
+                // I really should have made this error shorter before the hundredth time I saw it
                 utils.assert(self.pos == (expr.Atom.start + expr.Atom.len), "either didn't skip enough tokens when extracting atom or didn't parse enough when reconstructing tree... either way shits borqed! glhf!!!\n Expected to parse: \n{any}\nBut Parsed: \n{any}\n", .{ self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)], self.tokens[expr.Atom.start..self.pos] });
 
+                // restore read and write pos
                 self.pos = posSave;
                 self.readPos = readPosSave;
+
+                // return index to atom subtree in ast
                 return atomIndex;
             },
         }
