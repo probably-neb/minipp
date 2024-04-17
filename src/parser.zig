@@ -48,7 +48,7 @@ const NodeLIst = @import("ast.zig").NodeList;
 
 const utils = @import("utils.zig");
 
-const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory };
+const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory, AssertionError };
 
 /// A parser is responsible for taking the tokens and creating an abstract syntax tree.
 /// The resulting ast is a flat array of nodes.
@@ -85,6 +85,8 @@ pub const Parser = struct {
         return self.tokens[self.readPos];
     }
 
+    // TODO : create currentTokenThatShouldBe function for more checks and
+    // easier bug finding (supposedly (my opinions are my own))
     fn currentToken(self: *Parser) !Token {
         if (self.pos >= self.tokens.len) return error.TokenIndexOutOfBounds;
         return self.tokens[self.pos];
@@ -110,9 +112,9 @@ pub const Parser = struct {
         if (!token.kind.equals(kind)) {
             // TODO: should update with the desired changes to TokenKind, such that the position is found.
             // Refactored for the moment
-            std.debug.print("Error invalid Token: expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
+            std.log.err("Error invalid Token at {d}: expected token kind {s} but got {s}.\n", .{ @max(self.pos, 1) - 1, @tagName(kind), @tagName(token.kind) });
             const line: []const u8 = token._range.getLineCont(self.input);
-            std.debug.print("{s}\n", .{line});
+            std.log.err("{s}\n", .{line});
             token._range.printLineContUnderline(self.input);
             return error.InvalidToken;
         }
@@ -162,7 +164,7 @@ pub const Parser = struct {
         return self.astAppendNode(node);
     }
 
-    pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
+    pub fn init(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
         var parser = Parser{
             .ast = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
             .idMap = std.StringHashMap(bool).init(allocator),
@@ -172,6 +174,11 @@ pub const Parser = struct {
             .allocator = allocator,
         };
 
+        return parser;
+    }
+
+    pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
+        var parser = try Parser.init(tokens, input, allocator);
         parser.parseProgram() catch |err| {
             std.debug.print("Error in parsing the program.\n", .{});
             parser.deinit();
@@ -194,16 +201,16 @@ pub const Parser = struct {
     pub fn prettyPrintAst(self: *const Parser) !void {
         const ast = self.ast.items;
         var i: usize = 0;
-        std.debug.print("AST:{{\n", .{});
+        std.log.info("AST:{{\n", .{});
         while (i < self.astLen) {
             const node = ast[i];
             const token = node.token;
             const tokenStr = token._range.getSubStrFromStr(self.input);
             const kind = @tagName(node.kind);
-            std.debug.print("{s}: {s}\n", .{ kind, tokenStr });
+            std.log.info("{s}: {s}\n", .{ kind, tokenStr });
             i += 1;
         }
-        std.debug.print("}}\n", .{});
+        std.log.info("}}\n", .{});
     }
 
     /// reserves a location using the BackFillReserve Node
@@ -211,13 +218,17 @@ pub const Parser = struct {
     /// the caller to handle tokens
     fn reserve(self: *Parser) !usize {
         const index = self.astLen;
-        try self.ast.append(Node{ .kind = NodeKind{ .BackfillReserve = .{} }, .token = undefined });
+        const node = Node{ .kind = .{ .BackfillReserve = .{ .lhs = 0, .rhs = 0 } }, .token = Token{
+            .kind = TokenKind.Eof,
+            ._range = lexer.Range.new(0, 0),
+        } };
+        try self.ast.append(node);
         self.astLen += 1;
         return index;
     }
 
     fn set(self: *Parser, at: usize, node: Node) !void {
-        utils.assert(at < self.astLen, "tried to set a node out of bounds: astLen = {d}, your mistake = {d}", .{ at, self.astLen });
+        utils.assert(at < self.astLen, "tried to set a node out of bounds: astLen = {d}, silly goose passed = {d}", .{ at, self.astLen });
         self.ast.items[at] = node;
     }
 
@@ -245,19 +256,20 @@ pub const Parser = struct {
         lhsIndex = try self.parseTypes();
 
         // Expect Declarations
-        rhsIndex = try self.parseDeclarations();
+        // Functions will be rhsIndex
+        _ = try self.parseDeclarations();
 
         // Expect Functions
-        if (try self.parseFunctions()) |rhs| {
-            // only update rhs if there were functions...
-            rhsIndex = rhs;
-        }
+        rhsIndex = try self.parseFunctions();
 
         // Expect EOF
         // TODO: make sure that Eof gets assigned propperly
         try self.expectToken(TokenKind.Eof);
 
-        const progNode = Node{ .kind = NodeKind.Program{ .lhs = lhsIndex, .rhs = rhsIndex }, .token = progToken, .lhs = lhsIndex, .rhs = rhsIndex };
+        const progNode = Node{
+            .kind = NodeKind{ .Program = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = progToken,
+        };
         try self.set(programIndex, progNode);
     }
 
@@ -271,20 +283,24 @@ pub const Parser = struct {
         }
         // Init indexes
         const typesToken = try self.currentToken();
-        var typesIndex = try self.reserve();
+        const typesIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
-        // While not EOF then parse TypeDeclaration
-        // Expect (TypeDeclaration)*
-        while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
-            if (lhsIndex == null) {
-                lhsIndex = try self.parseTypeDeclaration();
-            } else {
-                rhsIndex = try self.parseTypeDeclaration();
-            }
+        if ((try self.currentToken()).kind != .KeywordStruct) {
+            const emptyNode = Node{ .kind = NodeKind{ .Types = undefined }, .token = typesToken };
+            try self.set(typesIndex, emptyNode);
+            return typesIndex;
         }
-        const node = Node{ .kind = NodeKind{ .Types = .{ .lhs = lhsIndex, .rhs = rhsIndex }, .token = typesToken } };
+
+        lhsIndex = try self.parseTypeDeclaration();
+
+        // // While not EOF then parse TypeDeclaration
+        // // Expect (TypeDeclaration)*
+        while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
+            rhsIndex = try self.parseTypeDeclaration();
+        }
+        const node = Node{ .kind = NodeKind{ .Types = .{ .lhs = lhsIndex, .rhs = rhsIndex } }, .token = typesToken };
         try self.set(typesIndex, node);
 
         return typesIndex;
@@ -363,13 +379,11 @@ pub const Parser = struct {
             try self.expectToken(TokenKind.Semicolon);
         }
 
-        const node = Node{ .kind = NodeKind.NestedDecls{ .lhs = lhsIndex, .rhs = rhsIndex }, .token = tok, .lhs = lhsIndex, .rhs = rhsIndex };
-
+        const node = Node{
+            .kind = NodeKind{ .Declarations = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
         try self.set(nestedDeclarationsIndex, node);
-
-        // assign the lhs and rhs
-        self.ast.items[nestedDeclarationsIndex].lhs = lhsIndex;
-        self.ast.items[nestedDeclarationsIndex].rhs = rhsIndex;
 
         return nestedDeclarationsIndex;
     }
@@ -394,7 +408,10 @@ pub const Parser = struct {
         // Expect Identifier
         const identIndex = try self.astAppendNode(try self.expectIdentifier());
 
-        const node = Node{ .kind = NodeKind.Decl{ .lhs = typeIndex, .rhs = identIndex }, .token = tok };
+        const node = Node{
+            .kind = NodeKind{ .Decl = .{ .lhs = typeIndex, .rhs = identIndex } },
+            .token = tok,
+        };
 
         try self.set(declIndex, node);
 
@@ -421,7 +438,8 @@ pub const Parser = struct {
         // Expect int | bool | struct (id)
         switch (token.kind) {
             TokenKind.KeywordInt => {
-                lhsIndex = try self.astAppend(NodeKind{ .IntType = .{} }, token);
+                const kind = NodeKind{ .IntType = undefined };
+                lhsIndex = try self.astAppend(kind, token);
             },
             TokenKind.KeywordBool => {
                 lhsIndex = try self.astAppend(NodeKind{ .BoolType = .{} }, token);
@@ -457,7 +475,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var declarationsIndex = try self.astAppend(NodeKind.Declarations, try self.currentToken());
+        const tok = try self.currentToken();
+        var declarationsIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -471,9 +490,11 @@ pub const Parser = struct {
             rhsIndex = try self.parseDeclaration();
         }
 
-        // assign the lhs and rhs
-        self.ast.items[declarationsIndex].lhs = lhsIndex;
-        self.ast.items[declarationsIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Declaration = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(declarationsIndex, node);
 
         return declarationsIndex;
     }
@@ -490,7 +511,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var declarationIndex = try self.astAppend(NodeKind.Declaration, try self.currentToken());
+        const tok = try self.currentToken();
+        var declarationIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -504,22 +526,26 @@ pub const Parser = struct {
         while ((try self.currentToken()).kind != TokenKind.Semicolon) {
             // Expect ,
             try self.expectToken(TokenKind.Comma);
-
-            const internalNode = Node{ .kind = NodeKind.Declaration, .token = try self.currentToken(), .lhs = lhsIndex, .rhs = null };
-            const internalIndex = try self.astAppendNode(internalNode);
+            const internalIndex = try self.reserve();
 
             // Expect Identifier
             const internalRHS = try self.astAppendNode(try self.expectIdentifier());
+            const internalNode = Node{
+                .kind = NodeKind{ .Declaration = .{ .lhs = lhsIndex, .rhs = internalRHS } },
+                .token = try self.currentToken(),
+            };
             // Repeat
-            self.ast.items[internalIndex].rhs = internalRHS;
+            try self.set(internalIndex, internalNode);
         }
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        // assign the lhs and rhs
-        self.ast.items[declarationIndex].lhs = lhsIndex;
-        self.ast.items[declarationIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Declaration = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(declarationIndex, node);
 
         return declarationIndex;
     }
@@ -533,7 +559,8 @@ pub const Parser = struct {
             }
         }
         // init indexes
-        var functionsIndex = try self.astAppend(NodeKind.Functions, try self.currentToken());
+        const tok = try self.currentToken();
+        var functionsIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -547,9 +574,11 @@ pub const Parser = struct {
             }
         }
 
-        // assign the lhs and rhs
-        self.ast.items[functionsIndex].lhs = lhsIndex;
-        self.ast.items[functionsIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Functions = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(functionsIndex, node);
 
         return functionsIndex;
     }
@@ -563,7 +592,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var functionIndex = try self.astAppend(NodeKind.Function, try self.currentToken());
+        const tok = try self.currentToken();
+        var functionIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -591,9 +621,11 @@ pub const Parser = struct {
         // Expect }
         try self.expectToken(TokenKind.RCurly);
 
-        // assign the lhs and rhs
-        self.ast.items[functionIndex].lhs = lhsIndex;
-        self.ast.items[functionIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Function = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(functionIndex, node);
 
         return functionIndex;
     }
@@ -607,7 +639,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var parametersIndex = try self.astAppend(NodeKind.Parameters, try self.currentToken());
+        const tok = try self.currentToken();
+        var parametersIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -630,10 +663,11 @@ pub const Parser = struct {
         // Expect )
         try self.expectToken(TokenKind.RParen);
 
-        // assign the lhs and rhs
-        self.ast.items[parametersIndex].lhs = lhsIndex;
-        self.ast.items[parametersIndex].rhs = rhsIndex;
-
+        const node = Node{
+            .kind = NodeKind{ .Parameters = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(parametersIndex, node);
         return parametersIndex;
     }
 
@@ -646,7 +680,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var returnTypeIndex = try self.astAppend(NodeKind.ReturnType, try self.currentToken());
+        const tok = try self.currentToken();
+        var returnTypeIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -654,7 +689,9 @@ pub const Parser = struct {
         const token = try self.currentToken();
         switch (token.kind) {
             TokenKind.KeywordVoid => {
-                lhsIndex = try self.astAppend(NodeKind.Void, try self.expectAndYeildToken(TokenKind.KeywordVoid));
+                const voidToken = try self.expectAndYeildToken(TokenKind.KeywordVoid);
+                const voidNodeKind = NodeKind{ .Void = undefined };
+                lhsIndex = try self.astAppend(voidNodeKind, voidToken);
             },
             else => {
                 if (lhsIndex == null) {
@@ -665,9 +702,11 @@ pub const Parser = struct {
             },
         }
 
-        // assign the lhs and rhs
-        self.ast.items[returnTypeIndex].lhs = lhsIndex;
-        self.ast.items[returnTypeIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .ReturnType = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(returnTypeIndex, node);
 
         return returnTypeIndex;
     }
@@ -681,7 +720,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var statementIndex = try self.astAppend(NodeKind.Statement, try self.currentToken());
+        const tok = try self.currentToken();
+        var statementIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -733,9 +773,11 @@ pub const Parser = struct {
             },
         }
 
-        // assign the lhs and rhs
-        self.ast.items[statementIndex].lhs = lhsIndex;
-        self.ast.items[statementIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Statement = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(statementIndex, node);
 
         return statementIndex;
     }
@@ -749,7 +791,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var statementListIndex = try self.astAppend(NodeKind.StatementList, try self.currentToken());
+        const tok = try self.currentToken();
+        var statementListIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -763,9 +806,11 @@ pub const Parser = struct {
             }
         }
 
-        // assign the lhs and rhs
-        self.ast.items[statementListIndex].lhs = lhsIndex;
-        self.ast.items[statementListIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .StatementList = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(statementListIndex, node);
 
         return statementListIndex;
     }
@@ -779,7 +824,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var blockIndex = try self.astAppend(NodeKind.Block, try self.currentToken());
+        const tok = try self.currentToken();
+        var blockIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -792,9 +838,11 @@ pub const Parser = struct {
         // Expect }
         try self.expectToken(TokenKind.RCurly);
 
-        // assign the lhs and rhs
-        self.ast.items[blockIndex].lhs = lhsIndex;
-        self.ast.items[blockIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Block = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(blockIndex, node);
 
         return blockIndex;
     }
@@ -810,7 +858,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var assignmentIndex = try self.astAppend(NodeKind.Assignment, try self.currentToken());
+        const tok = try self.currentToken();
+        var assignmentIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -823,7 +872,11 @@ pub const Parser = struct {
         // Expect Expression | "read"
         if ((try self.currentToken()).kind == TokenKind.KeywordRead) {
             // make read node
-            rhsIndex = try self.astAppend(NodeKind.Read, try self.consumeToken());
+            const readNode = Node{
+                .kind = NodeKind{ .Read = .{} },
+                .token = try self.consumeToken(),
+            };
+            rhsIndex = try self.astAppendNode(readNode);
         } else {
             // make expression node
             rhsIndex = try self.parseExpression();
@@ -832,9 +885,11 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        // assign the lhs and rhs
-        self.ast.items[assignmentIndex].lhs = lhsIndex;
-        self.ast.items[assignmentIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Assignment = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(assignmentIndex, node);
         return assignmentIndex;
     }
 
@@ -849,7 +904,8 @@ pub const Parser = struct {
             std.debug.print("Or defined as: PrintLn = \"print\" Expression \"endl\" \";\"\n", .{});
         }
         // Init indexes
-        var printIndex = try self.astAppend(NodeKind.Print, try self.currentToken());
+        const tok = try self.currentToken();
+        var printIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -863,22 +919,28 @@ pub const Parser = struct {
             // Expect ;
             TokenKind.Semicolon => {
                 try self.expectToken(TokenKind.Semicolon);
-                self.ast.items[printIndex].kind = NodeKind.Print;
             },
             // Expect endl ;
             TokenKind.KeywordEndl => {
                 try self.expectToken(TokenKind.KeywordEndl);
                 try self.expectToken(TokenKind.Semicolon);
-                self.ast.items[printIndex].kind = NodeKind.PrintLn;
+                const node = Node{
+                    .kind = NodeKind{ .PrintLn = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+                    .token = tok,
+                };
+                try self.set(printIndex, node);
+                return printIndex;
             },
             else => {
                 return std.debug.panic("expected ; or endl but got {s}.", .{@tagName((try self.currentToken()).kind)});
             },
         }
 
-        // assign the lhs and rhs
-        self.ast.items[printIndex].lhs = lhsIndex;
-        self.ast.items[printIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Print = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(printIndex, node);
         return printIndex;
     }
 
@@ -899,7 +961,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var conditionalIndex = try self.astAppend(NodeKind.ConditionalIf, try self.currentToken());
+        const tok = try self.currentToken();
+        var conditionalIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -924,12 +987,19 @@ pub const Parser = struct {
             try self.expectToken(TokenKind.KeywordElse);
             // Expect Block
             rhsIndex = try self.parseBlock();
-            self.ast.items[conditionalIndex].kind = NodeKind.ConditionalIfElse;
+            const node = Node{
+                .kind = NodeKind{ .ConditionalIfElse = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+                .token = tok,
+            };
+            try self.set(conditionalIndex, node);
+            return conditionalIndex;
         }
 
-        // assign the lhs and rhs
-        self.ast.items[conditionalIndex].lhs = lhsIndex;
-        self.ast.items[conditionalIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .ConditionalIf = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(conditionalIndex, node);
 
         return conditionalIndex;
     }
@@ -946,7 +1016,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var whileIndex = try self.astAppend(NodeKind.While, try self.currentToken());
+        const tok = try self.currentToken();
+        var whileIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -965,9 +1036,11 @@ pub const Parser = struct {
         // Expect Block
         rhsIndex = try self.parseBlock();
 
-        // assign the lhs and rhs
-        self.ast.items[whileIndex].lhs = lhsIndex;
-        self.ast.items[whileIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .While = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(whileIndex, node);
 
         return whileIndex;
     }
@@ -984,7 +1057,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var deleteIndex = try self.astAppend(NodeKind.Delete, try self.currentToken());
+        const tok = try self.currentToken();
+        var deleteIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -997,9 +1071,11 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        // assign the lhs and rhs
-        self.ast.items[deleteIndex].lhs = lhsIndex;
-        self.ast.items[deleteIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Delete = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(deleteIndex, node);
 
         return deleteIndex;
     }
@@ -1016,7 +1092,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var returnIndex = try self.astAppend(NodeKind.Return, try self.currentToken());
+        const tok = try self.currentToken();
+        var returnIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -1029,12 +1106,15 @@ pub const Parser = struct {
             lhsIndex = try self.parseExpression();
         }
 
+        const node = Node{
+            .kind = NodeKind{ .Return = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        // assign the lhs and rhs
-        self.ast.items[returnIndex].lhs = lhsIndex;
-        self.ast.items[returnIndex].rhs = rhsIndex;
+        try self.set(returnIndex, node);
 
         return returnIndex;
     }
@@ -1051,7 +1131,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var invocationIndex = try self.astAppend(NodeKind.Invocation, try self.currentToken());
+        const tok = try self.currentToken();
+        var invocationIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -1064,9 +1145,11 @@ pub const Parser = struct {
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        // assign the lhs and rhs
-        self.ast.items[invocationIndex].lhs = lhsIndex;
-        self.ast.items[invocationIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Invocation = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(invocationIndex, node);
 
         return invocationIndex;
     }
@@ -1083,7 +1166,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var lValueIndex = try self.astAppend(NodeKind.LValue, try self.currentToken());
+        const tok = try self.currentToken();
+        var lValueIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -1098,10 +1182,11 @@ pub const Parser = struct {
             rhsIndex = try self.astAppendNode(try self.expectIdentifier());
         }
 
-        // assign the lhs and rhs
-        // NOTE:
-        self.ast.items[lValueIndex].lhs = lhsIndex;
-        self.ast.items[lValueIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .LValue = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(lValueIndex, node);
 
         return lValueIndex;
     }
@@ -1264,6 +1349,165 @@ pub const Parser = struct {
     /// before it is turned into an or.
     /// however, this would be in conflict with the memory representation, so
     /// it has not been implemented yet.
+
+    // Arguments = "(" (Expression ("," Expression)*)? ")"
+    pub fn parseArguments(self: *Parser) !usize {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing Arguments\n", .{});
+                std.debug.print("Defined as: Arguments = \"(\" (Expression (\",\" Expression)*)? \")\"\n", .{});
+            }
+        }
+        // Init indexes
+        const tok = try self.currentToken();
+        var argumentsIndex = try self.reserve();
+        var lhsIndex: ?usize = null;
+        var rhsIndex: ?usize = null;
+
+        // Expect (
+        try self.expectToken(TokenKind.LParen);
+
+        if ((try self.currentToken()).kind == TokenKind.RParen) {
+            // Expect )
+            try self.expectToken(TokenKind.RParen);
+            // lhs, rhs = null for no args
+            const node = Node{
+                .kind = NodeKind{ .Arguments = .{ .lhs = null, .rhs = null } },
+                .token = tok,
+            };
+            try self.set(argumentsIndex, node);
+            return argumentsIndex;
+        }
+        // Expect (Expression ("," Expression)*)?
+        // Expect Expression
+        lhsIndex = try self.parseExpression();
+
+        // Expect ("," Expression)*
+        while ((try self.currentToken()).kind == TokenKind.Comma) {
+            // Expect ,
+            try self.expectToken(TokenKind.Comma);
+            // Expect Expression
+            rhsIndex = try self.parseExpression();
+        }
+
+        // Expect )
+        try self.expectToken(TokenKind.RParen);
+
+        const node = Node{
+            .kind = NodeKind{ .Arguments = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(argumentsIndex, node);
+
+        return argumentsIndex;
+    }
+
+    // contrary to popular belief this is not a grammar...
+    fn LR(comptime T: type) type {
+        return struct {
+            lhs: ?T,
+            rhs: ?T,
+        };
+    }
+
+    const BindingPower = u8;
+
+    fn binding_power(op: TokenKind) BindingPower {
+        return switch (op) {
+            // expression -> boolterm { '||' boolterm}∗
+            .Or => 1,
+            // boolterm -> eqterm { '&&' eqterm}∗
+            .And => 2,
+            // eqterm -> relterm {{ '==' | '!=' } relterm}∗
+            .DoubleEq, .NotEq => 3,
+            // relterm -> simple {{ '<' | '>' | '<=' | '>=' } simple}∗
+            .Gt, .Lt, .GtEq, .LtEq => 4,
+            // simple -> term {{ '+' | '−' } term}∗
+            .Plus, .Minus => 5,
+            // term -> unary {{ '∗' | '/' } unary}∗
+            .Mul, .Div => 6,
+            else => unreachable,
+        };
+    }
+
+    fn prefix_binding_power(op: TokenKind) BindingPower {
+        return switch (op) {
+            // NOTE: must be bigger than biggest binop binding power
+            .Not, .Minus => 7,
+            else => unreachable,
+        };
+    }
+
+    fn is_binop(op: TokenKind) bool {
+        return switch (op) {
+            .Or, .And, .DoubleEq, .NotEq, .Gt, .Lt, .GtEq, .LtEq, .Plus, .Minus, .Mul, .Div => true,
+            else => false,
+        };
+    }
+
+    pub const Expr = union(enum) {
+        Binop: ExprBinop,
+        Uop: ExprUop,
+        // An atom is a selector in the grammar, i.e. the lowest level of the expression
+        // heirarchy that contains no operators (not considering `.` field acess as an op)
+        Atom: ExprAtom,
+    };
+    // The index into the token list, to set in the parser before calling parseAtom
+    // while reconstructing the tree
+    pub const ExprAtom = struct { start: usize, len: u32 };
+    pub const ExprBinop = struct { op: Token, lhs: *Expr, rhs: *Expr };
+    pub const ExprUop = struct {
+        op: Token,
+        on: *Expr,
+    };
+
+    fn reconstructTree(self: *Parser, expr: *Expr) !usize {
+        switch (expr.*) {
+            .Binop => {
+                const binopIndex = try self.reserve();
+                const lhsIndex = try self.reconstructTree(expr.Binop.lhs);
+                const rhsIndex = try self.reconstructTree(expr.Binop.rhs);
+                const node = Node{
+                    .kind = .{ .BinaryOperation = .{
+                        .lhs = lhsIndex,
+                        .rhs = rhsIndex,
+                    } },
+                    .token = expr.Binop.op,
+                };
+                try self.set(binopIndex, node);
+                return binopIndex;
+            },
+            .Uop => {
+                const uopIndex = try self.reserve();
+                const onIndex = try self.reconstructTree(expr.Uop.on);
+                const node = Node{
+                    .kind = .{ .UnaryOperation = .{
+                        .lhs = onIndex,
+                        .rhs = null,
+                    } },
+                    .token = expr.Uop.op,
+                };
+                try self.set(uopIndex, node);
+                return uopIndex;
+            },
+            .Atom => {
+                // this is tricky see
+                const posSave = self.pos;
+                const readPosSave = self.readPos;
+
+                self.pos = expr.Atom.start;
+                self.readPos = expr.Atom.start + 1;
+
+                const atomIndex = try self.parseSelector();
+                utils.assert(self.pos == (expr.Atom.start + expr.Atom.len), "either didn't skip enough tokens when extracting atom or didn't parse enough when reconstructing tree... either way shits borqed! glhf!!!\n Expected to parse: \n{any}\nBut Parsed: \n{any}\n", .{ self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)], self.tokens[expr.Atom.start..self.pos] });
+
+                self.pos = posSave;
+                self.readPos = readPosSave;
+                return atomIndex;
+            },
+        }
+    }
+
     pub fn parseExpression(self: *Parser) ParserError!usize {
         errdefer {
             if (self.showParseTree) {
@@ -1272,18 +1516,150 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        const expressionIndex = try self.astAppend(NodeKind.Expression, try self.currentToken());
+        const tok = try self.currentToken();
+        const expressionIndex = try self.reserve();
 
-        const parsedIndex = backfillParse(
-            self,
-            expressionIndex, // The index for this node, this will act as parent
-            NodeKind.Or, // The optional node that we will create  will be filled
-            // with a BackfillReserve to start
-            TokenKind.Or, // The optional token that we will use
-            Parser.parseBoolTerm, // the funciton to call to make the child(ren)
-        );
+        var arenaAlloc = std.heap.ArenaAllocator.init(self.allocator);
+        defer arenaAlloc.deinit();
+        var arena = arenaAlloc.allocator();
 
-        return parsedIndex;
+        const expr = try self.prattParseExpression(arena, 0);
+        std.log.info("\nEXTRACTED: {any}\n", .{expr});
+        const treeIndex = try self.reconstructTree(expr);
+
+        // NOTE: unessary?
+        const node = Node{
+            .kind = NodeKind{ .Expression = .{ .lhs = treeIndex, .rhs = null } },
+            .token = tok,
+        };
+        try self.set(expressionIndex, node);
+        return expressionIndex;
+    }
+
+    fn prattParseExpression(self: *Parser, arena: std.mem.Allocator, minBP: BindingPower) !*Expr {
+        const tok = try self.currentToken();
+
+        var lhs = try arena.create(Expr);
+        switch (tok.kind) {
+            .Not, .Minus => |uop| {
+                const bp = prefix_binding_power(uop);
+                const rhs = try self.prattParseExpression(arena, bp);
+                lhs.* = Expr{ .Uop = .{
+                    .op = tok,
+                    .on = rhs,
+                } };
+            },
+            // TODO: LParen here
+            else => {
+                const atom = try self.extractAtom();
+                lhs.* = Expr{ .Atom = atom };
+            },
+        }
+
+        while (true) {
+            // not peek because idk this works
+            const op = try self.currentToken();
+            if (op.kind == TokenKind.Eof) {
+                break;
+            }
+            if (!is_binop(op.kind)) {
+                // FIXME: sometimes a non-binop is expected
+                // ex. `,` between args
+                // but sometimes it means malformed expression (i think (unproven))
+                break;
+            }
+            const bp = binding_power(op.kind);
+            // we don't actually use different left/right binding powers,
+            // but if we did... this is so we don't have to go find the random
+            // shit I was reading to figure out which goes where
+            const rBP = bp;
+            const lBP = bp;
+
+            if (lBP < minBP) {
+                break;
+            }
+            _ = try self.consumeToken();
+            const rhs = try self.prattParseExpression(arena, rBP + 1);
+
+            const newlhs = try arena.create(Expr);
+            newlhs.* = Expr{ .Binop = .{ .op = op, .lhs = lhs, .rhs = rhs } };
+            lhs = newlhs;
+        }
+        return lhs;
+    }
+
+    // Extracts the list of tokens making up an `atom` (see description in Expr struct above)
+    // to be reparsed when reconstructing the pratt-parsed expr tree in preorder-traversal order
+    fn extractAtom(self: *Parser) ParserError!ExprAtom {
+        const tokenStartIndex = self.pos;
+        var numTokens: u32 = 1;
+
+        var startTok = try self.currentToken();
+        const peekKind = (try self.peekToken()).kind;
+
+        if ((startTok.kind == .Identifier) and (peekKind == .LParen or peekKind == .Dot)) {
+            // skipping all tokens for function call `id '(' {args},* ')'` is functionally the same as skipping all tokens in a parenthized as expression
+            // skipping the id token makes it so they can be handled in the same switch arm in the
+            // following switch statement
+            _ = try self.consumeToken();
+            startTok = try self.currentToken();
+            if (peekKind == .LParen) {
+                // Dot `numTokens` calculation is harder when we increment
+                // in both cases here
+                numTokens += 1;
+            }
+            // skipping on `.` however just makes it so identifier is easier in the next switch
+        }
+        switch (startTok.kind) {
+            .LParen => {
+                // keep "stack" of paren count to find the last one
+                var count: u32 = 1;
+                _ = try self.consumeToken();
+                while (count != 0) {
+                    numTokens += 1;
+                    const tok = try self.consumeToken();
+                    if (tok.kind == .Eof) {
+                        // TODO: handle
+                        return error.NotEnoughTokens;
+                    }
+                    if (tok.kind == .LParen) {
+                        count += 1;
+                    } else if (tok.kind == .RParen) {
+                        count -= 1;
+                    }
+                }
+                const final = self.tokens[self.pos - 1];
+                utils.assert(final.kind == .RParen, "final token not RParen, is: {}\n", .{final});
+            },
+            .KeywordNew => {
+                _ = try self.expectToken(.KeywordNew);
+                // Note - leaving checking if the thing after new is right until it's parsed later...
+                // this is probably a badddd idea (malformed expressions like what! (with the lights on!!??))
+                // FIXME:
+                _ = try self.consumeToken();
+                numTokens += 1;
+                utils.assert(numTokens == 2, "New token has more than 2 tokens\n", .{});
+            },
+            .Dot => {
+                while ((try self.currentToken()).kind == .Dot) {
+                    _ = try self.consumeToken();
+                    try self.expectToken(.Identifier);
+                    numTokens += 2;
+                }
+            },
+            .Number, .KeywordTrue, .KeywordFalse, .KeywordNull, .Identifier => {
+                _ = try self.consumeToken();
+            },
+            // TODO: handle error for invalid atom
+            else => {
+                std.debug.print("Invalid atom\nbre wth is this: {any}", .{startTok});
+                return error.InvalidToken;
+            },
+        }
+        return ExprAtom{
+            .start = tokenStartIndex,
+            .len = numTokens,
+        };
     }
 
     // Boolterm = EqTerm ("&&" EqTerm)*
@@ -1440,7 +1816,8 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var selectorIndex = try self.astAppend(NodeKind.Selector, try self.currentToken());
+        const tok = try self.currentToken();
+        const selectorIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
@@ -1455,9 +1832,11 @@ pub const Parser = struct {
             rhsIndex = try self.astAppendNode(try self.expectIdentifier());
         }
 
-        // assign the lhs and rhs
-        self.ast.items[selectorIndex].lhs = lhsIndex;
-        self.ast.items[selectorIndex].rhs = rhsIndex;
+        const node = Node{
+            .kind = NodeKind{ .Selector = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(selectorIndex, node);
 
         return selectorIndex;
     }
@@ -1471,12 +1850,12 @@ pub const Parser = struct {
             }
         }
         // Init indexes
-        var factorIndex = try self.astAppend(NodeKind.Factor, try self.currentToken());
+        const tok = try self.currentToken();
+        var factorIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
-        const token = try self.currentToken();
-        switch (token.kind) {
+        switch (tok.kind) {
             TokenKind.LParen => {
                 // Expect (
                 try self.expectToken(TokenKind.LParen);
@@ -1495,31 +1874,47 @@ pub const Parser = struct {
                 }
             },
             // Theese could all be refactored into a helper function
+            // or just simplified ifykyk
             // TODO: check that this works
             TokenKind.Number => {
                 const numberToken = try self.expectAndYeildToken(TokenKind.Number);
-                const numberNode = Node{ .kind = NodeKind.Number, .token = numberToken };
+                const numberNode = Node{
+                    .kind = .{ .Number = undefined },
+                    .token = numberToken,
+                };
                 lhsIndex = try self.astAppendNode(numberNode);
             },
             TokenKind.KeywordTrue => {
                 const trueToken = try self.expectAndYeildToken(TokenKind.KeywordTrue);
-                const trueNode = Node{ .kind = NodeKind.True, .token = trueToken };
+                const trueNode = Node{
+                    .kind = .{ .True = undefined },
+                    .token = trueToken,
+                };
                 lhsIndex = try self.astAppendNode(trueNode);
             },
             TokenKind.KeywordFalse => {
                 const falseToken = try self.expectAndYeildToken(TokenKind.KeywordFalse);
-                const falseNode = Node{ .kind = NodeKind.False, .token = falseToken };
+                const falseNode = Node{
+                    .kind = .{ .False = undefined },
+                    .token = falseToken,
+                };
                 lhsIndex = try self.astAppendNode(falseNode);
             },
             TokenKind.KeywordNull => {
                 const nullToken = try self.expectAndYeildToken(TokenKind.KeywordNull);
-                const nullNode = Node{ .kind = NodeKind.Null, .token = nullToken };
+                const nullNode = Node{
+                    .kind = .{ .Null = undefined },
+                    .token = nullToken,
+                };
                 lhsIndex = try self.astAppendNode(nullNode);
             },
             TokenKind.KeywordNew => {
                 // Expect new
-                const newToken = try self.consumeToken();
-                const newNode = Node{ .kind = NodeKind.New, .token = newToken };
+                const newToken = try self.expectAndYeildToken(.KeywordNew);
+                const newNode = Node{
+                    .kind = .{ .New = undefined },
+                    .token = newToken,
+                };
                 lhsIndex = try self.astAppendNode(newNode);
 
                 // Expect Identifier
@@ -1530,51 +1925,12 @@ pub const Parser = struct {
                 return error.InvalidToken;
             },
         }
-        // assign the lhs and rhs
-        self.ast.items[factorIndex].lhs = lhsIndex;
-        self.ast.items[factorIndex].rhs = rhsIndex;
-
+        const node = Node{
+            .kind = NodeKind{ .Factor = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .token = tok,
+        };
+        try self.set(factorIndex, node);
         return factorIndex;
-    }
-
-    // Arguments = "(" (Expression ("," Expression)*)? ")"
-    pub fn parseArguments(self: *Parser) !usize {
-        errdefer {
-            if (self.showParseTree) {
-                std.debug.print("Error in parsing Arguments\n", .{});
-                std.debug.print("Defined as: Arguments = \"(\" (Expression (\",\" Expression)*)? \")\"\n", .{});
-            }
-        }
-        // Init indexes
-        var argumentsIndex = try self.astAppend(NodeKind.Arguments, try self.currentToken());
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
-
-        // Expect (
-        try self.expectToken(TokenKind.LParen);
-
-        // Expect (Expression ("," Expression)*)?
-        if ((try self.currentToken()).kind != TokenKind.RParen) {
-            // Expect Expression
-            lhsIndex = try self.parseExpression();
-
-            // Expect ("," Expression)*
-            while ((try self.currentToken()).kind == TokenKind.Comma) {
-                // Expect ,
-                try self.expectToken(TokenKind.Comma);
-                // Expect Expression
-                rhsIndex = try self.parseExpression();
-            }
-        }
-
-        // Expect )
-        try self.expectToken(TokenKind.RParen);
-
-        // assign the lhs and rhs
-        self.ast.items[argumentsIndex].lhs = lhsIndex;
-        self.ast.items[argumentsIndex].rhs = rhsIndex;
-
-        return argumentsIndex;
     }
 };
 
@@ -1590,7 +1946,16 @@ pub fn main() !void {
 //////// Tests
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const debugAlloc = std.testing.allocator;
+const debugAlloc = std.heap.page_allocator; //std.testing.allocator;
+const ting = std.testing;
+
+// a helper for quickie testing (returns parser that hasn't had parseTokens called!)
+fn testMe(source: []const u8) !Parser {
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    const parser = try Parser.init(tokens, source, debugAlloc);
+    return parser;
+}
+
 test "no_identifier_struct" {
     const source = "struct { int a; int b; struct TS S; };";
     const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
@@ -1650,4 +2015,192 @@ test "function_no_lcurly" {
     const source = "fun TS() void int a; int b; struct TS S; }";
     const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
     try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
+}
+
+test "types node empty for no types" {
+    const source = "fun TS() void { int a; int b; struct TS S; }";
+    const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
+    const parser = try Parser.parseTokens(tokens, source, debugAlloc);
+    switch (parser.ast.items[0].kind) {
+        .Types => |kind| {
+            try std.testing.expectEqual(kind.lhs, null);
+            try std.testing.expectEqual(kind.rhs, null);
+        },
+        else => {
+            return error.Bre;
+        },
+    }
+}
+
+test "extractAtom.Num" {
+    var parser = try testMe("123");
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    try ting.expectEqual(start, atom.start);
+    const len: usize = 1;
+    try ting.expectEqual(len, atom.len);
+}
+
+test "extractAtom.simple_parenthized_expr" {
+    var parser = try testMe("(123)");
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    try ting.expectEqual(start, atom.start);
+    const len: usize = 3;
+    try ting.expectEqual(len, atom.len);
+}
+
+test "extractAtom.parenthized_expr" {
+    var parser = try testMe("(123, 456, blah, blah, blahbutfkncallbre(), blah, 789, fkncall())");
+    defer parser.deinit();
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    try ting.expectEqual(start, atom.start);
+    const len: usize = 21;
+    const atomLen: usize = @intCast(atom.len);
+    // note: -1 for ignoring EOF because nobody cares
+    try ting.expectEqual(len, atomLen);
+}
+
+test "extractAtom.selector" {
+    var parser = try testMe("foo.bar.baz.fooagain");
+    const atom = try parser.extractAtom();
+    // std.debug.print("ATOM: {any}\n", .{parser.tokens[atom.start..(atom.start + atom.len)]});
+    const start: usize = 0;
+    const len: usize = 7;
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
+fn expectAtomSliceTokenKinds(parser: *Parser, atom: Parser.ExprAtom, tokens: []const TokenKind) !void {
+    const atomSlice = parser.tokens[atom.start..(atom.start + atom.len)];
+    for (tokens, 0..) |token, i| {
+        ting.expect(atomSlice.len > i) catch {
+            std.debug.print("Atom Slice Missing Tokens: {any}\n", .{tokens[i..]});
+            return error.OutofBounds;
+        };
+        ting.expectEqual(token, atomSlice[i].kind) catch {
+            std.debug.print("Token mismatch at {d}: \nExpected: {}\n Got: {}\n", .{ i, token, atomSlice[i].kind });
+            return error.InvalidToken;
+        };
+    }
+}
+
+test "extractAtom.funcall" {
+    const source = "foo(1, 2, 3)";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 8;
+    const tokenKinds = [_]TokenKind{
+        .Identifier, .LParen, .Number, .Comma, .Number, .Comma, .Number, .RParen,
+    };
+    try expectAtomSliceTokenKinds(&parser, atom, &tokenKinds);
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
+test "extractAtom.new" {
+    const source = "new foo";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 2;
+    const tokenKinds = [_]TokenKind{ .KeywordNew, .Identifier };
+    try expectAtomSliceTokenKinds(&parser, atom, &tokenKinds);
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
+test "extractAtom.new_in_fkncall" {
+    const source = "fkncall(new foo, 1)";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 7;
+    const tokenKinds = [_]TokenKind{ .Identifier, .LParen, .KeywordNew, .Identifier, .Comma, .Number, .RParen };
+    try expectAtomSliceTokenKinds(&parser, atom, &tokenKinds);
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
+test "pratt.simple_pemdas" {
+    var parser = try testMe("1 + 2 * 3");
+    const expr = try parser.prattParseExpression(debugAlloc, 0);
+    std.log.info("TREE: {}\n", .{expr.*});
+    try ting.expectEqual(TokenKind.Plus, expr.*.Binop.op.kind);
+    try ting.expect(expr.*.Binop.rhs.* == .Binop);
+    try ting.expect(expr.*.Binop.lhs.* == .Atom);
+    try ting.expectEqual(expr.*.Binop.lhs.*.Atom.len, 1);
+    try ting.expectEqual(expr.*.Binop.rhs.*.Binop.op.kind, TokenKind.Mul);
+    try ting.expectEqual(expr.*.Binop.rhs.*.Binop.lhs.*.Atom.start, 2);
+    try ting.expectEqual(expr.*.Binop.rhs.*.Binop.lhs.*.Atom.len, 1);
+    try ting.expectEqual(expr.*.Binop.rhs.*.Binop.rhs.*.Atom.start, 4);
+    try ting.expectEqual(expr.*.Binop.rhs.*.Binop.rhs.*.Atom.len, 1);
+}
+
+// FIXME:
+test "pratt.funcall" {
+    var parser = try testMe("foo(1, 2, 3)");
+    const expr = try parser.prattParseExpression(debugAlloc, 0);
+    try ting.expect(expr.* == .Atom);
+    try ting.expect(expr.*.Atom.start == 0);
+    try ting.expect(expr.*.Atom.len == 8);
+}
+
+test "parseArguments" {
+    const source = "(new y, 2 + 2)";
+    var parser = try testMe(source);
+    const argsIndex = try parser.parseArguments();
+
+    try ting.expectEqual(argsIndex, 0);
+
+    const items = parser.ast.items;
+    try ting.expect(items[0].kind == .Arguments);
+
+    // new y
+    try ting.expect(items[1].kind == .Expression);
+    try ting.expect(items[2].kind == .Selector);
+    try ting.expect(items[3].kind == .Factor);
+    try ting.expect(items[4].kind == .New);
+    try ting.expect(items[5].kind == .Identifier);
+
+    // 2 + 2
+    try ting.expect(items[6].kind == .Expression);
+    try ting.expect(items[7].kind == .BinaryOperation);
+
+    // 2 +
+    try ting.expect(items[8].kind == .Selector);
+    try ting.expect(items[9].kind == .Factor);
+    try ting.expect(items[10].kind == .Number);
+
+    // + 2
+    try ting.expect(items[11].kind == .Selector);
+    try ting.expect(items[12].kind == .Factor);
+    try ting.expect(items[13].kind == .Number);
+}
+
+// FIXME:
+test "pratt.reconstruct.funcall" {
+    var parser = try testMe("1 + foo(x, new y, x + 1)");
+    const expr = try parser.prattParseExpression(debugAlloc, 0);
+    const treeIndex = try parser.reconstructTree(expr);
+    std.log.info("TREE: {}\n", .{treeIndex});
+    try parser.prettyPrintAst();
+    const items = parser.ast.items;
+    try ting.expect(items[0].kind == .BinaryOperation);
+
+    // WARN: I'm going to remove this indirection... I just can't
+    // also going to make it so related nodes are never siblings and you can't stop me
+    // i.e. function is not [id, args] it is [func -> (id, args)]
+    try ting.expect(items[0].token.kind == .Plus);
+    try ting.expect(items[1].kind == .Selector);
+    try ting.expect(items[2].kind == .Factor);
+    try ting.expect(items[3].kind == .Number);
+
+    try ting.expect(items[4].kind == .Selector);
+    try ting.expect(items[5].kind == .Factor);
+    try ting.expect(items[6].kind == .Identifier);
+    // TODO: ... finish
+
 }

@@ -160,6 +160,18 @@ pub const Node = struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
         },
+        BinaryOperation: struct {
+            // lhs, rhs actually make sense!
+            // token points to operator go look there
+            lhs: ?usize = null,
+            rhs: ?usize = null,
+        },
+        UnaryOperation: struct {
+            // token says what unary it is
+            // go look there
+            lhs: ?usize = null,
+            rhs: ?usize = null,
+        },
         Mul: struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
@@ -255,9 +267,20 @@ pub const Node = struct {
         /// This is a special node that is used to reserve space for the AST
         /// specifically for Expression-s and below!
         /// NOTE: This should be skipped when analyzing the AST
+        // TODO: make the tag for this zero so its prty
         BackfillReserve: struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
         },
     };
 };
+
+// test "fuck you andrew (jk ur my fav ilysm)" {
+//     const t = @import("std").testing;
+//     const node = Node{ .kind = Node.Kind{ .Types = .{ .lhs = 0, .rhs = 0 } }, .token = undefined };
+//     var ast = std.ArrayList(Node).init(t.allocator);
+//     defer ast.deinit();
+//     try ast.append(node);
+//     try t.expect(node.kind == .Types);
+//     try t.expect(ast.items[0].kind == .BoolType);
+// }

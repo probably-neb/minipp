@@ -9,7 +9,7 @@ fn test_print(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
-const Range = struct {
+pub const Range = struct {
     start: u32,
     end: u32,
 
