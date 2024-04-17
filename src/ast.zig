@@ -274,13 +274,3 @@ pub const Node = struct {
         },
     };
 };
-
-// test "fuck you andrew (jk ur my fav ilysm)" {
-//     const t = @import("std").testing;
-//     const node = Node{ .kind = Node.Kind{ .Types = .{ .lhs = 0, .rhs = 0 } }, .token = undefined };
-//     var ast = std.ArrayList(Node).init(t.allocator);
-//     defer ast.deinit();
-//     try ast.append(node);
-//     try t.expect(node.kind == .Types);
-//     try t.expect(ast.items[0].kind == .BoolType);
-// }
