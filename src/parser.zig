@@ -257,23 +257,6 @@ pub const Parser = struct {
         self.ast.items[at] = node;
     }
 
-    // FIXME: this is gross
-    pub fn getLHS(self: *Parser, id: ?usize) !?usize {
-        if (id == null) {
-            return null;
-        } else {
-            return self.ast.items[id.?].kind.Decl.lhs;
-        }
-    }
-
-    pub fn getRHS(self: *Parser, id: ?usize) !?usize {
-        if (id == null) {
-            return null;
-        } else {
-            return self.ast.items[id.?].kind.Decl.rhs;
-        }
-    }
-
     pub fn getStrFromID(self: *Parser, id: usize) ![]const u8 {
         return self.ast.items[id].token._range.getSubStrFromStr(self.input);
     }
@@ -287,6 +270,10 @@ pub const Parser = struct {
             return 2;
         }
 
+        // FIXME: should use a map here instead, every time a struct is declared
+        // and possibly used it will route through here
+        // furthermore, if the Nodes are not union(enum) the calling for this
+        // would be faster as well
         var structIter: usize = 0;
         for (self.structArray.items) |s| {
             if (std.mem.eql(u8, type_str, try self.getStrFromID(s.id))) {
