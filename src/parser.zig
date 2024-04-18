@@ -54,6 +54,13 @@ pub const Struct_t = struct {
     decls: lexer.Range,
 };
 
+pub const Function_t = struct {
+    id: usize,
+    returnType: usize,
+    args: lexer.Range,
+    decls: lexer.Range,
+};
+
 pub const Parser = struct {
     tokens: []Token,
     input: []const u8,
@@ -65,8 +72,9 @@ pub const Parser = struct {
     readPos: usize = 1,
     idMap: std.StringHashMap(bool),
 
-    structIDS: std.ArrayList(Struct_t),
-    preDeclArray: std.ArrayList(usize),
+    structArray: std.ArrayList(Struct_t),
+    functionArray: std.ArrayList(Function_t),
+    declArray: std.ArrayList(usize),
 
     allocator: std.mem.Allocator,
 
@@ -166,8 +174,9 @@ pub const Parser = struct {
         var parser = Parser{
             .ast = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
             .idMap = std.StringHashMap(bool).init(allocator),
-            .structIDS = try std.ArrayList(Struct_t).initCapacity(allocator, 10),
-            .preDeclArray = try std.ArrayList(usize).initCapacity(allocator, 10),
+            .structArray = try std.ArrayList(Struct_t).initCapacity(allocator, 10),
+            .functionArray = try std.ArrayList(Function_t).initCapacity(allocator, 10),
+            .declArray = try std.ArrayList(usize).initCapacity(allocator, 10),
             .tokens = tokens,
             .input = input,
             .readPos = if (tokens.len > 0) 1 else 0,
@@ -246,6 +255,48 @@ pub const Parser = struct {
     fn set(self: *Parser, at: usize, node: Node) !void {
         utils.assert(at < self.astLen, "tried to set a node out of bounds: astLen = {d}, silly goose passed = {d}", .{ at, self.astLen });
         self.ast.items[at] = node;
+    }
+
+    // FIXME: this is gross
+    pub fn getLHS(self: *Parser, id: ?usize) !?usize {
+        if (id == null) {
+            return null;
+        } else {
+            return self.ast.items[id.?].kind.Decl.lhs;
+        }
+    }
+
+    pub fn getRHS(self: *Parser, id: ?usize) !?usize {
+        if (id == null) {
+            return null;
+        } else {
+            return self.ast.items[id.?].kind.Decl.rhs;
+        }
+    }
+
+    pub fn getStrFromID(self: *Parser, id: usize) ![]const u8 {
+        return self.ast.items[id].token._range.getSubStrFromStr(self.input);
+    }
+
+    pub fn getTypeNumber(self: *Parser, type_str: []const u8) !usize {
+        if (std.mem.eql(u8, type_str, "int")) {
+            return 0;
+        } else if (std.mem.eql(u8, type_str, "bool")) {
+            return 1;
+        } else if (std.mem.eql(u8, type_str, "int_array")) {
+            return 2;
+        }
+
+        var structIter: usize = 0;
+        for (self.structArray.items) |s| {
+            if (std.mem.eql(u8, type_str, try self.getStrFromID(s.id))) {
+                return 3 + structIter;
+            }
+            structIter += 1;
+        }
+
+        // TODO: make this error actually useful
+        return error.InvalidType;
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -338,8 +389,8 @@ pub const Parser = struct {
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
-        var typesStart = self.preDeclArray.items.len;
-        var typesEnd = self.preDeclArray.items.len;
+        var typesStart = self.declArray.items.len;
+        var typesEnd = self.declArray.items.len;
 
         // Exepect struct
         try self.expectToken(TokenKind.KeywordStruct);
@@ -364,12 +415,12 @@ pub const Parser = struct {
             .token = tok,
         };
 
-        typesEnd = self.preDeclArray.items.len;
+        typesEnd = self.declArray.items.len;
         const cur_struct = Struct_t{
             .id = lhsIndex.?,
             .decls = lexer.Range{ .start = @truncate(typesStart), .end = @truncate(typesEnd) },
         };
-        try self.structIDS.append(cur_struct);
+        try self.structArray.append(cur_struct);
 
         try self.set(typeNodeIndex, node);
 
@@ -440,7 +491,7 @@ pub const Parser = struct {
         };
 
         try self.set(declIndex, node);
-        try self.preDeclArray.append(declIndex);
+        try self.declArray.append(declIndex);
 
         return declIndex;
     }
@@ -629,18 +680,24 @@ pub const Parser = struct {
 
         // Expect Identifier
         lhsIndex = try self.astAppendNode(try self.expectIdentifier());
+        var funID = lhsIndex;
 
+        var funArgsStart = self.declArray.items.len;
         // Expect Parameters
         rhsIndex = try self.parseParameters();
+        var funArgsEnd = self.declArray.items.len;
 
         // Expect ReturnType
         rhsIndex = try self.parseReturnType();
+        var funRet = rhsIndex;
 
         // Expect {
         try self.expectToken(TokenKind.LCurly);
 
+        var funDeclsStart = self.declArray.items.len;
         // Expect Declarations
         rhsIndex = try self.parseDeclarations();
+        var funDeclsEnd = self.declArray.items.len;
 
         // Expect StatementList
         rhsIndex = try self.parseStatementList();
@@ -653,6 +710,15 @@ pub const Parser = struct {
             .token = tok,
         };
         try self.set(functionIndex, node);
+
+        const fun = Function_t{
+            .id = funID.?,
+            .returnType = funRet.?,
+            .args = lexer.Range{ .start = @truncate(funArgsStart), .end = @truncate(funArgsEnd) },
+            .decls = lexer.Range{ .start = @truncate(funDeclsStart), .end = @truncate(funDeclsEnd) },
+        };
+
+        try self.functionArray.append(fun);
 
         return functionIndex;
     }
@@ -1943,4 +2009,20 @@ test "pratt.reconstruct.funcall" {
     try ting.expect(items[5].kind == .Factor);
     try ting.expect(items[6].kind == .Identifier);
     // TODO: ... finish
+}
+
+test "getTypeNumber.keywords" {
+    const source = "";
+    var parser = try testMe(source);
+    try ting.expectEqual(parser.getTypeNumber("int"), 0);
+    try ting.expectEqual(parser.getTypeNumber("bool"), 1);
+    try ting.expectEqual(parser.getTypeNumber("int_array"), 2);
+}
+
+test "getTypeNumber.structsSimple" {
+    const source = "struct A{int a;}; struct B{int b;};";
+    var parser = try testMe(source);
+    try parser.parseProgram();
+    try ting.expectEqual(parser.getTypeNumber("A"), 3);
+    try ting.expectEqual(parser.getTypeNumber("B"), 4);
 }
