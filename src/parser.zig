@@ -49,6 +49,11 @@ const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch
 /// const parser = try Parser.parseTokens(tokens, input, allocator);
 /// defer parser.deinit();
 /// ```
+pub const Struct_t = struct {
+    id: usize,
+    decls: lexer.Range,
+};
+
 pub const Parser = struct {
     tokens: []Token,
     input: []const u8,
@@ -59,6 +64,9 @@ pub const Parser = struct {
     pos: usize = 0,
     readPos: usize = 1,
     idMap: std.StringHashMap(bool),
+
+    structIDS: std.ArrayList(Struct_t),
+    preDeclArray: std.ArrayList(usize),
 
     allocator: std.mem.Allocator,
 
@@ -158,6 +166,8 @@ pub const Parser = struct {
         var parser = Parser{
             .ast = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
             .idMap = std.StringHashMap(bool).init(allocator),
+            .structIDS = try std.ArrayList(Struct_t).initCapacity(allocator, 10),
+            .preDeclArray = try std.ArrayList(usize).initCapacity(allocator, 10),
             .tokens = tokens,
             .input = input,
             .readPos = if (tokens.len > 0) 1 else 0,
@@ -201,6 +211,20 @@ pub const Parser = struct {
             i += 1;
         }
         std.log.info("}}\n", .{});
+    }
+
+    pub fn prettyPrintDeclNode(self: *const Parser, index: usize) !void {
+        const node = self.ast.items[index];
+        const lhsNode = self.ast.items[node.kind.Decl.lhs.?];
+        const rhsNode = self.ast.items[node.kind.Decl.rhs.?];
+        const lhsNodelhsNode = self.ast.items[lhsNode.kind.Type.lhs.?];
+        const typeTag = @tagName(lhsNodelhsNode.kind);
+        const identTag = (rhsNode.token._range.getSubStrFromStr(self.input));
+
+        std.debug.print("{{{s},{s}}}", .{
+            typeTag,
+            identTag,
+        });
     }
 
     /// reserves a location using the BackFillReserve Node
@@ -314,6 +338,9 @@ pub const Parser = struct {
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
 
+        var typesStart = self.preDeclArray.items.len;
+        var typesEnd = self.preDeclArray.items.len;
+
         // Exepect struct
         try self.expectToken(TokenKind.KeywordStruct);
 
@@ -333,9 +360,16 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.Semicolon);
 
         const node = Node{
-            .kind = NodeKind{ .TypeDeclaration = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .TypeDeclaration = .{ .lhs = @truncate(lhsIndex.?), .rhs = @truncate(rhsIndex.?) } },
             .token = tok,
         };
+
+        typesEnd = self.preDeclArray.items.len;
+        const cur_struct = Struct_t{
+            .id = lhsIndex.?,
+            .decls = lexer.Range{ .start = @truncate(typesStart), .end = @truncate(typesEnd) },
+        };
+        try self.structIDS.append(cur_struct);
 
         try self.set(typeNodeIndex, node);
 
@@ -406,6 +440,7 @@ pub const Parser = struct {
         };
 
         try self.set(declIndex, node);
+        try self.preDeclArray.append(declIndex);
 
         return declIndex;
     }
