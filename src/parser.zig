@@ -208,7 +208,7 @@ pub const Parser = struct {
     /// the caller to handle tokens
     fn reserve(self: *Parser) !usize {
         const index = self.astLen;
-        const node = Node{ .kind = .{ .BackfillReserve = .{ .lhs = 0, .rhs = 0 } }, .token = Token{
+        const node = Node{ .kind = .BackfillReserve, .token = Token{
             .kind = TokenKind.Eof,
             ._range = lexer.Range.new(0, 0),
         } };
@@ -241,32 +241,41 @@ pub const Parser = struct {
         var progToken = try self.currentToken();
         // Init indexes
         var programIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
+        const programDeclarationsIndex = try self.reserve();
         // Expect Types
-        lhsIndex = try self.parseTypes();
+        const programTypesIndex = try self.parseTypes();
 
         // Expect Declarations
         // Functions will be rhsIndex
-        _ = try self.parseLocalDeclarations();
+        const programGlobalDeclarationsIndex = try self.parseLocalDeclarations();
+
+        const programDeclarationsNode = Node{
+            .kind = .{ .ProgramDeclarations = .{
+                .types = programTypesIndex,
+                .declarations = programGlobalDeclarationsIndex,
+            } },
+            .token = progToken,
+        };
+        try self.set(programDeclarationsIndex, programDeclarationsNode);
 
         // Expect Functions
-        rhsIndex = try self.parseFunctions();
+        const functionsIndex = try self.parseFunctions();
 
         // Expect EOF
         // TODO: make sure that Eof gets assigned propperly
         try self.expectToken(TokenKind.Eof);
 
         const progNode = Node{
-            .kind = NodeKind{ .Program = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Program = .{ .declarations = programDeclarationsIndex, .functions = functionsIndex } },
             .token = progToken,
         };
         try self.set(programIndex, progNode);
     }
 
     // Types = { TypeDeclaration }*
-    pub fn parseTypes(self: *Parser) !usize {
+    // returns null when no types declared
+    pub fn parseTypes(self: *Parser) !?usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Types\n", .{});
@@ -276,23 +285,20 @@ pub const Parser = struct {
         // Init indexes
         const typesToken = try self.currentToken();
         const typesIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         if ((try self.currentToken()).kind != .KeywordStruct) {
-            const emptyNode = Node{ .kind = NodeKind{ .Types = undefined }, .token = typesToken };
-            try self.set(typesIndex, emptyNode);
-            return typesIndex;
+            return null;
         }
 
-        lhsIndex = try self.parseTypeDeclaration();
+        const firstTypeIndex = try self.parseTypeDeclaration();
 
+        var lastTypeIndex: ?usize = null;
         // // While not EOF then parse TypeDeclaration
         // // Expect (TypeDeclaration)*
         while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
-            rhsIndex = try self.parseTypeDeclaration();
+            lastTypeIndex = try self.parseTypeDeclaration();
         }
-        const node = Node{ .kind = NodeKind{ .Types = .{ .lhs = lhsIndex, .rhs = rhsIndex } }, .token = typesToken };
+        const node = Node{ .kind = NodeKind{ .Types = .{ .firstType = firstTypeIndex, .lastType = lastTypeIndex } }, .token = typesToken };
         try self.set(typesIndex, node);
 
         return typesIndex;
@@ -402,7 +408,7 @@ pub const Parser = struct {
         const identIndex = try self.astAppendNode(try self.expectIdentifier());
 
         const node = Node{
-            .kind = NodeKind{ .StructFieldDeclaration = .{ .type = typeIndex, .ident = identIndex } },
+            .kind = NodeKind{ .TypedIdentifier = .{ .type = typeIndex, .ident = identIndex } },
             .token = tok,
         };
 
@@ -460,31 +466,33 @@ pub const Parser = struct {
     }
 
     // Declarations = { Declaration }*
-    pub fn parseLocalDeclarations(self: *Parser) !usize {
+    // returns null if no declarations
+    pub fn parseLocalDeclarations(self: *Parser) !?usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Declarations\n", .{});
                 std.debug.print("Defined as: Declarations = {{ Declaration }}*\n", .{});
             }
         }
+        if (!(try self.isCurrentTokenAType())) {
+            return null;
+        }
         // Init indexes
         const tok = try self.currentToken();
         var declarationsIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // While not EOF or function keyword then parse declaration
         // Expect (Declaration)*
-        if (try self.isCurrentTokenAType()) {
-            lhsIndex = try self.parseDeclaration();
-        }
+        const firstDeclIndex = try self.parseDeclaration();
+
+        var lastDeclIndex: ?usize = null;
         while (try self.isCurrentTokenAType()) {
             // Expect Declaration
-            rhsIndex = try self.parseDeclaration();
+            lastDeclIndex = try self.parseDeclaration();
         }
 
         const node = Node{
-            .kind = NodeKind{ .LocalDeclarations = .{ .firstDecl = lhsIndex, .lastDecl = rhsIndex } },
+            .kind = NodeKind{ .LocalDeclarations = .{ .firstDecl = firstDeclIndex, .lastDecl = lastDeclIndex } },
             .token = tok,
         };
         try self.set(declarationsIndex, node);
@@ -505,42 +513,40 @@ pub const Parser = struct {
         }
         // Init indexes
         const tok = try self.currentToken();
-        var declarationIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        const firstDeclIndex = try self.reserve();
 
         // Expect type
-        lhsIndex = try self.parseType();
+        const typeIndex = try self.parseType();
 
         // Expect Identifier
-        rhsIndex = try self.astAppendNode(try self.expectIdentifier());
+        const firstIdentIndex = try self.astAppendNode(try self.expectIdentifier());
+
+        const firstDeclNode = Node{
+            .kind = NodeKind{ .TypedIdentifier = .{ .type = typeIndex, .ident = firstIdentIndex } },
+            .token = tok,
+        };
+        try self.set(firstDeclIndex, firstDeclNode);
 
         // Expect ("," Identifier)* ";"
         while ((try self.currentToken()).kind != TokenKind.Semicolon) {
             // Expect ,
             try self.expectToken(TokenKind.Comma);
-            const internalIndex = try self.reserve();
+            const localDeclIndex = try self.reserve();
 
             // Expect Identifier
-            const internalRHS = try self.astAppendNode(try self.expectIdentifier());
-            const internalNode = Node{
-                .kind = NodeKind{ .Declaration = .{ .lhs = lhsIndex, .rhs = internalRHS } },
+            const identIndex = try self.astAppendNode(try self.expectIdentifier());
+            const localDeclNode = Node{
+                .kind = NodeKind{ .TypedIdentifier = .{ .type = typeIndex, .ident = identIndex } },
                 .token = try self.currentToken(),
             };
             // Repeat
-            try self.set(internalIndex, internalNode);
+            try self.set(localDeclIndex, localDeclNode);
         }
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
-        const node = Node{
-            .kind = NodeKind{ .Declaration = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
-            .token = tok,
-        };
-        try self.set(declarationIndex, node);
-
-        return declarationIndex;
+        return firstDeclIndex;
     }
 
     // Functions = ( Function )*
@@ -589,35 +595,13 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var functionIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
-        // Expect fun
-        try self.expectToken(TokenKind.KeywordFun);
+        const protoIndex = try self.parseFunctionProto();
 
-        // Expect Identifier
-        lhsIndex = try self.astAppendNode(try self.expectIdentifier());
-
-        // Expect Parameters
-        rhsIndex = try self.parseParameters();
-
-        // Expect ReturnType
-        rhsIndex = try self.parseReturnType();
-
-        // Expect {
-        try self.expectToken(TokenKind.LCurly);
-
-        // Expect Declarations
-        rhsIndex = try self.parseLocalDeclarations();
-
-        // Expect StatementList
-        rhsIndex = try self.parseStatementList();
-
-        // Expect }
-        try self.expectToken(TokenKind.RCurly);
+        const bodyIndex = try self.parseFunctionBody();
 
         const node = Node{
-            .kind = NodeKind{ .Function = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Function = .{ .proto = protoIndex, .body = bodyIndex } },
             .token = tok,
         };
         try self.set(functionIndex, node);
@@ -625,14 +609,61 @@ pub const Parser = struct {
         return functionIndex;
     }
 
-    // Parameters = "(" (Decl ("," Decl)* )? ")"
-    pub fn parseParameters(self: *Parser) !usize {
+    /// parse identifier, parameters, returntype
+    pub fn parseFunctionProto(self: *Parser) !usize {
+        errdefer {
+            if (self.showParseTree) {
+                std.debug.print("Error in parsing a Function\n", .{});
+                std.debug.print("Defined as: Function = \"fun\" Identifier Paramaters ReturnType \"{{\" Declarations StatementList \"}}\"\n", .{});
+            }
+        }
+        const tok = try self.currentToken();
+        const protoIndex = try self.reserve();
+        const typedIdentIndex = try self.reserve();
+
+        try self.expectToken(TokenKind.KeywordFun);
+
+        const identToken = try self.currentToken();
+        const funcNameIndex = try self.astAppendNode(try self.expectIdentifier());
+
+        // Expect Parameters
+        const paramsIndex = try self.parseParameters();
+
+        // Expect ReturnType
+        const returnTypeIndex = try self.parseReturnType();
+
+        const typedIdentNode = Node{
+            .kind = .{ .TypedIdentifier = .{ .ident = funcNameIndex, .type = returnTypeIndex } },
+            .token = identToken,
+        };
+        try self.set(typedIdentIndex, typedIdentNode);
+
+        const protoNode = Node{
+            .kind = .{ .FunctionProto = .{ .name = typedIdentIndex, .parameters = paramsIndex } },
+            .token = tok,
+        };
+        try self.set(protoIndex, protoNode);
+        return protoIndex;
+    }
+
+    /// `Parameters = "(" (Decl ("," Decl)* )? ")"`
+    /// returns null if next token is `.RParen` aka no parameters
+    pub fn parseParameters(self: *Parser) !?usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Parameters\n", .{});
                 std.debug.print("Defined as: Parameters = \"(\" (Decl (\",\" Decl)* )? \")\"\n", .{});
             }
         }
+
+        // return null if no params
+        const nextTok = try self.peekToken();
+        if (nextTok.kind == TokenKind.RParen) {
+            try self.expectToken(.LParen);
+            try self.expectToken(.RParen);
+            return null;
+        }
+
         // Init indexes
         const tok = try self.currentToken();
         var parametersIndex = try self.reserve();
@@ -642,6 +673,11 @@ pub const Parser = struct {
         // Expect (
         try self.expectToken(TokenKind.LParen);
 
+        // FIXME: I think this is supposed to be parsing params like go params,
+        // where you can have multiple args with the same type like so (in mini syntax)
+        // `fun (int a, b, c, bool foo)`
+        // but I am not sure that is valid syntax, I believe based on the grammar it should be
+        // `fun (int a, int b, int c, bool foo)`
         while (try self.isCurrentTokenAType()) {
             // Expect Decl
             lhsIndex = try self.parseStructFieldDeclaration();
@@ -659,7 +695,7 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.RParen);
 
         const node = Node{
-            .kind = NodeKind{ .Parameters = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Parameters = .{ .firstParam = lhsIndex.?, .lastParam = rhsIndex } },
             .token = tok,
         };
         try self.set(parametersIndex, node);
@@ -677,33 +713,47 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var returnTypeIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
-        // Token to switch on
-        const token = try self.currentToken();
-        switch (token.kind) {
-            TokenKind.KeywordVoid => {
-                const voidToken = try self.expectAndYeildToken(TokenKind.KeywordVoid);
-                const voidNodeKind = NodeKind.Void;
-                lhsIndex = try self.astAppend(voidNodeKind, voidToken);
-            },
-            else => {
-                if (lhsIndex == null) {
-                    lhsIndex = try self.parseType();
-                } else {
-                    rhsIndex = try self.parseType();
-                }
-            },
+        var typeIndex: ?usize = null;
+
+        if (tok.kind == .KeywordVoid) {
+            // leave typeIndex as null
+            try self.expectToken(TokenKind.KeywordVoid);
+        } else {
+            typeIndex = try self.parseType();
         }
 
         const node = Node{
-            .kind = NodeKind{ .ReturnType = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .ReturnType = .{ .type = typeIndex } },
             .token = tok,
         };
         try self.set(returnTypeIndex, node);
 
         return returnTypeIndex;
+    }
+
+    pub fn parseFunctionBody(self: *Parser) !usize {
+        const tok = try self.currentToken();
+
+        const bodyIndex = try self.reserve();
+        // Expect {
+        try self.expectToken(TokenKind.LCurly);
+
+        // Expect Declarations
+        const declarationsIndex = try self.parseLocalDeclarations();
+
+        // Expect StatementList
+        const statementsIndex = try self.parseStatementList();
+
+        // Expect }
+        try self.expectToken(TokenKind.RCurly);
+
+        const bodyNode = Node{
+            .kind = .{ .FunctionBody = .{ .declarations = declarationsIndex, .statements = statementsIndex } },
+            .token = tok,
+        };
+        try self.set(bodyIndex, bodyNode);
+        return bodyIndex;
     }
 
     // Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation
@@ -718,7 +768,6 @@ pub const Parser = struct {
         const tok = try self.currentToken();
         var statementIndex = try self.reserve();
         var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         const token = try self.currentToken();
         switch (token.kind) {
@@ -769,7 +818,7 @@ pub const Parser = struct {
         }
 
         const node = Node{
-            .kind = NodeKind{ .Statement = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Statement = .{ .statement = lhsIndex.? } },
             .token = tok,
         };
         try self.set(statementIndex, node);
@@ -777,16 +826,22 @@ pub const Parser = struct {
         return statementIndex;
     }
 
-    // StatementList = ( Statement )*
-    pub fn parseStatementList(self: *Parser) ParserError!usize {
+    /// `StatementList = ( Statement )*`
+    /// returns null if there are no statements (current token is )
+    /// TODO: test that it works with no statements
+    pub fn parseStatementList(self: *Parser) ParserError!?usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing a StatementList\n", .{});
                 std.debug.print("Defined as: StatementList = ( Statement )*\n", .{});
             }
         }
+
         // Init indexes
         const tok = try self.currentToken();
+        if (tok.kind == TokenKind.RCurly) {
+            return null;
+        }
         var statementListIndex = try self.reserve();
         var lhsIndex: ?usize = null;
         var rhsIndex: ?usize = null;
@@ -802,7 +857,7 @@ pub const Parser = struct {
         }
 
         const node = Node{
-            .kind = NodeKind{ .StatementList = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .StatementList = .{ .firstStatement = lhsIndex.?, .lastStatement = rhsIndex } },
             .token = tok,
         };
         try self.set(statementListIndex, node);
@@ -821,20 +876,18 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var blockIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect {
         try self.expectToken(TokenKind.LCurly);
 
         // Expect StatementList
-        lhsIndex = try self.parseStatementList();
+        const statementsIndex = try self.parseStatementList();
 
         // Expect }
         try self.expectToken(TokenKind.RCurly);
 
         const node = Node{
-            .kind = NodeKind{ .Block = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Block = .{ .statements = statementsIndex } },
             .token = tok,
         };
         try self.set(blockIndex, node);
@@ -901,14 +954,14 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var printIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect print
         try self.expectToken(TokenKind.KeywordPrint);
 
         // Expect Expression
-        lhsIndex = try self.parseExpression();
+        const exprIndex = try self.parseExpression();
+
+        var hasEndl = false;
 
         switch ((try self.currentToken()).kind) {
             // Expect ;
@@ -919,12 +972,7 @@ pub const Parser = struct {
             TokenKind.KeywordEndl => {
                 try self.expectToken(TokenKind.KeywordEndl);
                 try self.expectToken(TokenKind.Semicolon);
-                const node = Node{
-                    .kind = NodeKind{ .PrintLn = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
-                    .token = tok,
-                };
-                try self.set(printIndex, node);
-                return printIndex;
+                hasEndl = true;
             },
             else => {
                 return std.debug.panic("expected ; or endl but got {s}.", .{@tagName((try self.currentToken()).kind)});
@@ -932,7 +980,7 @@ pub const Parser = struct {
         }
 
         const node = Node{
-            .kind = NodeKind{ .Print = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Print = .{ .expr = exprIndex, .hasEndl = hasEndl } },
             .token = tok,
         };
         try self.set(printIndex, node);
@@ -957,9 +1005,7 @@ pub const Parser = struct {
         }
         // Init indexes
         const tok = try self.currentToken();
-        var conditionalIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        var conditionalIfIndex = try self.reserve();
 
         // Expect if
         try self.expectToken(TokenKind.KeywordIf);
@@ -968,35 +1014,36 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.LParen);
 
         // Expect Expression
-        lhsIndex = try self.parseExpression();
+        const condIndex = try self.parseExpression();
 
         // Expect )
         try self.expectToken(TokenKind.RParen);
 
         // Expect Block
-        rhsIndex = try self.parseBlock();
+        var blockIndex = try self.parseBlock();
 
         // If else then parse else block
         if ((try self.currentToken()).kind == TokenKind.KeywordElse) {
+            const ifElseIndex = try self.reserve();
             // Expect else
             try self.expectToken(TokenKind.KeywordElse);
             // Expect Block
-            rhsIndex = try self.parseBlock();
-            const node = Node{
-                .kind = NodeKind{ .ConditionalIfElse = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            const elseBlockIndex = try self.parseBlock();
+            const ifElseNode = Node{
+                .kind = NodeKind{ .ConditionalIfElse = .{ .ifBlock = blockIndex, .elseBlock = elseBlockIndex } },
                 .token = tok,
             };
-            try self.set(conditionalIndex, node);
-            return conditionalIndex;
+            try self.set(ifElseIndex, ifElseNode);
+            blockIndex = ifElseIndex;
         }
 
         const node = Node{
-            .kind = NodeKind{ .ConditionalIf = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .ConditionalIf = .{ .cond = condIndex, .block = blockIndex } },
             .token = tok,
         };
-        try self.set(conditionalIndex, node);
+        try self.set(conditionalIfIndex, node);
 
-        return conditionalIndex;
+        return conditionalIfIndex;
     }
 
     // While = "while" "(" Expression ")" Block
@@ -1013,8 +1060,6 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var whileIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect while
         try self.expectToken(TokenKind.KeywordWhile);
@@ -1023,16 +1068,16 @@ pub const Parser = struct {
         try self.expectToken(TokenKind.LParen);
 
         // Expect Expression
-        lhsIndex = try self.parseExpression();
+        const condIndex = try self.parseExpression();
 
         // Expect )
         try self.expectToken(TokenKind.RParen);
 
         // Expect Block
-        rhsIndex = try self.parseBlock();
+        const blockIndex = try self.parseBlock();
 
         const node = Node{
-            .kind = NodeKind{ .While = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .While = .{ .cond = condIndex, .block = blockIndex } },
             .token = tok,
         };
         try self.set(whileIndex, node);
@@ -1054,20 +1099,18 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var deleteIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect delete
         try self.expectToken(TokenKind.KeywordDelete);
 
         // Expect Expression
-        lhsIndex = try self.parseExpression();
+        const exprIndex = try self.parseExpression();
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
         const node = Node{
-            .kind = NodeKind{ .Delete = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Delete = .{ .expr = exprIndex } },
             .token = tok,
         };
         try self.set(deleteIndex, node);
@@ -1089,8 +1132,7 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var returnIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
+        var exprIndex: ?usize = null;
 
         // Expect return
         try self.expectToken(TokenKind.KeywordReturn);
@@ -1098,11 +1140,11 @@ pub const Parser = struct {
         // Expect Expression optionally
         if ((try self.currentToken()).kind != TokenKind.Semicolon) {
             // Expect Expression
-            lhsIndex = try self.parseExpression();
+            exprIndex = try self.parseExpression();
         }
 
         const node = Node{
-            .kind = NodeKind{ .Return = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Return = .{ .expr = exprIndex } },
             .token = tok,
         };
 
@@ -1128,20 +1170,18 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var invocationIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect Identifier
-        lhsIndex = try self.astAppendNode(try self.expectIdentifier());
+        const funcNameIndex = try self.astAppendNode(try self.expectIdentifier());
 
         // Expect Arguments
-        rhsIndex = try self.parseArguments();
+        const argsIndex = try self.parseArguments();
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);
 
         const node = Node{
-            .kind = NodeKind{ .Invocation = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Invocation = .{ .funcName = funcNameIndex, .args = argsIndex } },
             .token = tok,
         };
         try self.set(invocationIndex, node);
@@ -1150,9 +1190,6 @@ pub const Parser = struct {
     }
 
     // LValue = Identifier ("." Identifier)*
-    /// LValue goes like this:
-    /// [[LValue, identifier,... , identifier]]
-    ///             lhs              rhs
     pub fn parseLValue(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
@@ -1163,22 +1200,14 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var lValueIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect Identifier
-        lhsIndex = try self.astAppendNode(try self.expectIdentifier());
+        const identIndex = try self.astAppendNode(try self.expectIdentifier());
 
-        // Expect ("." Identifier)*
-        while ((try self.currentToken()).kind == TokenKind.Dot) {
-            // Expect .
-            try self.expectToken(TokenKind.Dot);
-            // Expect Identifier
-            rhsIndex = try self.astAppendNode(try self.expectIdentifier());
-        }
+        const chainIndex = try self.parseSelectorChain();
 
         const node = Node{
-            .kind = NodeKind{ .LValue = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .LValue = .{ .ident = identIndex, .chain = chainIndex } },
             .token = tok,
         };
         try self.set(lValueIndex, node);
@@ -1187,18 +1216,14 @@ pub const Parser = struct {
     }
 
     // Arguments = "(" (Expression ("," Expression)*)? ")"
-    pub fn parseArguments(self: *Parser) !usize {
+    // returns null when no arguments are present (`funcName()`)
+    pub fn parseArguments(self: *Parser) !?usize {
         errdefer {
             if (self.showParseTree) {
                 std.debug.print("Error in parsing Arguments\n", .{});
                 std.debug.print("Defined as: Arguments = \"(\" (Expression (\",\" Expression)*)? \")\"\n", .{});
             }
         }
-        // Init indexes
-        const tok = try self.currentToken();
-        var argumentsIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect (
         try self.expectToken(TokenKind.LParen);
@@ -1206,31 +1231,33 @@ pub const Parser = struct {
         if ((try self.currentToken()).kind == TokenKind.RParen) {
             // Expect )
             try self.expectToken(TokenKind.RParen);
-            // lhs, rhs = null for no args
-            const node = Node{
-                .kind = NodeKind{ .Arguments = .{ .lhs = null, .rhs = null } },
-                .token = tok,
-            };
-            try self.set(argumentsIndex, node);
-            return argumentsIndex;
+            // return null for no args
+            return null;
         }
+
+        // Init indexes (after checking if there are any args at all)
+        const tok = try self.currentToken();
+        var argumentsIndex = try self.reserve();
+
         // Expect (Expression ("," Expression)*)?
         // Expect Expression
-        lhsIndex = try self.parseExpression();
+        const firstArgIndex = try self.parseExpression();
+
+        var lastArgIndex: ?usize = null;
 
         // Expect ("," Expression)*
         while ((try self.currentToken()).kind == TokenKind.Comma) {
             // Expect ,
             try self.expectToken(TokenKind.Comma);
             // Expect Expression
-            rhsIndex = try self.parseExpression();
+            lastArgIndex = try self.parseExpression();
         }
 
         // Expect )
         try self.expectToken(TokenKind.RParen);
 
         const node = Node{
-            .kind = NodeKind{ .Arguments = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Arguments = .{ .firstArg = firstArgIndex, .lastArg = lastArgIndex } },
             .token = tok,
         };
         try self.set(argumentsIndex, node);
@@ -1328,8 +1355,7 @@ pub const Parser = struct {
                 const onIndex = try self.reconstructTree(expr.Uop.on);
                 const node = Node{
                     .kind = .{ .UnaryOperation = .{
-                        .lhs = onIndex,
-                        .rhs = null,
+                        .on = onIndex,
                     } },
                     .token = expr.Uop.op,
                 };
@@ -1383,7 +1409,7 @@ pub const Parser = struct {
 
         // NOTE: unessary?
         const node = Node{
-            .kind = NodeKind{ .Expression = .{ .lhs = treeIndex, .rhs = null } },
+            .kind = NodeKind{ .Expression = .{ .expr = treeIndex } },
             .token = tok,
         };
         try self.set(expressionIndex, node);
@@ -1527,27 +1553,52 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         const selectorIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect Factor
-        lhsIndex = try self.parseFactor();
+        const factorIndex = try self.parseFactor();
 
-        // Expect ("." Identifier)*
-        while ((try self.currentToken()).kind == TokenKind.Dot) {
-            // Expect .
-            try self.expectToken(TokenKind.Dot);
-            // Expect Identifier
-            rhsIndex = try self.astAppendNode(try self.expectIdentifier());
-        }
+        const chainIndex = try self.parseSelectorChain();
 
         const node = Node{
-            .kind = NodeKind{ .Selector = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Selector = .{ .factor = factorIndex, .chain = chainIndex } },
             .token = tok,
         };
         try self.set(selectorIndex, node);
 
         return selectorIndex;
+    }
+
+    /// Parses a chain of selectors
+    /// `{ "." Identifier }*`
+    /// expects caller to parse first item in chain
+    /// i.e. Factor for `Selector` and `Identifier` for `LValue`
+    pub fn parseSelectorChain(self: *Parser) !?usize {
+        var chainIndex: ?usize = null;
+
+        var curChainIndex: ?usize = null;
+
+        // Expect ("." Identifier)*
+        while ((try self.currentToken()).kind == TokenKind.Dot) {
+            const chainNodeIndex = try self.reserve();
+            if (chainIndex == null) {
+                chainIndex = chainNodeIndex;
+            }
+            // Expect .
+            const dotToken = try self.expectAndYeildToken(TokenKind.Dot);
+            // Expect Identifier
+            const identIndex = try self.astAppendNode(try self.expectIdentifier());
+            const chainNode = Node{
+                .kind = .{ .SelectorChain = .{ .ident = identIndex, .next = null } },
+                .token = dotToken,
+            };
+            try self.set(chainNodeIndex, chainNode);
+
+            if (curChainIndex) |cci| {
+                self.ast.items[cci].kind.SelectorChain.next = chainNodeIndex;
+            }
+            curChainIndex = chainNodeIndex;
+        }
+        return chainIndex;
     }
 
     // Factor = "(" Expression ")" | Identifier (Arguments)? | Number | "true" | "false" | "new" Identifier | "null"
@@ -1562,11 +1613,11 @@ pub const Parser = struct {
         const tok = try self.currentToken();
         var factorIndex = try self.reserve();
         var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
-        // FIXME: remove Factor node and just return `lhsIndex`
-        // once invocation is parsed as it's own node rhsIndex will not
-        // be used except to create the Factor node
+        // FIXME: remove Factor node and just return `lhsIndex`, rhsIndex is never used
+        // We never iterate over a list of Factors like we do with Statements,
+        // so it is not necessary to have the top level node indicating the start of a new subtree
+        // as there is with statements
         switch (tok.kind) {
             TokenKind.LParen => {
                 // Expect (
@@ -1577,14 +1628,31 @@ pub const Parser = struct {
                 try self.expectToken(TokenKind.RParen);
             },
             TokenKind.Identifier => {
-                // Expect Identifier
-                lhsIndex = try self.astAppendNode(try self.expectIdentifier());
-                // Expect (Arguments)?
-                // once invocation is parsed as it's own node rhsIndex will not
-                // be used except to create the Factor
-                if ((try self.currentToken()).kind == TokenKind.LParen) {
-                    // Expect Arguments
-                    rhsIndex = try self.parseArguments();
+                const peekTokenKind = (try self.peekToken()).kind;
+                if (peekTokenKind == .LParen) {
+                    // function invocation
+                    // FIXME: this repeats the logic in `parseInvocation`
+                    // however, parseInvocation expects a trailing semicolon
+                    // should call parseInvocation here, and either expect the semicolon
+                    // in the other calling sites of parseInvocation, or have parseInvocation
+                    // take a parameter to indicate if it should expect a semicolon
+
+                    const invocIndex = try self.reserve();
+
+                    const ident = try self.expectIdentifier();
+                    const funcNameIndex = try self.astAppendNode(ident);
+                    const argsIndex = try self.parseArguments();
+
+                    const invocNode = Node{
+                        .kind = .{ .Invocation = .{ .funcName = funcNameIndex, .args = argsIndex } },
+                        .token = tok,
+                    };
+                    try self.set(invocIndex, invocNode);
+
+                    lhsIndex = invocIndex;
+                } else {
+                    // Expect Identifier
+                    lhsIndex = try self.astAppendNode(try self.expectIdentifier());
                 }
             },
             // Theese could all be refactored into a helper function
@@ -1593,7 +1661,7 @@ pub const Parser = struct {
             TokenKind.Number => {
                 const numberToken = try self.expectAndYeildToken(TokenKind.Number);
                 const numberNode = Node{
-                    .kind = .{ .Number = undefined },
+                    .kind = .Number,
                     .token = numberToken,
                 };
                 lhsIndex = try self.astAppendNode(numberNode);
@@ -1601,7 +1669,7 @@ pub const Parser = struct {
             TokenKind.KeywordTrue => {
                 const trueToken = try self.expectAndYeildToken(TokenKind.KeywordTrue);
                 const trueNode = Node{
-                    .kind = .{ .True = undefined },
+                    .kind = .True,
                     .token = trueToken,
                 };
                 lhsIndex = try self.astAppendNode(trueNode);
@@ -1609,7 +1677,7 @@ pub const Parser = struct {
             TokenKind.KeywordFalse => {
                 const falseToken = try self.expectAndYeildToken(TokenKind.KeywordFalse);
                 const falseNode = Node{
-                    .kind = .{ .False = undefined },
+                    .kind = .False,
                     .token = falseToken,
                 };
                 lhsIndex = try self.astAppendNode(falseNode);
@@ -1643,7 +1711,7 @@ pub const Parser = struct {
             },
         }
         const node = Node{
-            .kind = NodeKind{ .Factor = .{ .lhs = lhsIndex, .rhs = rhsIndex } },
+            .kind = NodeKind{ .Factor = .{ .factor = lhsIndex.? } },
             .token = tok,
         };
         try self.set(factorIndex, node);
@@ -1740,14 +1808,15 @@ test "function_no_lcurly" {
     try std.testing.expectError(error.InvalidToken, Parser.parseTokens(tokens, source, debugAlloc));
 }
 
-test "types node empty for no types" {
+test "program declarations indices null for no types" {
     const source = "fun TS() void { int a; int b; struct TS S; }";
     const tokens = try Lexer.tokenizeFromStr(source, debugAlloc);
     const parser = try Parser.parseTokens(tokens, source, debugAlloc);
     switch (parser.ast.items[0].kind) {
-        .Types => |kind| {
-            try std.testing.expectEqual(kind.lhs, null);
-            try std.testing.expectEqual(kind.rhs, null);
+        .Program => |prog| {
+            const decls = parser.ast.items[prog.declarations].kind.ProgramDeclarations;
+            try ting.expectEqual(decls.types, null);
+            try ting.expectEqual(decls.declarations, null);
         },
         else => {
             return error.Bre;
@@ -1923,7 +1992,7 @@ test "pratt.reconstruct.funcall" {
 
     try ting.expect(items[4].kind == .Selector);
     try ting.expect(items[5].kind == .Factor);
-    try ting.expect(items[6].kind == .Identifier);
+    try ting.expect(items[6].kind == .Invocation);
     // TODO: ... finish
 }
 
@@ -1947,5 +2016,6 @@ test "fun.with_locals" {
     const parser = try parseMe(source);
     const nodes = parser.ast.items;
     const funNode = try expectHasNodeWithKind(nodes, .Function);
-    try ting.expect(nodes[funNode.kind.Function.lhs.?].kind == .Identifier);
+    try ting.expect(nodes[funNode.kind.Function.proto].kind == .FunctionProto);
+    // TODO: add more checks for function subtree structure
 }
