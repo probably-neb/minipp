@@ -16,6 +16,7 @@ pub const Node = struct {
 
     // The parser is responsible for taking the tokens and creating an abstract syntax tree
     pub const Kind = union(enum) {
+        /// The top level global type declarations list
         Types: struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
@@ -25,56 +26,75 @@ pub const Node = struct {
             rhs: ?usize = null,
         },
         Type: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
+            /// The kind of the type is either a pointer to the `StructType`
+            /// Node in the case of a struct or the primitive
+            /// `bool` or `int` type
+            kind: usize,
+            /// when kind is `StructType` points to the idenfifier
+            /// of the struct
+            structIdentifier: ?usize = null,
         },
-        BoolType: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        IntType: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        StructType: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Void: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Read: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Decl: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        NestedDecl: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
-        Identifier: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
+        BoolType,
+        IntType,
+        StructType,
+        Void,
+        Read,
+        Identifier,
+
         TypeDeclaration: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
+            /// The struct name
+            /// pointer to `Identifier`
+            ident: usize,
+            /// The fields of the struct
+            declarations: usize,
         },
-        Declarations: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
+        StructFieldDeclarations: struct {
+            /// index of first declaration
+            /// pointer to `StructFieldDeclaration`
+            firstDecl: usize,
+            /// When null, only one declaration
+            /// pointer to `StructFieldDeclaration`
+            lastDecl: ?usize = null,
+
+            const Self = @This();
+
+            fn is_empty(self: Self) bool {
+                return self.firstDecl == null and self.lastDecl == null;
+            }
+        },
+        StructFieldDeclaration: struct {
+            /// the type of the declaration
+            type: usize,
+            /// the name of the declaration
+            ident: usize,
+        },
+
+        /// Declarations within a function
+        LocalDeclarations: struct {
+            // when null, no local declarations
+            firstDecl: ?usize = null,
+            // When null, only one declaration
+            lastDecl: ?usize = null,
+
+            const Self = @This();
+
+            fn is_empty(self: Self) bool {
+                return self.firstDecl == null and self.lastDecl == null;
+            }
         },
         Declaration: struct {
             lhs: ?usize = null,
             rhs: ?usize = null,
         },
         Functions: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
+            firstFunc: ?usize = null,
+            lastFunc: ?usize = null,
+
+            const Self = @This();
+
+            fn is_empty(self: Self) bool {
+                return self.firstFunc == null and self.lastFunc == null;
+            }
         },
         Function: struct {
             lhs: ?usize = null,
@@ -181,13 +201,10 @@ pub const Node = struct {
             rhs: ?usize = null,
         },
         New: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
+            /// pointer to the identifier being allocated
+            ident: usize,
         },
-        Null: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
-        },
+        Null,
         /// This is a special node that is used to reserve space for the AST
         /// specifically for Expression-s and below!
         /// NOTE: This should be skipped when analyzing the AST
