@@ -21,33 +21,37 @@ pub const Node = struct {
             /// The index itself is never null, however if there are no globals,
             /// or type declarations then both fields in the ProgramDeclarations
             /// node will be null
-            declarations: usize,
-            functions: ?usize = null,
+            declarations: Ref(.ProgramDeclarations),
+            functions: ?Ref(.Functions) = null,
         },
         /// ProgramDeclarations is a list of type declarations
         /// and global variable declarations
         ProgramDeclarations: struct {
-            types: ?usize = null,
-            declarations: ?usize = null,
+            types: ?Ref(.Types) = null,
+            declarations: ?Ref(.LocalDeclarations) = null,
         },
 
         /// The top level global type declarations list
         Types: struct {
             /// index of first type declaration
             /// Pointer to `TypeDeclaration`
-            firstType: usize,
+            firstType: Ref(.TypeDeclaration),
             /// When null, only one type declaration
             /// Pointer to `TypeDeclaration`
-            lastType: ?usize = null,
+            lastType: ?Ref(.TypeDeclaration) = null,
         },
         Type: struct {
             /// The kind of the type is either a pointer to the `StructType`
             /// Node in the case of a struct or the primitive
             /// `bool` or `int` type
-            kind: usize,
+            kind: RefOneOf(.{
+                .BoolType,
+                .IntType,
+                .StructType,
+            }),
             /// when kind is `StructType` points to the idenfifier
             /// of the struct
-            structIdentifier: ?usize = null,
+            structIdentifier: ?Ref(.Identifier) = null,
         },
 
         BoolType,
@@ -57,20 +61,21 @@ pub const Node = struct {
         Read,
         Identifier,
 
+        /// Declaring a type, NOTE: always a struct
         TypeDeclaration: struct {
             /// The struct name
             /// pointer to `Identifier`
-            ident: usize,
+            ident: Ref(.Identifier),
             /// The fields of the struct
-            declarations: usize,
+            declarations: Ref(.StructFieldDeclarations),
         },
         StructFieldDeclarations: struct {
             /// index of first declaration
             /// pointer to `TypedIdentifier`
-            firstDecl: usize,
+            firstDecl: Ref(.TypedIdentifier),
             /// When null, only one declaration
             /// pointer to `TypedIdentifier`
-            lastDecl: ?usize = null,
+            lastDecl: ?Ref(.TypedIdentifier) = null,
 
             const Self = @This();
 
@@ -83,8 +88,8 @@ pub const Node = struct {
         // FUNCTIONS //
         ///////////////
         Functions: struct {
-            firstFunc: ?usize = null,
-            lastFunc: ?usize = null,
+            firstFunc: ?Ref(.Function) = null,
+            lastFunc: ?Ref(.Function) = null,
 
             const Self = @This();
 
@@ -94,31 +99,31 @@ pub const Node = struct {
         },
         Function: struct {
             /// Pointer to `FunctionProto`
-            proto: usize,
+            proto: Ref(.FunctionProto),
             /// pointer to `FunctionBody`
-            body: usize,
+            body: Ref(.FunctionBody),
         },
         /// Declaration of a function, i.e. all info related to a function
         /// except the body
         FunctionProto: struct {
             /// Pointer to `TypedIdentifier` where `ident` is the function name
             /// and `type` is the return type of the function
-            name: usize,
+            name: Ref(.TypedIdentifier),
             /// Pointer to `Parameters` node
             /// null if no parameters
-            parameters: ?usize = null,
+            parameters: ?Ref(.Parameters) = null,
         },
         Parameters: struct {
             /// Pointer to `TypedIdentifier`
-            firstParam: usize,
+            firstParam: Ref(.TypedIdentifier),
             /// When null, only one parameter
             /// Pointer to `TypedIdentifier`
-            lastParam: ?usize = null,
+            lastParam: ?Ref(.TypedIdentifier) = null,
         },
         ReturnType: struct {
             /// Pointer to `Type` node
             /// null if `void` return type
-            type: ?usize = null,
+            type: ?Ref(.Type) = null,
 
             const Self = @This();
 
@@ -129,18 +134,18 @@ pub const Node = struct {
         FunctionBody: struct {
             /// Pointer to `LocalDeclarations`
             /// null if no local declarations
-            declarations: ?usize,
+            declarations: ?Ref(.LocalDeclarations),
             /// Pointer to `StatementList`
             /// null if function has empty body
-            statements: ?usize,
+            statements: ?Ref(.StatementList) = null,
         },
         /// Declarations within a function, or global declarations
         LocalDeclarations: struct {
             /// Pointer to `TypedIdentifier`
-            firstDecl: usize,
+            firstDecl: Ref(.TypedIdentifier),
             // When null, only one declaration
             // Pointer to `TypedIdentifier`
-            lastDecl: ?usize = null,
+            lastDecl: ?Ref(.TypedIdentifier) = null,
 
             const Self = @This();
 
@@ -149,21 +154,19 @@ pub const Node = struct {
             }
         },
 
-        // TODO: use TypedIdentifier more often, it is a helpful pairing of
-        // name and type that will make typechecking simpler
         TypedIdentifier: struct {
             /// Pointer to `Type` node
-            type: usize,
+            type: Ref(.Type),
             /// Pointer to `Identifier` node
-            ident: usize,
+            ident: Ref(.Identifier),
         },
 
         StatementList: struct {
             /// Pointer to `Statement`
-            firstStatement: usize,
+            firstStatement: Ref(.Statement),
             /// Pointer to `Statement`
             /// null if only one statement
-            lastStatement: ?usize = null,
+            lastStatement: ?Ref(.Statement) = null,
         },
         /// Statement holds only one field, the index of the actual statement
         /// it is still usefull, however, as the possible statements are vast,
@@ -171,95 +174,111 @@ pub const Node = struct {
         /// find the next `Statement` node and follow the subtree
         Statement: struct {
             /// Pointer to Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation
-            statement: usize,
+            statement: RefOneOf(.{
+                .Block,
+                .Assignment,
+                .Print,
+                .ConditionalIf,
+                .While,
+                .Delete,
+                .Return,
+                .Invocation,
+            }),
         },
 
         Block: struct {
             /// Pointer to `StatementList`
             /// null if no statements in the block
-            statements: ?usize = null,
+            statements: ?Ref(.StatementList) = null,
         },
         Assignment: struct {
-            lhs: ?usize = null,
-            rhs: ?usize = null,
+            lhs: ?Ref(.LValue) = null,
+            rhs: ?Ref(.Expression) = null,
         },
         Print: struct {
             /// The expression to print
-            expr: usize,
+            expr: Ref(.Expression),
             /// Whether the print statement has an endl
             hasEndl: bool,
         },
         ConditionalIf: struct {
             /// pointer to the condition expression
-            cond: usize,
+            cond: Ref(.Expression),
             /// Circumvents the 2 field limit of the union (for alignment reasons)
             /// by pointing to the true and false blocks, so the ConditionalIf can point
             /// to either a block if no else, or a ConditionalIfElse if there is an else
             /// Pointer to either `Block` if no `else` clause, or
             /// `ConditionalIfElse` if there is an `else`
-            block: usize,
+            block: RefOneOf(.{
+                .ConditionalIfElse,
+                .Block,
+            }),
         },
         ConditionalIfElse: struct {
-            ifBlock: usize,
-            elseBlock: usize,
+            ifBlock: Ref(.Block),
+            elseBlock: Ref(.Block),
         },
         While: struct {
             /// The condition expression to check
-            cond: usize,
+            cond: Ref(.Expression),
             /// The block of code to execute
-            block: usize,
+            block: Ref(.Block),
         },
         Delete: struct {
             /// the expression to delete
-            expr: usize,
+            expr: Ref(.Expression),
         },
         Return: struct {
             /// The expression to return
             /// null if is `return;`
-            expr: ?usize = null,
+            expr: ?Ref(.Expression) = null,
         },
         Invocation: struct {
-            funcName: usize,
+            funcName: Ref(.Identifier),
             /// null if no arguments
-            args: ?usize = null,
+            args: ?Ref(.Arguments) = null,
         },
         LValue: struct {
             /// The first ident in the chain
             /// Pointer to `Identifier`
-            ident: usize,
+            ident: Ref(.Identifier),
             /// Pointer to `SelectorChain` (`{'.'id}*`)
             /// null if no selectors
-            chain: ?usize = null,
+            chain: ?Ref(.SelectorChain) = null,
         },
         Expression: struct {
             /// like with `StatementList` there are occasions we must iterate
             /// over a list of expressions, so it is helpful to have a top level
             /// node indicating the start of a new subtree
-            expr: usize,
+            expr: RefOneOf(.{
+                .BinaryOperation,
+                .UnaryOperation,
+                .Factor,
+            }),
         },
         BinaryOperation: struct {
             // lhs, rhs actually make sense!
             // token points to operator go look there
-            lhs: ?usize = null,
-            rhs: ?usize = null,
+            lhs: ?Ref(.Expression) = null,
+            rhs: ?Ref(.Expression) = null,
         },
         UnaryOperation: struct {
             // token says what unary it is
             // go look there
-            on: usize,
+            on: Ref(.Expression),
         },
         Selector: struct {
             /// Pointer to `Factor`
-            factor: usize,
+            factor: Ref(.Factor),
             /// Pointer to `SelectorChain`
-            chain: ?usize = null,
+            chain: ?Ref(.SelectorChain) = null,
         },
         /// A chain of `.ident` selectors
         SelectorChain: struct {
-            ident: usize,
+            ident: Ref(.Identifier),
             /// Pointer to `SelectorChain`
             /// null if last in chain
-            next: ?usize = null,
+            next: ?Ref(.SelectorChain) = null,
         },
         // FIXME: remove Factor node and just use `.factor`
         // We never iterate over a list of Factors like we do with Statements,
@@ -267,14 +286,23 @@ pub const Node = struct {
         // start of a new subtree as there is with statements
         Factor: struct {
             /// Pointer to `Number` | `True` | `False` | `New` | `Null` | `Identifier` | `Expression`
-            factor: usize,
+            factor: RefOneOf(.{
+                .Number,
+                .True,
+                .False,
+                .New,
+                .Null,
+                .Identifier,
+                .Expression,
+                .Invocation,
+            }),
         },
         Arguments: struct {
             /// Pointer to `Expression`
-            firstArg: usize,
+            firstArg: Ref(.Expression),
             /// Pointer to `Expression`
             /// null if only one argument
-            lastArg: ?usize = null,
+            lastArg: ?Ref(.Expression) = null,
         },
         /// A number literal, token points to value
         Number,
@@ -284,7 +312,7 @@ pub const Node = struct {
         False,
         New: struct {
             /// pointer to the identifier being allocated
-            ident: usize,
+            ident: Ref(.Identifier),
         },
         /// keyword `null`
         Null,
@@ -295,3 +323,72 @@ pub const Node = struct {
         BackfillReserve,
     };
 };
+
+// Required for the `Ref` to work because if we use
+// @typeInfo to extract the Union, zig complains (reasonably)
+// about the type being self referential
+// to update run the following vim commands after copying the body of the node
+// struct into the enum and selecting the inside of the enum
+// '<,'>g/: struct/norm f:dt{da{
+// '<,'>g://:d
+// '<,'>g:^\s*$:d
+const KindTagDupe = enum {
+    Program,
+    ProgramDeclarations,
+    Types,
+    Type,
+    BoolType,
+    IntType,
+    StructType,
+    Void,
+    Read,
+    Identifier,
+    TypeDeclaration,
+    StructFieldDeclarations,
+    Functions,
+    Function,
+    FunctionProto,
+    Parameters,
+    ReturnType,
+    FunctionBody,
+    LocalDeclarations,
+    TypedIdentifier,
+    StatementList,
+    Statement,
+    Block,
+    Assignment,
+    Print,
+    ConditionalIf,
+    ConditionalIfElse,
+    While,
+    Delete,
+    Return,
+    Invocation,
+    LValue,
+    Expression,
+    BinaryOperation,
+    UnaryOperation,
+    Selector,
+    SelectorChain,
+    Factor,
+    Arguments,
+    Number,
+    True,
+    False,
+    New,
+    Null,
+    BackfillReserve,
+};
+
+/// An alias for usize, used to make what the referenes in
+/// `Node.Kind` are referring to more explicit
+/// WARN: not checked!
+fn Ref(comptime tag: KindTagDupe) type {
+    _ = tag;
+    return usize;
+}
+
+fn RefOneOf(comptime tags: anytype) type {
+    _ = tags;
+    return usize;
+}
