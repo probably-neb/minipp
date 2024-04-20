@@ -4,6 +4,8 @@
 
 const std = @import("std");
 const Token = @import("lexer.zig").Token;
+const log = @import("log.zig");
+const utils = @import("utils.zig");
 
 nodes: NodeList,
 allocator: std.mem.Allocator,
@@ -116,6 +118,9 @@ pub const Node = struct {
             }
         },
         Function: FunctionType,
+        /// A helper for traversing later, to constrain the search and include all
+        /// nodes in the function, even if it only has one (with a nested subtree) statement
+        FunctionEnd,
         /// Declaration of a function, i.e. all info related to a function
         /// except the body
         FunctionProto: FunctionProtoType,
@@ -126,25 +131,8 @@ pub const Node = struct {
             /// Pointer to `TypedIdentifier`
             lastParam: ?Ref(.TypedIdentifier) = null,
         },
-        ReturnType: struct {
-            /// Pointer to `Type` node
-            /// null if `void` return type
-            type: ?Ref(.Type) = null,
-
-            const Self = @This();
-
-            fn is_void(self: Self) bool {
-                return self.type == null;
-            }
-        },
-        FunctionBody: struct {
-            /// Pointer to `LocalDeclarations`
-            /// null if no local declarations
-            declarations: ?Ref(.LocalDeclarations),
-            /// Pointer to `StatementList`
-            /// null if function has empty body
-            statements: ?Ref(.StatementList) = null,
-        },
+        ReturnType: ReturnTypeType,
+        FunctionBody: FunctionBodyType,
         /// Declarations within a function, or global declarations
         LocalDeclarations: struct {
             /// Pointer to `TypedIdentifier`
@@ -160,12 +148,11 @@ pub const Node = struct {
             }
         },
 
-        TypedIdentifier: struct {
-            /// Pointer to `Type` node
-            type: Ref(.Type),
-            /// Pointer to `Identifier` node
-            ident: Ref(.Identifier),
-        },
+        TypedIdentifier: TypedIdentifierType,
+        /// An alias for TypedIdentifier. No actual differences, just what nodes
+        /// we can expect they refer too. I.e. we don't have to check for `ReturnType`
+        /// node when working on the type referenced by TypedIdentifier
+        ReturnTypedIdentifier: ReturnTypedIdentifierType,
 
         StatementList: struct {
             /// Pointer to `Statement`
@@ -234,11 +221,7 @@ pub const Node = struct {
             /// the expression to delete
             expr: Ref(.Expression),
         },
-        Return: struct {
-            /// The expression to return
-            /// null if is `return;`
-            expr: ?Ref(.Expression) = null,
-        },
+        Return: ReturnExprType,
         Invocation: struct {
             funcName: Ref(.Identifier),
             /// null if no arguments
@@ -336,7 +319,7 @@ pub const Node = struct {
 
             pub const Self = @This();
 
-            fn getProto(self: *const Self, ast: *const Ast) *const Kind.FunctionProto.Self {
+            fn getProto(self: *const Self, ast: *const Ast) FunctionProtoType {
                 return ast.get(self.proto).kind.FunctionProto;
             }
 
@@ -347,30 +330,249 @@ pub const Node = struct {
                 return name;
             }
 
-            pub fn getReturnType(self: *const Self, ast: *const Ast) Type {
+            /// Returns the return type for this function
+            /// null if it is void
+            pub fn getReturnType(self: *const Self, ast: *const Ast) ?Type {
                 const proto = self.getProto(ast);
-                _ = proto;
+                return proto.getReturnType(ast);
+            }
+
+            pub fn getBody(self: *const Self, ast: *const Ast) FunctionBodyType {
+                return ast.get(self.body).kind.FunctionBody;
             }
         };
 
         pub const FunctionProtoType = struct {
-            /// Pointer to `TypedIdentifier` where `ident` is the function name
+            /// Pointer to `ReturnTypedIdentifier` where `ident` is the function name
             /// and `type` is the return type of the function
-            name: Ref(.TypedIdentifier),
+            name: Ref(.ReturnTypedIdentifier),
             /// Pointer to `Parameters` node
             /// null if no parameters
             parameters: ?Ref(.Parameters) = null,
+
+            const Self = @This();
+
+            pub fn getReturnType(self: Self, ast: *const Ast) ?Type {
+                const identNode: ReturnTypedIdentifierType = ast.get(self.name).kind.ReturnTypedIdentifier;
+                return identNode.getType(ast);
+            }
+        };
+
+        pub const ReturnTypeType = struct {
+            /// Pointer to `Type` node
+            /// null if `void` return type
+            type: ?Ref(.Type) = null,
+
+            const Self = @This();
+
+            fn isVoid(self: Self) bool {
+                return self.type == null;
+            }
+        };
+
+        pub const ReturnExprType = struct {
+            /// The expression to return
+            /// null if is `return;`
+            expr: ?Ref(.Expression) = null,
+        };
+
+        pub const FunctionBodyType = struct {
+            /// Pointer to `LocalDeclarations`
+            /// null if no local declarations
+            declarations: ?Ref(.LocalDeclarations) = null,
+            /// Pointer to `StatementList`
+            /// null if function has empty body
+            statements: ?Ref(.StatementList) = null,
+
+            const Self = @This();
+
+            pub const ReturnsIter = struct {
+                ast: *const Ast,
+                i: usize,
+                last: usize,
+
+                const IterSelf = @This();
+
+                pub fn next(self: *IterSelf) ?ReturnExprType {
+                    if (self.i > self.last) {
+                        return null;
+                    }
+                    const nodeIndex = self.ast.findIndex(.Return, self.i);
+                    if (nodeIndex) |i| {
+                        const node = self.ast.nodes.items[i];
+                        self.i = i + 1;
+                        return node.kind.Return;
+                    }
+                    self.i = self.last + 1;
+                    return null;
+                }
+            };
+
+            pub fn iterReturns(self: Self, ast: *const Ast) ReturnsIter {
+                if (self.statements == null) {
+                    return ReturnsIter{ .ast = ast, .i = 0, .last = 1 };
+                }
+                const stmts = ast.get(self.statements.?).kind.StatementList;
+                const first = stmts.firstStatement;
+                const last = ast.findIndex(.FunctionEnd, first) orelse {
+                    std.debug.panic("ast malformed: no FunctionEnd node found after first statement", .{});
+                };
+                utils.assert(last > first, "ast malformed: last={d} < first={d}", .{ last, first });
+                // std.debug.print("first={d} last={d}\n", .{ first, last });
+
+                return ReturnsIter{
+                    .ast = ast,
+                    .i = first,
+                    .last = last,
+                };
+            }
+
+            test "ast.iterReturns.void" {
+                errdefer log.print();
+                const input = "fun main() void { return; }";
+                const ast = try testMe(input);
+                const func = (ast.find(.Function, 0) orelse unreachable).kind.Function;
+                const body = ast.get(func.body).kind.FunctionBody;
+                var iter = body.iterReturns(&ast);
+                const ret = iter.next();
+                try std.testing.expect(ret != null);
+                try std.testing.expect(ret.?.expr == null);
+                try std.testing.expect(iter.next() == null);
+            }
+
+            test "ast.iterReturns.findsAll.multiple_void" {
+                const input = "fun main() int { if (true) {return;} else {return;} }";
+                const ast = try testMe(input);
+                const func = (ast.find(.Function, 0) orelse unreachable).kind.Function;
+                const body = ast.get(func.body).kind.FunctionBody;
+                var iter = body.iterReturns(&ast);
+
+                try std.testing.expect(iter.next() != null);
+                try std.testing.expect(iter.next() != null);
+                try std.testing.expect(iter.next() == null);
+                try std.testing.expect(iter.next() == null);
+            }
+            test "ast.iterReturns.multiple_void" {
+                const input = "fun main() int { if (true) {return;} else {return;} }";
+                const ast = try testMe(input);
+                const func = (ast.find(.Function, 0) orelse unreachable).kind.Function;
+                const body = ast.get(func.body).kind.FunctionBody;
+                var iter = body.iterReturns(&ast);
+
+                var ret = iter.next();
+                try std.testing.expect(ret != null);
+
+                // const expr1 = ast.get(ret.?.expr.?).kind.Expression;
+                // const expr1Selector = ast.get(expr1.expr).kind.Selector;
+                // const expr1Factor = ast.get(expr1Selector.factor).kind.Factor;
+                // const expr1Number = ast.get(expr1Factor.factor).token._range.getSubStrFromStr(ast.input);
+                // try std.testing.expectEqualStrings(expr1Number, "1");
+
+                ret = iter.next();
+                try std.testing.expect(ret != null);
+
+                // const expr2 = ast.get(ret.?.expr.?).kind.Expression;
+                // const expr2Selector = ast.get(expr2.expr).kind.Selector;
+                // const expr2Factor = ast.get(expr2Selector.factor).kind.Factor;
+                // const expr2Number = ast.get(expr2Factor.factor).token._range.getSubStrFromStr(ast.input);
+                // try std.testing.expectEqualStrings(expr2Number, "1");
+
+                try std.testing.expect(iter.next() == null);
+            }
+            test "ast.iterReturns.ret_expr" {
+                const input = "fun main() int { if (true) {return 1;} else {return 2;} }";
+                const ast = try testMe(input);
+                const func = (ast.find(.Function, 0) orelse unreachable).kind.Function;
+                const body = ast.get(func.body).kind.FunctionBody;
+                var iter = body.iterReturns(&ast);
+
+                var ret = iter.next();
+                try std.testing.expect(ret != null);
+
+                const expr1 = ast.get(ret.?.expr.?).kind.Expression;
+                const expr1Selector = ast.get(expr1.expr).kind.Selector;
+                const expr1Factor = ast.get(expr1Selector.factor).kind.Factor;
+                const expr1Number = ast.get(expr1Factor.factor).token._range.getSubStrFromStr(ast.input);
+                try std.testing.expectEqualStrings(expr1Number, "1");
+
+                ret = iter.next();
+                try std.testing.expect(ret != null);
+
+                const expr2 = ast.get(ret.?.expr.?).kind.Expression;
+                const expr2Selector = ast.get(expr2.expr).kind.Selector;
+                const expr2Factor = ast.get(expr2Selector.factor).kind.Factor;
+                const expr2Number = ast.get(expr2Factor.factor).token._range.getSubStrFromStr(ast.input);
+                try std.testing.expectEqualStrings(expr2Number, "2");
+
+                try std.testing.expect(iter.next() == null);
+            }
+        };
+
+        pub const ReturnTypedIdentifierType = struct {
+            /// Pointer to `Type` node
+            type: Ref(.ReturnType),
+            /// Pointer to `Identifier` node
+            ident: Ref(.Identifier),
+
+            const Self = @This();
+
+            pub fn getType(self: Self, ast: *const Ast) ?Type {
+                const retTypeNode = ast.get(self.type).kind.ReturnType;
+                if (retTypeNode.type) |tyNodeIndex| {
+                    const tyNode = ast.get(tyNodeIndex).kind.Type;
+                    const kindNode = ast.get(tyNode.kind).kind;
+                    switch (kindNode) {
+                        .BoolType => return .Bool,
+                        .IntType => return .Int,
+                        .StructType => {
+                            const nameToken = ast.get(tyNode.structIdentifier.?).token;
+                            const name = nameToken._range.getSubStrFromStr(ast.input);
+                            return .{ .Struct = name };
+                        },
+                        else => unreachable,
+                    }
+                } else {
+                    std.debug.assert(retTypeNode.isVoid());
+                    return null;
+                }
+            }
+        };
+
+        pub const TypedIdentifierType = struct {
+            /// Pointer to `Type` node
+            type: Ref(.Type),
+            /// Pointer to `Identifier` node
+            ident: Ref(.Identifier),
+
+            const Self = @This();
+
+            pub fn getType(self: Self, ast: *const Ast) Type {
+                const tyNode = ast.get(self.type).kind.Type;
+                const kindNode = ast.get(tyNode.kind).kind;
+                switch (kindNode) {
+                    .BoolType => return .Bool,
+                    .IntType => return .Int,
+                    .StructType => {
+                        const nameToken = ast.get(tyNode.structIdentifier.?).token;
+                        const name = nameToken._range.getSubStrFromStr(ast.input);
+                        return .{ .Struct = name };
+                    },
+                }
+            }
         };
     };
 };
 
-pub const Type = struct {
-    kind: union(enum) {
-        Bool,
-        Int,
-        Struct,
-    },
-    ident: ?[]const u8,
+pub const Type = union(enum) {
+    Bool,
+    Int,
+    Struct: []const u8,
+
+    const Self = @This();
+
+    pub fn equals(self: Self, other: Self) bool {
+        if (self == other) {}
+    }
 };
 
 // Required for the `Ref` to work because if we use
@@ -396,11 +598,13 @@ const KindTagDupe = enum {
     StructFieldDeclarations,
     Functions,
     Function,
+    FunctionEnd,
     FunctionProto,
     Parameters,
     ReturnType,
     FunctionBody,
     LocalDeclarations,
+    ReturnTypedIdentifier,
     TypedIdentifier,
     StatementList,
     Statement,
@@ -448,10 +652,49 @@ fn RefOneOf(comptime tags: anytype) type {
 
 const NodeKindTag = @typeInfo(Node.Kind).Union.tag_type.?;
 
-pub fn find(ast: *const Ast, nodeKind: NodeKindTag, startingAt: usize) ?*const Node {
+fn cmpNodeKindAndTag(node: Node, nkTag: NodeKindTag) bool {
+    return @intFromEnum(node.kind) == @intFromEnum(nkTag);
+}
+
+pub fn numNodes(ast: *const Ast, nodeKind: NodeKindTag, startingAt: usize) usize {
+    var count: usize = 0;
     for (ast.nodes.items[startingAt..]) |node| {
-        if (node.kind == nodeKind) {
-            return &node;
+        if (cmpNodeKindAndTag(node, nodeKind)) {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+test "ast.numNodes" {
+    const input = "fun main() int { if (true) {return 1;} else {return 2;} }";
+    const ast = try testMe(input);
+    const func = (ast.find(.Function, 0) orelse unreachable).kind.Function;
+    const body = ast.get(func.body).kind.FunctionBody;
+    const numReturns = ast.numNodes(.Return, body.statements.?);
+    try std.testing.expect(numReturns == 2);
+}
+
+pub fn find(ast: *const Ast, nodeKind: NodeKindTag, startingAt: usize) ?Node {
+    if (startingAt >= ast.nodes.items.len) {
+        return null;
+    }
+    for (ast.nodes.items[startingAt..]) |node| {
+        // std.debug.print("node {s} - {d} =? kind {s} - {d}\n", .{ @tagName(node.kind), @intFromEnum(node.kind), @tagName(nodeKind), @intFromEnum(nodeKind) });
+        if (cmpNodeKindAndTag(node, nodeKind)) {
+            return node;
+        }
+    }
+    return null;
+}
+
+pub fn findIndex(ast: *const Ast, nodeKind: NodeKindTag, startingAt: usize) ?usize {
+    if (startingAt >= ast.nodes.items.len) {
+        return null;
+    }
+    for (ast.nodes.items[startingAt..], startingAt..) |node, i| {
+        if (cmpNodeKindAndTag(node, nodeKind)) {
+            return i;
         }
     }
     return null;
@@ -480,15 +723,28 @@ pub const FuncIter = struct {
         if (self.i > self.last) {
             return null;
         }
-        const node = self.ast.find(.Function, self.i);
-        self.i += 1;
-        if (node) |n| {
+        // PERF: use a hashmap to store the indexes of the functions
+        const nodeIndex = self.ast.findIndex(.Function, self.i);
+        if (nodeIndex) |i| {
+            self.i = i + 1;
+            const n = self.ast.nodes.items[i];
             return n.kind.Function;
         }
+        self.i = self.last + 1;
         return null;
     }
 };
 
 pub fn iterFuncs(ast: *const Ast) FuncIter {
     return FuncIter.new(ast);
+}
+
+const ting = std.testing;
+const debugAlloc = std.heap.page_allocator;
+
+fn testMe(input: []const u8) !Ast {
+    const tokens = try @import("lexer.zig").Lexer.tokenizeFromStr(input, debugAlloc);
+    const parser = try @import("parser.zig").Parser.parseTokens(tokens, input, debugAlloc);
+    const ast = Ast.initFromParser(parser);
+    return ast;
 }

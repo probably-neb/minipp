@@ -613,6 +613,7 @@ pub const Parser = struct {
             .token = tok,
         };
         try self.set(functionIndex, node);
+        _ = try self.astAppend(.FunctionEnd, tok);
 
         return functionIndex;
     }
@@ -641,7 +642,7 @@ pub const Parser = struct {
         const returnTypeIndex = try self.parseReturnType();
 
         const typedIdentNode = Node{
-            .kind = .{ .TypedIdentifier = .{ .ident = funcNameIndex, .type = returnTypeIndex } },
+            .kind = .{ .ReturnTypedIdentifier = .{ .ident = funcNameIndex, .type = returnTypeIndex } },
             .token = identToken,
         };
         try self.set(typedIdentIndex, typedIdentNode);
