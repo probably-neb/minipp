@@ -22,7 +22,7 @@ pub const Node = struct {
             /// or type declarations then both fields in the ProgramDeclarations
             /// node will be null
             declarations: Ref(.ProgramDeclarations),
-            functions: ?Ref(.Functions) = null,
+            functions: Ref(.Functions),
         },
         /// ProgramDeclarations is a list of type declarations
         /// and global variable declarations
@@ -88,7 +88,7 @@ pub const Node = struct {
         // FUNCTIONS //
         ///////////////
         Functions: struct {
-            firstFunc: ?Ref(.Function) = null,
+            firstFunc: Ref(.Function),
             lastFunc: ?Ref(.Function) = null,
 
             const Self = @This();

@@ -560,23 +560,29 @@ pub const Parser = struct {
         // init indexes
         const tok = try self.currentToken();
         var functionsIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
+        const firstFuncIndex = self.parseFunction() catch {
+            if (@import("builtin").is_test) {
+                // It's really annoying to have to provide a main for test cases
+                std.log.warn("Ignoring no main in test...\n", .{});
+                return 0;
+            }
+            std.debug.print("Error in parsing Functions, expected a function.\n", .{});
+            std.debug.print("At least one function (main;) must be defined.\n", .{});
+            return error.InvalidProgram;
+        };
+
+        var lastFuncIndex: ?usize = null;
         // While not EOF then parse function
         // Expect (Function)*
         while ((try self.currentToken()).kind == TokenKind.KeywordFun) {
-            if (lhsIndex == null) {
-                lhsIndex = try self.parseFunction();
-                continue;
-            }
-            rhsIndex = try self.parseFunction();
+            lastFuncIndex = try self.parseFunction();
         }
         // FIXME: having no functions is an error, at least one (main) function is required
         // but I am assuming we will handle it in semantic analysis
 
         const node = Node{
-            .kind = NodeKind{ .Functions = .{ .firstFunc = lhsIndex, .lastFunc = rhsIndex } },
+            .kind = NodeKind{ .Functions = .{ .firstFunc = firstFuncIndex, .lastFunc = lastFuncIndex } },
             .token = tok,
         };
         try self.set(functionsIndex, node);
