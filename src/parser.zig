@@ -37,6 +37,7 @@ const NodeKind = Node.Kind;
 const NodeList = @import("ast.zig").NodeList;
 
 const utils = @import("utils.zig");
+const log = @import("log.zig");
 
 const ParserError = error{ InvalidToken, TokenIndexOutOfBounds, TokensDoNotMatch, NotEnoughTokens, NoRangeForToken, OutofBounds, OutOfMemory, AssertionError };
 
@@ -87,7 +88,7 @@ pub const Parser = struct {
     pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
         var parser = try Parser.init(tokens, input, allocator);
         parser.parseProgram() catch |err| {
-            std.debug.print("Error in parsing the program.\n", .{});
+            log.err("Error in parsing the program.\n", .{});
             parser.deinit();
             return err;
         };
@@ -108,8 +109,8 @@ pub const Parser = struct {
 
     fn consumeToken(self: *Parser) !Token {
         if (self.pos >= self.tokens.len) {
-            std.debug.print("Error Consuming Token: Out of bounds @ Token# {d}/{d}\n The last token was: {s}.\n", .{ self.readPos, self.tokens.len, @tagName((try self.currentToken()).kind) });
-            std.debug.print("Hit EOF before expected.\n", .{});
+            log.err("Error Consuming Token: Out of bounds @ Token# {d}/{d}\n The last token was: {s}.\n", .{ self.readPos, self.tokens.len, @tagName((try self.currentToken()).kind) });
+            log.err("Hit EOF before expected.\n", .{});
             return error.TokenIndexOutOfBounds;
         }
         const token = self.tokens[self.pos];
@@ -120,15 +121,15 @@ pub const Parser = struct {
 
     fn expectToken(self: *Parser, kind: TokenKind) !void {
         const token = self.consumeToken() catch |err| {
-            std.debug.print("Error could not find expected Token: {s}\n", .{@tagName(kind)});
+            log.err("Error could not find expected Token: {s}\n", .{@tagName(kind)});
             return err;
         };
         if (!token.kind.equals(kind)) {
             // TODO: should update with the desired changes to TokenKind, such that the position is found.
             // Refactored for the moment
-            std.log.err("Error invalid Token at {d}: expected token kind {s} but got {s}.\n", .{ @max(self.pos, 1) - 1, @tagName(kind), @tagName(token.kind) });
+            log.err("Error invalid Token at {d}: expected token kind {s} but got {s}.\n", .{ @max(self.pos, 1) - 1, @tagName(kind), @tagName(token.kind) });
             const line: []const u8 = token._range.getLineCont(self.input);
-            std.log.err("{s}\n", .{line});
+            log.err("{s}\n", .{line});
             token._range.printLineContUnderline(self.input);
             return error.InvalidToken;
         }
@@ -136,7 +137,7 @@ pub const Parser = struct {
 
     fn expectAndYeildToken(self: *Parser, kind: TokenKind) !Token {
         const token = self.consumeToken() catch |err| {
-            std.debug.print("Error could not yeild expected Token: {s}\n", .{@tagName(kind)});
+            log.err("Error could not yeild expected Token: {s}\n", .{@tagName(kind)});
             return err;
         };
         if (token.kind.equals(kind)) {
@@ -144,15 +145,15 @@ pub const Parser = struct {
         }
         // TODO: should update with the desired changes to TokenKind, such that the position is found.
         // Refactored for the moment
-        std.debug.print("Error invalid Token: expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
-        std.debug.print("{s}\n", .{token._range.getLineCont(self.input)});
+        log.err("Error invalid Token: expected token kind {s} but got {s}.\n", .{ @tagName(kind), @tagName(token.kind) });
+        log.err("{s}\n", .{token._range.getLineCont(self.input)});
         token._range.printLineContUnderline(self.input);
         return error.InvalidToken;
     }
 
     fn expectIdentifier(self: *Parser) !Node {
         const token = self.expectAndYeildToken(TokenKind.Identifier) catch |err| {
-            std.debug.print("Error could not yeild Identifier.\n", .{});
+            log.err("Error could not yeild Identifier.\n", .{});
             return err;
         };
         try self.idMap.put(token._range.getSubStrFromStr(self.input), true);
@@ -192,16 +193,16 @@ pub const Parser = struct {
     pub fn prettyPrintAst(self: *const Parser) !void {
         const ast = self.ast.items;
         var i: usize = 0;
-        std.log.info("AST:{{\n", .{});
+        log.info("AST:{{\n", .{});
         while (i < self.astLen) {
             const node = ast[i];
             const token = node.token;
             const tokenStr = token._range.getSubStrFromStr(self.input);
             const kind = @tagName(node.kind);
-            std.log.info("{s}: {s}\n", .{ kind, tokenStr });
+            log.info("{s}: {s}\n", .{ kind, tokenStr });
             i += 1;
         }
-        std.log.info("}}\n", .{});
+        log.info("}}\n", .{});
     }
 
     /// reserves a location using the BackFillReserve Node
@@ -234,8 +235,8 @@ pub const Parser = struct {
     pub fn parseProgram(self: *Parser) !void {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Program\n", .{});
-                std.debug.print("Defined as: Program = Types Declarations Functions\n", .{});
+                log.err("Error in parsing a Program\n", .{});
+                log.err("Defined as: Program = Types Declarations Functions\n", .{});
             }
         }
 
@@ -279,8 +280,8 @@ pub const Parser = struct {
     pub fn parseTypes(self: *Parser) !?usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing Types\n", .{});
-                std.debug.print("Defined as: Types = {{ TypeDeclaration }}*\n", .{});
+                log.err("Error in parsing Types\n", .{});
+                log.err("Defined as: Types = {{ TypeDeclaration }}*\n", .{});
             }
         }
         // Init indexes
@@ -310,8 +311,8 @@ pub const Parser = struct {
     pub fn parseTypeDeclaration(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a TypeDelcaration\n", .{});
-                std.debug.print("Defined as: TypeDeclaration = \"struct\" Identifier {{ NestedDeclarations }} \";\"\n", .{});
+                log.err("Error in parsing a TypeDelcaration\n", .{});
+                log.err("Defined as: TypeDeclaration = \"struct\" Identifier {{ NestedDeclarations }} \";\"\n", .{});
             }
         }
 
@@ -354,8 +355,8 @@ pub const Parser = struct {
     pub fn parseStructFieldDeclarations(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing NestedDeclarations\n", .{});
-                std.debug.print("Defined as: NestedDeclarations = {{ Decl \";\" }}+\n", .{});
+                log.err("Error in parsing NestedDeclarations\n", .{});
+                log.err("Defined as: NestedDeclarations = {{ Decl \";\" }}+\n", .{});
             }
         }
 
@@ -392,8 +393,8 @@ pub const Parser = struct {
     pub fn parseStructFieldDeclaration(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Decl\n", .{});
-                std.debug.print("Defined as: Decl = Type Identifier\n", .{});
+                log.err("Error in parsing a Decl\n", .{});
+                log.err("Defined as: Decl = Type Identifier\n", .{});
             }
         }
         // REFACTOR: this could use the lhs and rhs index, however.... its
@@ -422,8 +423,8 @@ pub const Parser = struct {
     pub fn parseType(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Type\n", .{});
-                std.debug.print("Defined as: Type = \"int\" | \"bool\" | \"struct\" Identifier\n", .{});
+                log.err("Error in parsing a Type\n", .{});
+                log.err("Defined as: Type = \"int\" | \"bool\" | \"struct\" Identifier\n", .{});
             }
         }
 
@@ -450,9 +451,9 @@ pub const Parser = struct {
             },
             else => {
                 // TODO: make this error like the others
-                std.debug.print("Error invalid Token: expected token kind {s} | {s} | {s} but got {s}.\n", .{ @tagName(TokenKind.KeywordInt), @tagName(TokenKind.KeywordBool), @tagName(TokenKind.KeywordStruct), @tagName(token.kind) });
+                log.err("Error invalid Token: expected token kind {s} | {s} | {s} but got {s}.\n", .{ @tagName(TokenKind.KeywordInt), @tagName(TokenKind.KeywordBool), @tagName(TokenKind.KeywordStruct), @tagName(token.kind) });
                 const line: []const u8 = token._range.getLineCont(self.input);
-                std.debug.print("{s}\n", .{line});
+                log.err("{s}\n", .{line});
                 token._range.printLineContUnderline(self.input);
                 return error.InvalidToken;
             },
@@ -471,8 +472,8 @@ pub const Parser = struct {
     pub fn parseLocalDeclarations(self: *Parser) !?usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing Declarations\n", .{});
-                std.debug.print("Defined as: Declarations = {{ Declaration }}*\n", .{});
+                log.err("Error in parsing Declarations\n", .{});
+                log.err("Defined as: Declarations = {{ Declaration }}*\n", .{});
             }
         }
         if (!(try self.isCurrentTokenAType())) {
@@ -508,8 +509,8 @@ pub const Parser = struct {
     pub fn parseDeclaration(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Declaration\n", .{});
-                std.debug.print("Defined as: Declaration = Type Identifier (\",\" Identifier)* \";\"\n", .{});
+                log.err("Error in parsing a Declaration\n", .{});
+                log.err("Defined as: Declaration = Type Identifier (\",\" Identifier)* \";\"\n", .{});
             }
         }
         // Init indexes
@@ -554,8 +555,8 @@ pub const Parser = struct {
     pub fn parseFunctions(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing Functions\n", .{});
-                std.debug.print("Defined as: Functions = ( Function )*\n", .{});
+                log.err("Error in parsing Functions\n", .{});
+                log.err("Defined as: Functions = ( Function )*\n", .{});
             }
         }
         // init indexes
@@ -565,11 +566,11 @@ pub const Parser = struct {
         const firstFuncIndex = self.parseFunction() catch {
             if (self.allowNoMain) {
                 // It's really annoying to have to provide a main for test cases
-                std.log.warn("Ignoring no main in test...\n", .{});
+                log.warn("Ignoring no main in test...\n", .{});
                 return 0;
             }
-            std.debug.print("Error in parsing Functions, expected a function.\n", .{});
-            std.debug.print("At least one function (main;) must be defined.\n", .{});
+            log.err("Error in parsing Functions, expected a function.\n", .{});
+            log.err("At least one function (main;) must be defined.\n", .{});
             return error.InvalidProgram;
         };
 
@@ -595,8 +596,8 @@ pub const Parser = struct {
     pub fn parseFunction(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Function\n", .{});
-                std.debug.print("Defined as: Function = \"fun\" Identifier Paramaters ReturnType \"{{\" Declarations StatementList \"}}\"\n", .{});
+                log.err("Error in parsing a Function\n", .{});
+                log.err("Defined as: Function = \"fun\" Identifier Paramaters ReturnType \"{{\" Declarations StatementList \"}}\"\n", .{});
             }
         }
         // Init indexes
@@ -620,8 +621,8 @@ pub const Parser = struct {
     pub fn parseFunctionProto(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Function\n", .{});
-                std.debug.print("Defined as: Function = \"fun\" Identifier Paramaters ReturnType \"{{\" Declarations StatementList \"}}\"\n", .{});
+                log.err("Error in parsing a Function\n", .{});
+                log.err("Defined as: Function = \"fun\" Identifier Paramaters ReturnType \"{{\" Declarations StatementList \"}}\"\n", .{});
             }
         }
         const tok = try self.currentToken();
@@ -658,8 +659,8 @@ pub const Parser = struct {
     pub fn parseParameters(self: *Parser) !?usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing Parameters\n", .{});
-                std.debug.print("Defined as: Parameters = \"(\" (Decl (\",\" Decl)* )? \")\"\n", .{});
+                log.err("Error in parsing Parameters\n", .{});
+                log.err("Defined as: Parameters = \"(\" (Decl (\",\" Decl)* )? \")\"\n", .{});
             }
         }
 
@@ -713,8 +714,8 @@ pub const Parser = struct {
     pub fn parseReturnType(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing ReturnType\n", .{});
-                std.debug.print("Defined as: ReturnType = Type | \"void\"\n", .{});
+                log.err("Error in parsing ReturnType\n", .{});
+                log.err("Defined as: ReturnType = Type | \"void\"\n", .{});
             }
         }
         // Init indexes
@@ -767,8 +768,8 @@ pub const Parser = struct {
     pub fn parseStatement(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Statement\n", .{});
-                std.debug.print("Defined as: Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation\n", .{});
+                log.err("Error in parsing a Statement\n", .{});
+                log.err("Defined as: Statement = Block | Assignment | Print | PrintLn | ConditionalIf | ConditionalIfElse | While | Delete | Return | Invocation\n", .{});
             }
         }
         // Init indexes
@@ -816,9 +817,9 @@ pub const Parser = struct {
             else => {
                 // TODO: make this error like the others
                 // TOOD: really actually tho
-                std.debug.print("Error invalid Token: expected token kind of Statment \n", .{});
+                log.err("Error invalid Token: expected token kind of Statment \n", .{});
                 const line: []const u8 = (try self.currentToken())._range.getLineCont(self.input);
-                std.debug.print("{s}\n", .{line});
+                log.err("{s}\n", .{line});
                 (try self.currentToken())._range.printLineContUnderline(self.input);
                 return error.InvalidToken;
             },
@@ -839,8 +840,8 @@ pub const Parser = struct {
     pub fn parseStatementList(self: *Parser) ParserError!?usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a StatementList\n", .{});
-                std.debug.print("Defined as: StatementList = ( Statement )*\n", .{});
+                log.err("Error in parsing a StatementList\n", .{});
+                log.err("Defined as: StatementList = ( Statement )*\n", .{});
             }
         }
 
@@ -876,8 +877,8 @@ pub const Parser = struct {
     pub fn parseBlock(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Block\n", .{});
-                std.debug.print("Defined as: Block = \"{{\" StatementList \"}}\"\n", .{});
+                log.err("Error in parsing a Block\n", .{});
+                log.err("Defined as: Block = \"{{\" StatementList \"}}\"\n", .{});
             }
         }
         // Init indexes
@@ -908,8 +909,8 @@ pub const Parser = struct {
     pub fn parseAssignment(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing an Assignment\n", .{});
-                std.debug.print("Defined as: Assignment = LValue = (Expression | \"read\") \";\"\n", .{});
+                log.err("Error in parsing an Assignment\n", .{});
+                log.err("Defined as: Assignment = LValue = (Expression | \"read\") \";\"\n", .{});
             }
         }
         // Init indexes
@@ -953,10 +954,10 @@ pub const Parser = struct {
     pub fn parsePrints(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Print type\n", .{});
-                std.debug.print("Defined as: Print = \"print\" Expression \";\"\n", .{});
+                log.err("Error in parsing a Print type\n", .{});
+                log.err("Defined as: Print = \"print\" Expression \";\"\n", .{});
             }
-            std.debug.print("Or defined as: PrintLn = \"print\" Expression \"endl\" \";\"\n", .{});
+            log.err("Or defined as: PrintLn = \"print\" Expression \"endl\" \";\"\n", .{});
         }
         // Init indexes
         const tok = try self.currentToken();
@@ -982,7 +983,8 @@ pub const Parser = struct {
                 hasEndl = true;
             },
             else => {
-                return std.debug.panic("expected ; or endl but got {s}.", .{@tagName((try self.currentToken()).kind)});
+                log.err("expected ; or endl but got {s}.", .{@tagName((try self.currentToken()).kind)});
+                return error.InvalidToken;
             },
         }
 
@@ -1005,9 +1007,9 @@ pub const Parser = struct {
     pub fn parseConditionals(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Conditional\n", .{});
-                std.debug.print("Defined as: ConditionalIf = \"if\" \"(\" Expression \")\" Block\n", .{});
-                std.debug.print("Or defined as: ConditionalIfElse = \"if\" \"(\" Expression \")\" Block \"else\" Block\n", .{});
+                log.err("Error in parsing a Conditional\n", .{});
+                log.err("Defined as: ConditionalIf = \"if\" \"(\" Expression \")\" Block\n", .{});
+                log.err("Or defined as: ConditionalIfElse = \"if\" \"(\" Expression \")\" Block \"else\" Block\n", .{});
             }
         }
         // Init indexes
@@ -1060,8 +1062,8 @@ pub const Parser = struct {
     pub fn parseWhile(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a While\n", .{});
-                std.debug.print("Defined as: While = \"while\" \"(\" Expression \")\" Block\n", .{});
+                log.err("Error in parsing a While\n", .{});
+                log.err("Defined as: While = \"while\" \"(\" Expression \")\" Block\n", .{});
             }
         }
         // Init indexes
@@ -1099,8 +1101,8 @@ pub const Parser = struct {
     pub fn parseDelete(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Delete\n", .{});
-                std.debug.print("Defined as: Delete = \"delete\" Expression \";\"\n", .{});
+                log.err("Error in parsing a Delete\n", .{});
+                log.err("Defined as: Delete = \"delete\" Expression \";\"\n", .{});
             }
         }
         // Init indexes
@@ -1132,8 +1134,8 @@ pub const Parser = struct {
     pub fn parseReturn(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Return\n", .{});
-                std.debug.print("Defined as: Return = \"return\" (Expression)?  \";\"\n", .{});
+                log.err("Error in parsing a Return\n", .{});
+                log.err("Defined as: Return = \"return\" (Expression)?  \";\"\n", .{});
             }
         }
         // Init indexes
@@ -1146,6 +1148,7 @@ pub const Parser = struct {
 
         // Expect Expression optionally
         if ((try self.currentToken()).kind != TokenKind.Semicolon) {
+            log.err("Expected an expression after return.\n", .{});
             // Expect Expression
             exprIndex = try self.parseExpression();
         }
@@ -1170,8 +1173,8 @@ pub const Parser = struct {
     pub fn parseInvocation(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing an Identifier\n", .{});
-                std.debug.print("Defined as: Invocation = Identifier Arguments \";\"\n", .{});
+                log.err("Error in parsing an Identifier\n", .{});
+                log.err("Defined as: Invocation = Identifier Arguments \";\"\n", .{});
             }
         }
         // Init indexes
@@ -1200,8 +1203,8 @@ pub const Parser = struct {
     pub fn parseLValue(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing an LValue\n", .{});
-                std.debug.print("Defined as: LValue = Identifier (\".\" Identifier)*\n", .{});
+                log.err("Error in parsing an LValue\n", .{});
+                log.err("Defined as: LValue = Identifier (\".\" Identifier)*\n", .{});
             }
         }
         // Init indexes
@@ -1227,8 +1230,8 @@ pub const Parser = struct {
     pub fn parseArguments(self: *Parser) !?usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing Arguments\n", .{});
-                std.debug.print("Defined as: Arguments = \"(\" (Expression (\",\" Expression)*)? \")\"\n", .{});
+                log.err("Error in parsing Arguments\n", .{});
+                log.err("Defined as: Arguments = \"(\" (Expression (\",\" Expression)*)? \")\"\n", .{});
             }
         }
 
@@ -1398,8 +1401,8 @@ pub const Parser = struct {
     pub fn parseExpression(self: *Parser) ParserError!usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing an Expression\n", .{});
-                std.debug.print("Defined as: Expression = boolterm (\"||\" boolterm)*\n", .{});
+                log.err("Error in parsing an Expression\n", .{});
+                log.err("Defined as: Expression = boolterm (\"||\" boolterm)*\n", .{});
             }
         }
         // Init indexes
@@ -1411,7 +1414,7 @@ pub const Parser = struct {
         var arena = arenaAlloc.allocator();
 
         const expr = try self.prattParseExpression(arena, 0);
-        std.log.info("\nEXTRACTED: {any}\n", .{expr});
+        log.info("\nEXTRACTED: {any}\n", .{expr});
         const treeIndex = try self.reconstructTree(expr);
 
         // NOTE: unessary?
@@ -1539,7 +1542,7 @@ pub const Parser = struct {
             },
             // TODO: handle error for invalid atom
             else => {
-                std.debug.print("Invalid atom\nbre wth is this: {any}", .{startTok});
+                log.err("Invalid atom\nbre wth is this: {any}", .{startTok});
                 return error.InvalidToken;
             },
         }
@@ -1553,8 +1556,8 @@ pub const Parser = struct {
     pub fn parseSelector(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Selector\n", .{});
-                std.debug.print("Defined as: Selector = Factor (\".\" Identifier)*\n", .{});
+                log.err("Error in parsing a Selector\n", .{});
+                log.err("Defined as: Selector = Factor (\".\" Identifier)*\n", .{});
             }
         }
         // Init indexes
@@ -1612,8 +1615,8 @@ pub const Parser = struct {
     pub fn parseFactor(self: *Parser) ParserError!usize {
         errdefer {
             if (self.showParseTree) {
-                std.debug.print("Error in parsing a Factor\n", .{});
-                std.debug.print("Defined as: Factor = \"(\" Expression \")\" | Identifier (Arguments)? | Number | \"true\" | \"false\" | \"new\" Identifier | \"null\"\n", .{});
+                log.err("Error in parsing a Factor\n", .{});
+                log.err("Defined as: Factor = \"(\" Expression \")\" | Identifier (Arguments)? | Number | \"true\" | \"false\" | \"new\" Identifier | \"null\"\n", .{});
             }
         }
         // Init indexes
@@ -1730,7 +1733,7 @@ pub fn main() !void {
     const source = "struct test{ int a; }; fun A() void{ int d;d=2+5;}";
     const tokens = try Lexer.tokenizeFromStr(source, std.heap.page_allocator);
     const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
-    std.debug.print("Parsed successfully\n", .{});
+    log.err("Parsed successfully\n", .{});
     try parser.prettyPrintAst();
 }
 
@@ -1864,7 +1867,7 @@ test "extractAtom.parenthized_expr" {
 test "extractAtom.selector" {
     var parser = try testMe("foo.bar.baz.fooagain");
     const atom = try parser.extractAtom();
-    // std.debug.print("ATOM: {any}\n", .{parser.tokens[atom.start..(atom.start + atom.len)]});
+    // log.err("ATOM: {any}\n", .{parser.tokens[atom.start..(atom.start + atom.len)]});
     const start: usize = 0;
     const len: usize = 7;
     try ting.expectEqual(start, atom.start);
@@ -1875,11 +1878,11 @@ fn expectAtomSliceTokenKinds(parser: *Parser, atom: Parser.ExprAtom, tokens: []c
     const atomSlice = parser.tokens[atom.start..(atom.start + atom.len)];
     for (tokens, 0..) |token, i| {
         ting.expect(atomSlice.len > i) catch {
-            std.debug.print("Atom Slice Missing Tokens: {any}\n", .{tokens[i..]});
+            log.err("Atom Slice Missing Tokens: {any}\n", .{tokens[i..]});
             return error.OutofBounds;
         };
         ting.expectEqual(token, atomSlice[i].kind) catch {
-            std.debug.print("Token mismatch at {d}: \nExpected: {}\n Got: {}\n", .{ i, token, atomSlice[i].kind });
+            log.err("Token mismatch at {d}: \nExpected: {}\n Got: {}\n", .{ i, token, atomSlice[i].kind });
             return error.InvalidToken;
         };
     }
@@ -1926,7 +1929,7 @@ test "extractAtom.new_in_fkncall" {
 test "pratt.simple_pemdas" {
     var parser = try testMe("1 + 2 * 3");
     const expr = try parser.prattParseExpression(debugAlloc, 0);
-    std.log.info("TREE: {}\n", .{expr.*});
+    log.info("TREE: {}\n", .{expr.*});
     try ting.expectEqual(TokenKind.Plus, expr.*.Binop.op.kind);
     try ting.expect(expr.*.Binop.rhs.* == .Binop);
     try ting.expect(expr.*.Binop.lhs.* == .Atom);
@@ -1981,10 +1984,11 @@ test "parseArguments" {
 
 // FIXME:
 test "pratt.reconstruct.funcall" {
+    errdefer log.print();
     var parser = try testMe("1 + foo(x, new y, x + 1)");
     const expr = try parser.prattParseExpression(debugAlloc, 0);
     const treeIndex = try parser.reconstructTree(expr);
-    std.log.info("TREE: {}\n", .{treeIndex});
+    log.info("TREE: {}\n", .{treeIndex});
     try parser.prettyPrintAst();
     const items = parser.ast.items;
     try ting.expect(items[0].kind == .BinaryOperation);
@@ -2013,8 +2017,8 @@ fn expectHasNodeWithKind(nodes: []const Node, kind: NodeKindTag) !Node {
             return node;
         }
     }
-    std.debug.print("Expected Node with Kind: {any}\n", .{kind});
-    std.debug.print("But Nodes were: {any}\n", .{nodes});
+    log.err("Expected Node with Kind: {any}\n", .{kind});
+    log.err("But Nodes were: {any}\n", .{nodes});
     return error.NotFound;
 }
 
