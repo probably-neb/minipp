@@ -64,12 +64,36 @@ pub const Parser = struct {
 
     // flags
     showParseTree: bool = false,
+    allowNoMain: bool = @import("builtin").is_test,
 
-    fn deinit(self: *Parser) void {
+    pub fn init(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
+        var parser = Parser{
+            .ast = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
+            .idMap = std.StringHashMap(bool).init(allocator),
+            .tokens = tokens,
+            .input = input,
+            .readPos = if (tokens.len > 0) 1 else 0,
+            .allocator = allocator,
+        };
+
+        return parser;
+    }
+
+    pub fn deinit(self: *Parser) void {
         self.allocator.free(self.tokens);
-        self.ast.deinit();
         self.idMap.deinit();
     }
+
+    pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
+        var parser = try Parser.init(tokens, input, allocator);
+        parser.parseProgram() catch |err| {
+            std.debug.print("Error in parsing the program.\n", .{});
+            parser.deinit();
+            return err;
+        };
+        return parser;
+    }
+
     fn peekToken(self: *Parser) !Token {
         if (self.readPos >= self.tokens.len) return error.TokenIndexOutOfBounds;
         return self.tokens[self.readPos];
@@ -152,29 +176,6 @@ pub const Parser = struct {
     pub fn fromTypesAppend(self: *Parser, token: Token) !usize {
         const node = Node.fromToken(token);
         return self.astAppendNode(node);
-    }
-
-    pub fn init(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
-        var parser = Parser{
-            .ast = try std.ArrayList(Node).initCapacity(allocator, tokens.len),
-            .idMap = std.StringHashMap(bool).init(allocator),
-            .tokens = tokens,
-            .input = input,
-            .readPos = if (tokens.len > 0) 1 else 0,
-            .allocator = allocator,
-        };
-
-        return parser;
-    }
-
-    pub fn parseTokens(tokens: []Token, input: []const u8, allocator: std.mem.Allocator) !Parser {
-        var parser = try Parser.init(tokens, input, allocator);
-        parser.parseProgram() catch |err| {
-            std.debug.print("Error in parsing the program.\n", .{});
-            parser.deinit();
-            return err;
-        };
-        return parser;
     }
 
     pub fn isCurrentTokenAType(self: *Parser) !bool {
@@ -562,7 +563,7 @@ pub const Parser = struct {
         var functionsIndex = try self.reserve();
 
         const firstFuncIndex = self.parseFunction() catch {
-            if (@import("builtin").is_test) {
+            if (self.allowNoMain) {
                 // It's really annoying to have to provide a main for test cases
                 std.log.warn("Ignoring no main in test...\n", .{});
                 return 0;

@@ -7,6 +7,24 @@ const Token = @import("lexer.zig").Token;
 
 nodes: NodeList,
 allocator: std.mem.Allocator,
+input: []const u8,
+
+const Ast = @This();
+
+pub fn init(alloc: std.mem.Allocator, nodes: NodeList, input: []const u8) Ast {
+    return Ast{
+        .nodes = nodes,
+        .allocator = alloc,
+        .input = input,
+    };
+}
+
+pub fn initFromParser(parser: @import("parser.zig").Parser) Ast {
+    const nodes = parser.ast;
+    const alloc = parser.allocator;
+    const input = parser.input;
+    return Ast.init(alloc, nodes, input);
+}
 
 pub const NodeList = std.ArrayList(Node);
 
@@ -97,22 +115,10 @@ pub const Node = struct {
                 return self.firstFunc == null and self.lastFunc == null;
             }
         },
-        Function: struct {
-            /// Pointer to `FunctionProto`
-            proto: Ref(.FunctionProto),
-            /// pointer to `FunctionBody`
-            body: Ref(.FunctionBody),
-        },
+        Function: FunctionType,
         /// Declaration of a function, i.e. all info related to a function
         /// except the body
-        FunctionProto: struct {
-            /// Pointer to `TypedIdentifier` where `ident` is the function name
-            /// and `type` is the return type of the function
-            name: Ref(.TypedIdentifier),
-            /// Pointer to `Parameters` node
-            /// null if no parameters
-            parameters: ?Ref(.Parameters) = null,
-        },
+        FunctionProto: FunctionProtoType,
         Parameters: struct {
             /// Pointer to `TypedIdentifier`
             firstParam: Ref(.TypedIdentifier),
@@ -321,7 +327,50 @@ pub const Node = struct {
         /// NOTE: This should be skipped when analyzing the AST
         // TODO: make the tag for this zero so its prty
         BackfillReserve,
+
+        pub const FunctionType = struct {
+            /// Pointer to `FunctionProto`
+            proto: Ref(.FunctionProto),
+            /// pointer to `FunctionBody`
+            body: Ref(.FunctionBody),
+
+            pub const Self = @This();
+
+            fn getProto(self: *const Self, ast: *const Ast) *const Kind.FunctionProto.Self {
+                return ast.get(self.proto).kind.FunctionProto;
+            }
+
+            pub fn getName(self: *const Self, ast: *const Ast) []const u8 {
+                const protoNode = ast.get(self.proto);
+                const nameNode = ast.get(protoNode.kind.FunctionProto.name);
+                const name = nameNode.token._range.getSubStrFromStr(ast.input);
+                return name;
+            }
+
+            pub fn getReturnType(self: *const Self, ast: *const Ast) Type {
+                const proto = self.getProto(ast);
+                _ = proto;
+            }
+        };
+
+        pub const FunctionProtoType = struct {
+            /// Pointer to `TypedIdentifier` where `ident` is the function name
+            /// and `type` is the return type of the function
+            name: Ref(.TypedIdentifier),
+            /// Pointer to `Parameters` node
+            /// null if no parameters
+            parameters: ?Ref(.Parameters) = null,
+        };
     };
+};
+
+pub const Type = struct {
+    kind: union(enum) {
+        Bool,
+        Int,
+        Struct,
+    },
+    ident: ?[]const u8,
 };
 
 // Required for the `Ref` to work because if we use
@@ -391,4 +440,55 @@ fn Ref(comptime tag: KindTagDupe) type {
 fn RefOneOf(comptime tags: anytype) type {
     _ = tags;
     return usize;
+}
+
+/////////////
+// HELPERS //
+/////////////
+
+const NodeKindTag = @typeInfo(Node.Kind).Union.tag_type.?;
+
+pub fn find(ast: *const Ast, nodeKind: NodeKindTag, startingAt: usize) ?*const Node {
+    for (ast.nodes.items[startingAt..]) |node| {
+        if (node.kind == nodeKind) {
+            return &node;
+        }
+    }
+    return null;
+}
+
+pub fn get(ast: *const Ast, i: usize) *const Node {
+    return &ast.nodes.items[i];
+}
+
+pub const FuncIter = struct {
+    ast: *const Ast,
+    i: usize,
+    last: usize,
+
+    const Self = @This();
+
+    fn new(ast: *const Ast) Self {
+        const prog = ast.find(.Program, 0);
+        const funcs = ast.get(prog.?.kind.Program.functions).kind.Functions;
+        const firstFuncIndex = funcs.firstFunc;
+        const lastFuncIndex = funcs.lastFunc orelse firstFuncIndex;
+        return Self{ .ast = ast, .i = firstFuncIndex, .last = lastFuncIndex };
+    }
+
+    pub fn next(self: *Self) ?Node.Kind.FunctionType {
+        if (self.i > self.last) {
+            return null;
+        }
+        const node = self.ast.find(.Function, self.i);
+        self.i += 1;
+        if (node) |n| {
+            return n.kind.Function;
+        }
+        return null;
+    }
+};
+
+pub fn iterFuncs(ast: *const Ast) FuncIter {
+    return FuncIter.new(ast);
 }
