@@ -59,8 +59,8 @@ fn allReturnPathsHaveReturnType(ast: *const Ast, func: Ast.Node.Kind.FunctionTyp
                 _ = expr;
                 _ = retTy;
                 utils.todo("Checking expression types not implemented\n", .{});
-            }
-        }
+            } else unreachable;
+        } else unreachable;
     }
     return;
 }
@@ -100,7 +100,7 @@ test "sema.has_main" {
     try ensureHasMain(&ast);
 }
 
-test "sema.not_all_return_paths_same_type" {
+test "sema.not_all_return_paths_void" {
     const source = "fun main() void {if (true) {return;} else {return 1;}}";
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
@@ -108,8 +108,14 @@ test "sema.not_all_return_paths_same_type" {
     try ting.expectError(SemaError.InvalidReturnPath, result);
 }
 
-test "sema.all_return_paths_same_type" {
+test "sema.all_return_paths_void" {
     const source = "fun main() void {if (true) {return;} else {return;} return;}";
+    const ast = try testMe(source);
+    try allFunctionsHaveValidReturnPaths(&ast);
+}
+
+test "sema.all_return_paths_bool" {
+    const source = "fun main() bool {if (true) {return true;} else {return false;}}";
     const ast = try testMe(source);
     try allFunctionsHaveValidReturnPaths(&ast);
 }

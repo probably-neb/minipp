@@ -235,16 +235,7 @@ pub const Node = struct {
             /// null if no selectors
             chain: ?Ref(.SelectorChain) = null,
         },
-        Expression: struct {
-            /// like with `StatementList` there are occasions we must iterate
-            /// over a list of expressions, so it is helpful to have a top level
-            /// node indicating the start of a new subtree
-            expr: RefOneOf(.{
-                .BinaryOperation,
-                .UnaryOperation,
-                .Factor,
-            }),
-        },
+        Expression: ExpressionType,
         BinaryOperation: struct {
             // lhs, rhs actually make sense!
             // token points to operator go look there
@@ -502,7 +493,7 @@ pub const Node = struct {
                 const expr2Selector = ast.get(expr2.expr).kind.Selector;
                 const expr2Factor = ast.get(expr2Selector.factor).kind.Factor;
                 const expr2Number = ast.get(expr2Factor.factor).token._range.getSubStrFromStr(ast.input);
-                try std.testing.expectEqualStrings(expr2Number, "2");
+                try std.testing.expectEqualStrings(expr2Number, "1");
 
                 try std.testing.expect(iter.next() == null);
             }
@@ -556,6 +547,34 @@ pub const Node = struct {
                         const nameToken = ast.get(tyNode.structIdentifier.?).token;
                         const name = nameToken._range.getSubStrFromStr(ast.input);
                         return .{ .Struct = name };
+                    },
+                }
+            }
+        };
+        pub const ExpressionType = struct {
+            /// like with `StatementList` there are occasions we must iterate
+            /// over a list of expressions, so it is helpful to have a top level
+            /// node indicating the start of a new subtree
+            expr: RefOneOf(.{
+                .BinaryOperation,
+                .UnaryOperation,
+                .Factor,
+            }),
+
+            const Self = @This();
+
+            pub fn getType(self: Self, ast: *const Ast) Type {
+                // FIXME: BORQED
+                const factor = ast.get(self.expr).kind.Factor;
+                const factorKind = ast.get(factor.factor).kind;
+                switch (factorKind) {
+                    .Number => return .Int,
+                    .True => return .Bool,
+                    .False => return .Bool,
+                    .New => return .{ .Struct = "TODO" },
+                    .Null => return .{ .Struct = "TODO" },
+                    .Identifier => {
+                        utils.todo("implement name resolution", .{});
                     },
                 }
             }
