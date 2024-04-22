@@ -28,40 +28,71 @@ fn allFunctionsHaveValidReturnPaths(ast: *const Ast) !void {
     var funcs = ast.iterFuncs();
     while (funcs.next()) |func| {
         try allReturnPathsHaveReturnType(ast, func);
+        try allReturnPathsExist(ast, func);
     }
     return;
 }
 
+/// note that the ast must be sliced to start at some function for this function
+/// to work
 fn allReturnPathsHaveReturnType(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
+
+    // Get the name
     const funcName = func.getName(ast);
-    const returnType = func.getReturnType(ast);
+    // Get the return type
+    const returnType = func.getReturnType(ast).?;
     // std.debug.print("ast = {any}\n", .{ast.*});
+
+    // Get all return expressions
+    // This is in the form of there being the first and last expression within the statment list of the functio
     var returnExprs = func.getBody(ast).iterReturns(ast);
     var checked: usize = 0;
     while (returnExprs.next()) |returnExpr| {
         checked += 1;
-        if (returnExpr.expr == null and returnType == null) {
+        if (returnExpr.expr == null and returnType == .Void) {
             // void return valid for void function
             continue;
         }
-        if (returnExpr.expr != null and returnType == null) {
+        // FIXME: this may or may not be invalid.
+        if (returnExpr.expr != null and returnType == .Void) {
             // void return invalid for non-void function
             // FIXME: determine if this an error or a warning that the returned value will not be used?
             log.err("Expected function {s} to return `void`, but found Return expression: {any}\n", .{ funcName, returnExpr });
             return SemaError.InvalidReturnPath;
         }
-        if (returnExpr.expr == null and returnType != null) {
+
+        if (returnExpr.expr == null and returnType != .Void) {
             log.err("Expected function {s} to return {any}, but found Return type: {any}\n", .{ funcName, returnExpr, returnType });
             return SemaError.InvalidReturnPath;
         }
-        if (returnExpr.expr) |expr| {
-            if (returnType) |retTy| {
-                _ = expr;
-                _ = retTy;
-                utils.todo("Checking expression types not implemented\n", .{});
-            } else unreachable;
-        } else unreachable;
+
+        // TODO: FIXME
+        // if (returnExpr.expr) |expr| {
+        //     if (returnType) |retTy| {
+        //         _ = expr;
+        //         _ = retTy;
+        //         utils.todo("Checking expression types not implemented\n", .{});
+        //     } else unreachable;
+        // } else unreachable;
     }
+    return;
+}
+
+fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
+    const returnType = func.getReturnType(ast).?;
+    const statementList = func.getBody(ast).getStatementList();
+    if (returnType == .Void and statementList == null) {
+        return;
+    }
+    const statList = statementList.?;
+    const funcEnd = ast.findIndex(.FunctionEnd, statList).?;
+    // TODO:
+    // decend the tree if we hit a conditional call a function that checks if the conditional
+    // has a return statement, if both sides return then we are good.
+    // otherwise continue decending for a fall through.
+    // if there is no final return statment throw an error
+    _ = funcEnd;
+
     return;
 }
 
