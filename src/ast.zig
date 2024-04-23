@@ -11,21 +11,112 @@ nodes: NodeList,
 allocator: std.mem.Allocator,
 input: []const u8,
 
+structMap: std.StringHashMap(usize),
+functionMap: std.StringHashMap(usize),
+
 const Ast = @This();
 
-pub fn init(alloc: std.mem.Allocator, nodes: NodeList, input: []const u8) Ast {
-    return Ast{
+// TODO: make struct already declared error more informative
+pub fn mapStructs(ast: *Ast) !void {
+    const nodes = ast.nodes.items;
+    var i: usize = 0;
+    for (nodes) |node| {
+        if (node.kind == .TypeDeclaration) {
+            const ident = ast.get(node.kind.TypeDeclaration.ident);
+            const name = ident.token._range.getSubStrFromStr(ast.input);
+            // check if the struct is already in the map
+            if (ast.structMap.contains(name)) {
+                return error.StructAlreadyDeclared;
+            }
+            try ast.structMap.put(name, i);
+        }
+        i += 1;
+    }
+}
+
+pub fn mapFunctions(ast: *Ast) !void {
+    const nodes = ast.nodes.items;
+    var i: usize = 0;
+    for (nodes) |node| {
+        if (node.kind == .Function) {
+            const func = node.kind.Function;
+            const proto = ast.get(func.proto);
+            const name = ast.get(proto.kind.FunctionProto.name).token._range.getSubStrFromStr(ast.input);
+            if (ast.functionMap.contains(name)) {
+                return error.FunctionAlreadyDeclared;
+            }
+            try ast.functionMap.put(name, i);
+        }
+        i += 1;
+    }
+}
+
+pub fn getFunctionFromName(ast: *Ast, name: []const u8) ?*const Node {
+    const index = ast.functionMap.get(name);
+    if (index) |i| {
+        return ast.get(i);
+    }
+    return null;
+}
+
+pub fn getFunctionReturnTypeFromName(ast: *Ast, name: []const u8) ?Type {
+    const funcNode = ast.getFunctionFromName(name);
+    if (funcNode == null) {
+        return null;
+    }
+    const func = funcNode.?.kind.Function;
+    return func.getReturnType(ast);
+}
+
+pub fn getFunctionDeclarationTypeFromName(ast: *Ast, name: []const u8, memberName: []const u8) ?Type {
+    const funcNode = ast.getFunctionFromName(name);
+    if (funcNode == null) {
+        return null;
+    }
+    const functionBody = funcNode.?.kind.Function.getBody(ast);
+    if (functionBody.declarations == null) {
+        return null;
+    }
+    const declarations = ast.get(functionBody.declarations.?);
+    return declarations.kind.LocalDeclarations.getMemberType(ast, memberName);
+}
+
+pub fn getStructNodeFromName(ast: *Ast, name: []const u8) ?*const Node {
+    const index = ast.structMap.get(name);
+    if (index) |i| {
+        return ast.get(i);
+    }
+    return null;
+}
+
+pub fn getStructFieldType(ast: *Ast, structName: []const u8, fieldName: []const u8) ?Type {
+    const structNode = ast.getStructNodeFromName(structName);
+    if (structNode == null) {
+        return null;
+    }
+    const decls = ast.get(structNode.?.kind.TypeDeclaration.declarations);
+    return decls.kind.StructFieldDeclarations.getMemberType(ast, fieldName);
+}
+
+pub fn init(alloc: std.mem.Allocator, nodes: NodeList, input: []const u8) !Ast {
+    var AST = Ast{
         .nodes = nodes,
         .allocator = alloc,
         .input = input,
+        .structMap = std.StringHashMap(usize).init(alloc),
+        .functionMap = std.StringHashMap(usize).init(alloc),
     };
+    try AST.mapStructs();
+    try AST.mapFunctions();
+
+    return AST;
 }
 
-pub fn initFromParser(parser: @import("parser.zig").Parser) Ast {
+pub fn initFromParser(parser: @import("parser.zig").Parser) !Ast {
     const nodes = parser.ast;
     const alloc = parser.allocator;
     const input = parser.input;
-    return Ast.init(alloc, nodes, input);
+    return try Ast.init(alloc, nodes, input);
 }
 
 pub const NodeList = std.ArrayList(Node);
@@ -102,6 +193,19 @@ pub const Node = struct {
             fn is_empty(self: Self) bool {
                 return self.firstDecl == null and self.lastDecl == null;
             }
+
+            //Ben you will hate this :D
+            fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
+                const last = self.lastDecl orelse self.firstDecl + 1;
+                for (self.firstDecl..last) |declIndex| {
+                    const decl = ast.get(declIndex).kind.TypedIdentifier;
+                    const name = decl.getName(ast);
+                    if (std.mem.eql(u8, name, memberName)) {
+                        return decl.getType(ast);
+                    }
+                }
+                return null;
+            }
         },
 
         ///////////////
@@ -145,6 +249,18 @@ pub const Node = struct {
 
             fn is_empty(self: Self) bool {
                 return self.firstDecl == null and self.lastDecl == null;
+            }
+
+            fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
+                const last = self.lastDecl orelse self.firstDecl + 1;
+                for (self.firstDecl..last) |declIndex| {
+                    const decl = ast.get(declIndex).kind.TypedIdentifier;
+                    const name = decl.getName(ast);
+                    if (std.mem.eql(u8, name, memberName)) {
+                        return decl.getType(ast);
+                    }
+                }
+                return null;
             }
         },
 
@@ -528,7 +644,7 @@ pub const Node = struct {
 
             const Self = @This();
 
-            pub fn getType(self: Self, ast: *const Ast) Type {
+            pub fn getType(self: Self, ast: *Ast) Type {
                 const tyNode = ast.get(self.type).kind.Type;
                 const kindNode = ast.get(tyNode.kind).kind;
                 switch (kindNode) {
@@ -539,7 +655,14 @@ pub const Node = struct {
                         const name = nameToken._range.getSubStrFromStr(ast.input);
                         return .{ .Struct = name };
                     },
+                    else => unreachable,
                 }
+            }
+            pub fn getName(self: Self, ast: *Ast) []const u8 {
+                const idNode = ast.get(self.ident);
+                const token = idNode.token;
+                const name = token._range.getSubStrFromStr(ast.input);
+                return name;
             }
         };
         pub const ExpressionType = struct {
@@ -816,4 +939,107 @@ fn testMe(input: []const u8) !Ast {
     const parser = try @import("parser.zig").Parser.parseTokens(tokens, input, debugAlloc);
     const ast = Ast.initFromParser(parser);
     return ast;
+}
+
+test "ast.structMap" {
+    errdefer log.print();
+    const input = "struct Foo { int a; int b; }; fun main() void{}";
+    var ast = try testMe(input);
+    try ting.expect(ast.structMap.contains("Foo"));
+}
+
+test "ast.structMap_duplicate" {
+    errdefer log.print();
+    const input = "struct Foo { int a; int b; }; struct Foo{int a; int b;}; fun main() void{}";
+    try ting.expectError(error.StructAlreadyDeclared, testMe(input));
+}
+
+test "ast.getStructNodeFromName" {
+    errdefer log.print();
+    const input = "struct Foo { int a; int b; }; fun main() void{}";
+    var ast = try testMe(input);
+    const node = ast.getStructNodeFromName("Foo");
+    try ting.expect(node != null);
+    const ident = ast.get(node.?.kind.TypeDeclaration.ident);
+    const name = ident.token._range.getSubStrFromStr(ast.input);
+    try ting.expectEqualStrings(name, "Foo");
+}
+
+test "ast.getStructMemberType" {
+    errdefer log.print();
+    const input = "struct Foo { int a; int b; }; fun main() void{}";
+    var ast = try testMe(input);
+    const ty = ast.getStructFieldType("Foo", "a");
+    try ting.expect(ty != null);
+    const kind = ty.?;
+    try ting.expect(kind == Type.Int);
+}
+
+test "ast.mapFunctions" {
+    errdefer log.print();
+    const input = "fun main() void{}";
+    var ast = try testMe(input);
+    try ting.expect(ast.functionMap.contains("main"));
+}
+
+test "ast.mapFunctions_duplicate" {
+    errdefer log.print();
+    const input = "fun main() void{} fun main() void{}";
+    try ting.expectError(error.FunctionAlreadyDeclared, testMe(input));
+}
+
+test "ast.getFunctionFromName" {
+    errdefer log.print();
+    const input = "fun main() void{}";
+    var ast = try testMe(input);
+    const node = ast.getFunctionFromName("main");
+    try ting.expect(node != null);
+    const func = node.?.kind.Function;
+    const proto = ast.get(func.proto);
+    const name = ast.get(proto.kind.FunctionProto.name).token._range.getSubStrFromStr(ast.input);
+    try ting.expectEqualStrings(name, "main");
+}
+
+test "ast.getFunctionReturnTypeFromName" {
+    errdefer log.print();
+    const input = "fun main() int{}";
+    var ast = try testMe(input);
+    const ty = ast.getFunctionReturnTypeFromName("main");
+    try ting.expect(ty != null);
+    try ting.expect(ty.? == Type.Int);
+}
+
+test "ast.getFunctionDeclarationTypeFromName" {
+    errdefer log.print();
+    const input = "fun main() int{int a;}";
+    var ast = try testMe(input);
+    var ty = ast.getFunctionDeclarationTypeFromName("main", "a");
+    try ting.expect(ty != null);
+    var kind = ty.?;
+    try ting.expect(kind == Type.Int);
+}
+
+test "ast.getFunctionDeclarationTypeFromName_notFound" {
+    errdefer log.print();
+    const input = "fun main() int{int a;}";
+    var ast = try testMe(input);
+    var ty = ast.getFunctionDeclarationTypeFromName("main", "b");
+    try ting.expect(ty == null);
+}
+
+test "ast.getFunctionReturnTypeFromName_void" {
+    errdefer log.print();
+    const input = "fun main() void{}";
+    var ast = try testMe(input);
+    const ty = ast.getFunctionReturnTypeFromName("main");
+    try ting.expect(ty != null);
+    try ting.expect(ty.? == Type.Void);
+}
+
+test "ast.getFunctionReturnTypeFromName_notFound" {
+    errdefer log.print();
+    const input = "fun main() void{}";
+    var ast = try testMe(input);
+    const ty = ast.getFunctionReturnTypeFromName("main2");
+    try ting.expect(ty == null);
 }
