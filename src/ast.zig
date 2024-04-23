@@ -179,11 +179,7 @@ pub const Node = struct {
             }),
         },
 
-        Block: struct {
-            /// Pointer to `StatementList`
-            /// null if no statements in the block
-            statements: ?Ref(.StatementList) = null,
-        },
+        Block: BlockType,
         Assignment: struct {
             lhs: ?Ref(.LValue) = null,
             rhs: ?Ref(.Expression) = null,
@@ -194,19 +190,7 @@ pub const Node = struct {
             /// Whether the print statement has an endl
             hasEndl: bool,
         },
-        ConditionalIf: struct {
-            /// pointer to the condition expression
-            cond: Ref(.Expression),
-            /// Circumvents the 2 field limit of the union (for alignment reasons)
-            /// by pointing to the true and false blocks, so the ConditionalIf can point
-            /// to either a block if no else, or a ConditionalIfElse if there is an else
-            /// Pointer to either `Block` if no `else` clause, or
-            /// `ConditionalIfElse` if there is an `else`
-            block: RefOneOf(.{
-                .ConditionalIfElse,
-                .Block,
-            }),
-        },
+        ConditionalIf: ConditionalIfType,
         ConditionalIfElse: struct {
             ifBlock: Ref(.Block),
             elseBlock: Ref(.Block),
@@ -585,6 +569,50 @@ pub const Node = struct {
                 }
             }
         };
+
+        pub const ConditionalIfType = struct {
+            /// pointer to the condition expression
+            cond: Ref(.Expression),
+            /// Circumvents the 2 field limit of the union (for alignment reasons)
+            /// by pointing to the true and false blocks, so the ConditionalIf can point
+            /// to either a block if no else, or a ConditionalIfElse if there is an else
+            /// Pointer to either `Block` if no `else` clause, or
+            /// `ConditionalIfElse` if there is an `else`
+            block: RefOneOf(.{
+                .ConditionalIfElse,
+                .Block,
+            }),
+
+            pub const Self = @This();
+
+            pub fn isIfElse(self: Self, ast: *const Ast) bool {
+                const block = ast.get(self.block).kind;
+                switch (block) {
+                    .Block => return false,
+                    .ConditionalIfElse => return true,
+                    else => unreachable,
+                }
+            }
+        };
+
+        pub const BlockType = struct {
+            /// Pointer to `StatementList`
+            /// null if no statements in the block
+            statements: ?Ref(.StatementList) = null,
+
+            pub const Self = @This();
+
+            /// returns [start, end)
+            pub fn range(self: Self, ast: *const Ast) ?[2]usize {
+                if (self.statements) |statements| {
+                    const statementsNode = ast.get(statements).kind.StatementList;
+                    const start = statementsNode.firstStatement;
+                    const end = (statementsNode.lastStatement orelse start) + 1;
+                    return [2]usize{ start, end };
+                }
+                return null;
+            }
+        };
     };
 };
 
@@ -720,6 +748,18 @@ pub fn findIndex(ast: *const Ast, nodeKind: NodeKindTag, startingAt: usize) ?usi
         return null;
     }
     for (ast.nodes.items[startingAt..], startingAt..) |node, i| {
+        if (cmpNodeKindAndTag(node, nodeKind)) {
+            return i;
+        }
+    }
+    return null;
+}
+
+pub fn findIndexWithin(ast: *const Ast, nodeKind: NodeKindTag, start: usize, end: usize) ?usize {
+    if (start >= ast.nodes.items.len) {
+        return null;
+    }
+    for (ast.nodes.items[start..end], start..) |node, i| {
         if (cmpNodeKindAndTag(node, nodeKind)) {
             return i;
         }

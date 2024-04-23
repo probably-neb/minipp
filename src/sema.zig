@@ -78,6 +78,84 @@ fn allReturnPathsHaveReturnType(ast: *const Ast, func: Ast.Node.Kind.FunctionTyp
     return;
 }
 
+fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
+    // TODO:
+    // decend the tree if we hit a conditional call a function that checks if the conditional
+    // has a return statement, if both sides return then we are good.
+    // otherwise continue decending for a fall through.
+    // if there is no final return statment throw an error
+    for (start..end) |i| {
+        const node = ast.get(i);
+        if (node.kind == .Return) {
+            // found return, can ignore rest of block
+            return true;
+        }
+        if (node.kind != .ConditionalIf) {
+            // we don't care about non conditional nodes
+            continue;
+        }
+
+        const ifNode = node.kind.ConditionalIf;
+
+        var returnsInThenCase = false;
+        // defaults to true in case there is no else case
+        var returnsInElseCase = true;
+        var returnsInTrailing = false;
+        _ = returnsInTrailing;
+
+        var trailingNodesStart: usize = undefined;
+        const trailingNodesEnd = end;
+
+        if (ifNode.isIfElse(ast)) {
+            const ifElseNode = ast.get(ifNode.block).kind.ConditionalIfElse;
+
+            returnsInThenCase = allReturnPathsExistInner(ast, ifElseNode.ifBlock, ifElseNode.elseBlock);
+
+            // now default returnsInElse to false because there is an else block
+            returnsInElseCase = false;
+            const elseBlockRange = ast.get(ifElseNode.elseBlock).kind.Block.range(ast);
+            if (elseBlockRange) |range| {
+                const elseBlockStart = range[0];
+                const elseBlockEnd = range[1];
+                returnsInElseCase = allReturnPathsExistInner(ast, elseBlockStart, elseBlockEnd);
+
+                // trailingNodesStart is the end of the else block
+                trailingNodesStart = elseBlockEnd;
+            } else {
+                trailingNodesStart = ifElseNode.elseBlock;
+            }
+
+            const elseBlockNode = ast.get(ifElseNode.elseBlock).kind.Block;
+
+            if (elseBlockNode.statements) |statements| {
+                const elseBlockStatements = ast.get(statements).kind.StatementList;
+                const elseBlockStart = elseBlockStatements.firstStatement;
+                const elseBlockEnd = elseBlockStatements.lastStatement orelse elseBlockStart + 1;
+                trailingNodesStart = elseBlockEnd;
+                returnsInElseCase = allReturnPathsExistInner(ast, elseBlockStart, elseBlockEnd);
+            }
+        } else {
+            const ifNodeBlock = ast.get(ifNode.block).kind.Block;
+            const ifNodeBlockRange = ifNodeBlock.range(ast);
+            if (ifNodeBlockRange) |range| {
+                const ifNodeStart = range[0];
+                const ifNodeEnd = range[1];
+                returnsInThenCase = allReturnPathsExistInner(ast, ifNodeStart, ifNodeEnd);
+
+                trailingNodesStart = ifNodeEnd;
+            } else {
+                returnsInThenCase = false;
+                trailingNodesStart = ifNode.block;
+            }
+        }
+        const returnsInTrailingNodes = allReturnPathsExistInner(ast, trailingNodesStart, trailingNodesEnd);
+
+        return (returnsInThenCase and returnsInElseCase) or returnsInTrailingNodes;
+    }
+
+    return false;
+}
+
 fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
     const returnType = func.getReturnType(ast).?;
     const statementList = func.getBody(ast).getStatementList();
@@ -86,14 +164,11 @@ fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaEr
     }
     const statList = statementList.?;
     const funcEnd = ast.findIndex(.FunctionEnd, statList).?;
-    // TODO:
-    // decend the tree if we hit a conditional call a function that checks if the conditional
-    // has a return statement, if both sides return then we are good.
-    // otherwise continue decending for a fall through.
-    // if there is no final return statment throw an error
-    _ = funcEnd;
 
-    return;
+    const ok = allReturnPathsExistInner(ast, statList, funcEnd);
+    if (!ok) {
+        return SemaError.InvalidReturnPath;
+    }
 }
 
 fn getExpressionType(ast: *const Ast, exprNode: Ast.Node.Kind) !Ast.Type {
@@ -149,4 +224,26 @@ test "sema.all_return_paths_bool" {
     const source = "fun main() bool {if (true) {return true;} else {return false;}}";
     const ast = try testMe(source);
     try allFunctionsHaveValidReturnPaths(&ast);
+}
+
+test "sema.returns_in_both_sides_of_if_else" {
+    const source = "fun main() bool {if (true) {return true;} else {return false;}}";
+    const ast = try testMe(source);
+    try allFunctionsHaveValidReturnPaths(&ast);
+}
+
+test "sema.not_all_paths_return" {
+    const source = "fun main() bool {if (true) {return true;}}";
+    const ast = try testMe(source);
+    try ting.expectEqual(ast.numNodes(.Return, 0), 1);
+    const result = allFunctionsHaveValidReturnPaths(&ast);
+    try ting.expectError(SemaError.InvalidReturnPath, result);
+}
+
+test "sema.not_all_paths_return_in_nested_if" {
+    const source = "fun main() bool {if (true) {if (false) {return true;} else {return false;}}}";
+    const ast = try testMe(source);
+    try ting.expectEqual(ast.numNodes(.Return, 0), 2);
+    const result = allFunctionsHaveValidReturnPaths(&ast);
+    try ting.expectError(SemaError.InvalidReturnPath, result);
 }
