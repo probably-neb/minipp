@@ -41,7 +41,6 @@ fn allReturnPathsHaveReturnType(ast: *const Ast, func: Ast.Node.Kind.FunctionTyp
     const funcName = func.getName(ast);
     // Get the return type
     const returnType = func.getReturnType(ast).?;
-    // std.debug.print("ast = {any}\n", .{ast.*});
 
     // Get all return expressions
     // This is in the form of there being the first and last expression within the statment list of the functio
@@ -245,6 +244,22 @@ test "sema.not_all_paths_return" {
 
 test "sema.not_all_paths_return_in_nested_if" {
     const source = "fun main() bool {if (true) {if (false) {return true;} else {return false;}}}";
+    const ast = try testMe(source);
+    try ting.expectEqual(ast.numNodes(.Return, 0), 2);
+    const result = allFunctionsHaveValidReturnPaths(&ast);
+    try ting.expectError(SemaError.InvalidReturnPath, result);
+}
+
+test "sema.nested_fallthrough_fail_on_ifelse" {
+    const source = "fun main() bool {if (true) {if (false) {if(true){return true;}} else {return false;}}}";
+    const ast = try testMe(source);
+    try ting.expectEqual(ast.numNodes(.Return, 0), 2);
+    const result = allFunctionsHaveValidReturnPaths(&ast);
+    try ting.expectError(SemaError.InvalidReturnPath, result);
+}
+
+test "sema.super_nested_fallthrough_fail_on_ifelse" {
+    const source = "fun main() bool {if (true) {if (false) {if(true){if(false){return true;}} else {return false;}}}}";
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
     const result = allFunctionsHaveValidReturnPaths(&ast);
