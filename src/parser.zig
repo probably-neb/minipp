@@ -100,6 +100,11 @@ pub const Parser = struct {
         return self.tokens[self.readPos];
     }
 
+    fn peekNTokens(self: *Parser, n: usize) !Token {
+        if (self.readPos + n >= self.tokens.len) return error.TokenIndexOutOfBounds;
+        return self.tokens[self.readPos + n];
+    }
+
     // TODO : create currentTokenThatShouldBe function for more checks and
     // easier bug finding (supposedly (my opinions are my own))
     fn currentToken(self: *Parser) !Token {
@@ -298,6 +303,10 @@ pub const Parser = struct {
         // // While not EOF then parse TypeDeclaration
         // // Expect (TypeDeclaration)*
         while ((try self.currentToken()).kind == TokenKind.KeywordStruct) {
+            // peek to see if we are now doing globals
+            if ((try self.peekNTokens(1)).kind != TokenKind.LCurly) {
+                return null;
+            }
             lastTypeIndex = try self.parseTypeDeclaration();
         }
         const node = Node{ .kind = NodeKind{ .Types = .{ .firstType = firstTypeIndex, .lastType = lastTypeIndex } }, .token = typesToken };

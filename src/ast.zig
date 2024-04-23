@@ -765,7 +765,13 @@ pub const Type = union(enum) {
     const Self = @This();
 
     pub fn equals(self: Self, other: Self) bool {
-        if (self == other) {}
+        const tmp = @intFromEnum(self) ^ @intFromEnum(other);
+        // if struct
+        if (std.mem.eql(u8, @tagName(self), @tagName(other)) and std.mem.eql(u8, @tagName(self), "Struct")) {
+            // memcmp
+            return std.mem.eql(u8, self.Struct, other.Struct);
+        }
+        return tmp == 0;
     }
 };
 
@@ -1070,6 +1076,23 @@ test "ast.getDeclaratoinGlobalTypeFromName" {
 test "ast.getDeclaratoinGlobalTypeFromName_notFound" {
     errdefer log.print();
     const input = "int a; fun main() void{}";
+    var ast = try testMe(input);
+    const ty = ast.getDeclarationGlobalFromName("b");
+    try ting.expect(ty == null);
+}
+
+test "ast.getGloablStructTypeFromName" {
+    errdefer log.print();
+    const input = "struct Foo { int a; int b; }; struct Foo f; fun main() void{}";
+    var ast = try testMe(input);
+    const ty = ast.getDeclarationGlobalFromName("f");
+    const expected = Type{ .Struct = "Foo" };
+    try ting.expect(ty.?.equals(expected));
+}
+
+test "ast.getGloablStructTypeFromName_notFound" {
+    errdefer log.print();
+    const input = "struct Foo { int a; int b; }; struct Foo f; fun main() void{}";
     var ast = try testMe(input);
     const ty = ast.getDeclarationGlobalFromName("b");
     try ting.expect(ty == null);
