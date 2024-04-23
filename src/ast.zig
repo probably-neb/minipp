@@ -98,6 +98,20 @@ pub fn getStructFieldType(ast: *Ast, structName: []const u8, fieldName: []const 
     return decls.kind.StructFieldDeclarations.getMemberType(ast, fieldName);
 }
 
+pub fn getDeclarationGlobalFromName(ast: *Ast, name: []const u8) ?Type {
+    const nodes = ast.nodes.items;
+    for (nodes) |node| {
+        if (node.kind == .ProgramDeclarations) {
+            const decls = node.kind.ProgramDeclarations.declarations;
+            if (decls != null) {
+                const localDecls = ast.get(decls.?).kind.LocalDeclarations;
+                return localDecls.getMemberType(ast, name);
+            }
+        }
+    }
+    return null;
+}
+
 pub fn init(alloc: std.mem.Allocator, nodes: NodeList, input: []const u8) !Ast {
     var AST = Ast{
         .nodes = nodes,
@@ -1041,5 +1055,22 @@ test "ast.getFunctionReturnTypeFromName_notFound" {
     const input = "fun main() void{}";
     var ast = try testMe(input);
     const ty = ast.getFunctionReturnTypeFromName("main2");
+    try ting.expect(ty == null);
+}
+
+test "ast.getDeclaratoinGlobalTypeFromName" {
+    errdefer log.print();
+    const input = "int a; fun main() void{}";
+    var ast = try testMe(input);
+    const ty = ast.getDeclarationGlobalFromName("a");
+    try ting.expect(ty != null);
+    try ting.expect(ty.? == Type.Int);
+}
+
+test "ast.getDeclaratoinGlobalTypeFromName_notFound" {
+    errdefer log.print();
+    const input = "int a; fun main() void{}";
+    var ast = try testMe(input);
+    const ty = ast.getDeclarationGlobalFromName("b");
     try ting.expect(ty == null);
 }
