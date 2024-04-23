@@ -827,7 +827,7 @@ pub const Parser = struct {
         }
 
         const node = Node{
-            .kind = NodeKind{ .Statement = .{ .statement = lhsIndex.? } },
+            .kind = NodeKind{ .Statement = .{ .statement = lhsIndex.?, .finalIndex = self.ast.items.len } },
             .token = tok,
         };
         try self.set(statementIndex, node);

@@ -177,6 +177,7 @@ pub const Node = struct {
                 .Return,
                 .Invocation,
             }),
+            finalIndex: usize,
         },
 
         Block: BlockType,
@@ -607,8 +608,9 @@ pub const Node = struct {
                 if (self.statements) |statements| {
                     const statementsNode = ast.get(statements).kind.StatementList;
                     const start = statementsNode.firstStatement;
-                    const end = (statementsNode.lastStatement orelse start) + 1;
-                    return [2]usize{ start, end };
+                    const lastStatement = (statementsNode.lastStatement orelse start);
+                    const lastIndex = ast.get(lastStatement).kind.Statement.finalIndex;
+                    return [2]usize{ start, lastIndex };
                 }
                 return null;
             }

@@ -84,27 +84,35 @@ fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
     // has a return statement, if both sides return then we are good.
     // otherwise continue decending for a fall through.
     // if there is no final return statment throw an error
-    for (start..end) |i| {
+    var result = false;
+    var cursor = start;
+    while (cursor < end) {
+        const i = cursor;
+        cursor += 1;
+
         const node = ast.get(i);
         if (node.kind == .Return) {
             // found return, can ignore rest of block
-            return true;
+            result = true;
+            break;
         }
         if (node.kind != .ConditionalIf) {
             // we don't care about non conditional nodes
             continue;
         }
 
-        const ifNode = node.kind.ConditionalIf;
-
-        var returnsInThenCase = false;
+        var returnsInThenCase = true;
         // defaults to true in case there is no else case
         var returnsInElseCase = true;
         var returnsInTrailing = false;
+
+        const ifNode = node.kind.ConditionalIf;
+
         _ = returnsInTrailing;
 
         var trailingNodesStart: usize = undefined;
         const trailingNodesEnd = end;
+        var fallthroughReq = false;
 
         if (ifNode.isIfElse(ast)) {
             const ifElseNode = ast.get(ifNode.block).kind.ConditionalIfElse;
@@ -116,44 +124,39 @@ fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
             const elseBlockRange = ast.get(ifElseNode.elseBlock).kind.Block.range(ast);
             if (elseBlockRange) |range| {
                 const elseBlockStart = range[0];
-                const elseBlockEnd = range[1];
+                const elseBlockEnd = range[1] + 1;
                 returnsInElseCase = allReturnPathsExistInner(ast, elseBlockStart, elseBlockEnd);
+                fallthroughReq = !returnsInElseCase;
 
-                // trailingNodesStart is the end of the else block
-                trailingNodesStart = elseBlockEnd;
+                trailingNodesStart = elseBlockEnd + 1;
             } else {
-                trailingNodesStart = ifElseNode.elseBlock;
-            }
-
-            const elseBlockNode = ast.get(ifElseNode.elseBlock).kind.Block;
-
-            if (elseBlockNode.statements) |statements| {
-                const elseBlockStatements = ast.get(statements).kind.StatementList;
-                const elseBlockStart = elseBlockStatements.firstStatement;
-                const elseBlockEnd = elseBlockStatements.lastStatement orelse elseBlockStart + 1;
-                trailingNodesStart = elseBlockEnd;
-                returnsInElseCase = allReturnPathsExistInner(ast, elseBlockStart, elseBlockEnd);
+                trailingNodesStart = ifElseNode.elseBlock + 1;
             }
         } else {
+            fallthroughReq = true;
             const ifNodeBlock = ast.get(ifNode.block).kind.Block;
             const ifNodeBlockRange = ifNodeBlock.range(ast);
             if (ifNodeBlockRange) |range| {
                 const ifNodeStart = range[0];
-                const ifNodeEnd = range[1];
+                const ifNodeEnd = range[1] + 1;
                 returnsInThenCase = allReturnPathsExistInner(ast, ifNodeStart, ifNodeEnd);
 
                 trailingNodesStart = ifNodeEnd;
             } else {
                 returnsInThenCase = false;
-                trailingNodesStart = ifNode.block;
+                trailingNodesStart = ifNode.block + 1;
             }
         }
         const returnsInTrailingNodes = allReturnPathsExistInner(ast, trailingNodesStart, trailingNodesEnd);
-
-        return (returnsInThenCase and returnsInElseCase) or returnsInTrailingNodes;
+        // print the trailing nodes
+        if (fallthroughReq) {
+            result = returnsInTrailingNodes;
+        } else {
+            result = (returnsInThenCase and returnsInElseCase);
+        }
+        break;
     }
-
-    return false;
+    return result;
 }
 
 fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
