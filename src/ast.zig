@@ -51,7 +51,7 @@ pub fn mapFunctions(ast: *Ast) !void {
     }
 }
 
-pub fn getFunctionFromName(ast: *Ast, name: []const u8) ?*const Node {
+pub fn getFunctionFromName(ast: *Ast, name: []const u8) ?*const Node.Kind.Function {
     const index = ast.functionMap.get(name);
     if (index) |i| {
         return ast.get(i);
@@ -244,10 +244,30 @@ pub const Node = struct {
         FunctionProto: FunctionProtoType,
         Parameters: struct {
             /// Pointer to `TypedIdentifier`
-            firstParam: Ref(.TypedIdentifier),
+            firstParam: ?Ref(.TypedIdentifier) = null,
             /// When null, only one parameter
             /// Pointer to `TypedIdentifier`
             lastParam: ?Ref(.TypedIdentifier) = null,
+
+            fn getParamTypes(this: ?usize, ast: *const Ast) ?[]Type {
+                if (this == null) {
+                    return null;
+                }
+                const self = ast.get(this.?).kind.Parameters;
+                if (self.firstParam == null) {
+                    return null;
+                }
+                const last = self.lastParam orelse self.firstParam + 1;
+                var list = std.ArrayList(Type).init(ast.allocator);
+                for (self.firstParam..last) |paramIndex| {
+                    const param = ast.get(paramIndex).kind.TypedIdentifier;
+                    const ty = param.getType(ast);
+                    list.append(ty);
+                }
+                const res = list.toToOwnedSlice();
+                list.deinit();
+                return res;
+            }
         },
         ReturnType: ReturnTypeType,
         FunctionBody: FunctionBodyType,
@@ -290,6 +310,22 @@ pub const Node = struct {
             /// Pointer to `Statement`
             /// null if only one statement
             lastStatement: ?Ref(.Statement) = null,
+
+            fn getList(this: ?usize, ast: *Ast) ?[]usize {
+                if (this == null) {
+                    return null;
+                }
+                const self = ast.get(this.?).kind.StatementList;
+                var list = std.ArrayList(usize).init(ast.allocator);
+                const last = self.lastStatement orelse self.firstStatement + 1;
+                for (self.firstStatement..last) |stmtIndex| {
+                    const stmt = ast.get(stmtIndex);
+                    list.append(stmt);
+                }
+                const res = list.toToOwnedSlice();
+                list.deinit();
+                return res;
+            }
         },
         /// Statement holds only one field, the index of the actual statement
         /// it is still usefull, however, as the possible statements are vast,
@@ -313,7 +349,7 @@ pub const Node = struct {
         Block: BlockType,
         Assignment: struct {
             lhs: ?Ref(.LValue) = null,
-            rhs: ?Ref(.Expression) = null,
+            rhs: ?RefOneOf(.{ .Expression, .Read }) = null,
         },
         Print: struct {
             /// The expression to print
@@ -349,6 +385,45 @@ pub const Node = struct {
             /// Pointer to `SelectorChain` (`{'.'id}*`)
             /// null if no selectors
             chain: ?Ref(.SelectorChain) = null,
+            // TODO: for adding the int_array access this will need to be changed
+            fn getType(this: ?usize, ast: *const Ast, fName: []const u8) ?Type {
+                if (this == null) {
+                    return null;
+                }
+                const self = ast.get(this.?).kind.LValue;
+                const identNode = ast.get(self.ident);
+                const ident = identNode.token._range.getSubStrFromStr(ast.input);
+                const g_decl = ast.getDeclarationGlobalFromName(ident);
+                const f_decl = ast.getFunctionDeclarationTypeFromName(fName, ident);
+                var decl = f_decl orelse g_decl;
+                if (decl == null) {
+                    utils.todo("this must be defined previously, do error proper", .{});
+                }
+                var result: ?Type = null;
+                var tmpIdent = ident;
+                var chain = self.chain;
+                if (chain == null) {
+                    return decl;
+                }
+                chain = ast.get(chain.?).kind.SelectorChain;
+                while (true) {
+                    if (chain == null) {
+                        return result;
+                    } else {
+                        chain = ast.get(chain.?).kind.SelectorChain;
+                    }
+                    // find the struct
+                    const structNode = ast.getStructNodeFromName(tmpIdent);
+                    const chainIdent = ast.get(chain.ident).token._range.getSubStrFromStr(ast.input);
+                    const field = ast.getStructFieldType(structNode, chainIdent);
+                    if (field == null) {
+                        utils.todo("No member found for struct , do error proper\n", .{});
+                    }
+                    tmpIdent = chainIdent;
+                    result = field;
+                    chain = chain.next;
+                }
+            }
         },
         Expression: ExpressionType,
         BinaryOperation: struct {
@@ -398,6 +473,23 @@ pub const Node = struct {
             /// Pointer to `Expression`
             /// null if only one argument
             lastArg: ?Ref(.Expression) = null,
+
+            fn getArgumentTypes(this: ?usize, ast: *const Ast) ?[]Type {
+                if (this == null) {
+                    return null;
+                }
+                const self = ast.get(this.?).kind.Arguments;
+                var list = std.ArrayList(Type).init(ast.allocator);
+                const last = self.lastArg orelse self.firstArg + 1;
+                for (self.firstArg..last) |argIndex| {
+                    const arg = ast.get(argIndex).kind.Expression;
+                    const ty = arg.getType(ast);
+                    list.append(ty);
+                }
+                const res = list.toToOwnedSlice();
+                list.deinit();
+                return res;
+            }
         },
         /// A number literal, token points to value
         Number,

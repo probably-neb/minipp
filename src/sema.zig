@@ -181,6 +181,275 @@ fn getExpressionType(ast: *const Ast, exprNode: Ast.Node.Kind) !Ast.Type {
     switch (expr) {}
 }
 
+// Done
+pub fn typeCheckFunction(ast: *Ast, func: Ast.Node.Kind.FunctionType) !void {
+    const functionName = func.getName(ast);
+    const returnType = func.getReturnType(ast).?;
+
+    var statementList = func.getBody(ast).getStatementList();
+    if (statementList == null) {
+        return;
+    }
+    try typeCheckStatementList(ast, statementList, functionName, returnType);
+}
+
+// Done
+pub fn typeCheckStatementList(ast: *Ast, statementList: Ast.Node.Kind.StatementList, fName: []const u8, returnType: Ast.Type) !void {
+    const list = statementList.getList();
+    for (list) |statement| {
+        try typeCheckStatement(ast, statement, fName, returnType);
+    }
+}
+
+pub fn typeCheckStatement(ast: *Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) !void {
+    _ = returnType;
+    _ = fName;
+    _ = ast;
+    const node = statement.kind.Statement;
+    _ = node;
+}
+
+// Done
+pub fn typeCheckBlock(ast: *Ast, block: Ast.Node.Kind.Block, fName: []const u8, returnType: Ast.Type) !void {
+    // Block to statement list
+    const statementIndex = block.statements;
+    if (statementIndex == null) {
+        return;
+    }
+    const statementList = ast.get(statementIndex).kind.StatementList;
+    try typeCheckStatementList(ast, statementList, fName, returnType);
+}
+
+// Done
+pub fn typeCheckAssignment(ast: *Ast, assignment: Ast.Node.Kind.Assignment, fName: []const u8, returnType: Ast.Type) !void {
+    const left = assignment.left;
+    const right = assignment.right;
+    if (left == null) {
+        utils.todo("Error on assignment type checking\n", .{});
+        return;
+    }
+    if (right == null) {
+        utils.todo("Error on assignment type checking\n", .{});
+        return;
+    }
+    // check if right is type read
+    const leftType = Ast.Node.Kind.LValue.getType(left, ast, fName);
+    if (leftType == null) {
+        utils.todo("Error on assignment type checking\n", .{});
+        return;
+    }
+    const rightNode = ast.get(right.?).kind;
+    if (rightNode == .Read) {
+        const readType = Ast.Type{.Int};
+        // expect lhs to be of type int
+        if (!leftType.equals(readType)) {
+            std.debug.print("Error on assignment type checking\n");
+            std.debug.print("must read to an int type\n");
+            return error.InvalidType;
+        }
+    }
+
+    // right hand side is an expression
+    const rightExpr = ast.get(right.?).kind.Expression;
+    const rightType = try getAndCheckTypeExpression(ast, rightExpr, fName, returnType);
+    if (rightType == null) {
+        utils.todo("Error on assignment type checking\n", .{});
+        return error.InvalidType;
+    }
+    if (!leftType.equals(rightType)) {
+        utils.todo("Error on assignment type checking\n", .{});
+        return error.InvalidType;
+    }
+}
+
+// Done
+pub fn typeCheckPrint(ast: *Ast, print: Ast.Node.Kind.Print, fName: []const u8, returnType: Ast.Type) !void {
+    const expr = print.expr;
+    const exprType = try getAndCheckTypeExpression(ast, expr, fName, returnType);
+    if (exprType == null) {
+        utils.todo("Error on print type checking\n", .{});
+        return error.InvalidType;
+    }
+    if (!exprType.equals(Ast.Type{.Int})) {
+        utils.todo("Error on print type checking\n", .{});
+        return error.InvalidType;
+    }
+}
+
+// Done
+pub fn typeCheckConditional(ast: *Ast, conditional: Ast.Node.Kind.ConditionalIfType, fName: []const u8, returnType: Ast.Type) !void {
+    // first check if conditional is bool
+    const cond = conditional.cond;
+    const condNode = ast.get(cond).kind.Expression;
+    const condType = try getAndCheckTypeExpression(ast, condNode, fName, returnType);
+    if (condType == null) {
+        utils.todo("Error on conditional type checking\n", .{});
+        return error.InvalidType;
+    }
+    if (!condType.equals(Ast.Type{.Bool})) {
+        utils.todo("Error on conditional type checking\n", .{});
+        return error.InvalidType;
+    }
+
+    const isIfElse = conditional.isIfElse(ast);
+    if (isIfElse) {
+        const ifElseNode = ast.get(conditional.block).kind.ConditionalIfElse;
+        const ifBlockNode = ast.get(ifElseNode.ifBlock).kind.Block;
+        const elseBlockNode = ast.get(ifElseNode.elseBlock).kind.Block;
+        try typeCheckBlock(ast, ifBlockNode, fName, returnType);
+        try typeCheckBlock(ast, elseBlockNode, fName, returnType);
+    } else {
+        const ifBlockNode = ast.get(conditional.block).kind.Block;
+        try typeCheckBlock(ast, ifBlockNode, fName, returnType);
+    }
+}
+
+// Done
+pub fn typeCheckWhile(ast: *Ast, while_n: Ast.Node.Kind.While, fName: []const u8, returnType: Ast.Type) !void {
+    // first check if conditional is bool
+    const cond = while_n.cond;
+    const condNode = ast.get(cond).kind.Expression;
+    const condType = try getAndCheckTypeExpression(ast, condNode, fName, returnType);
+    if (condType == null) {
+        utils.todo("Error on while type checking\n", .{});
+        return error.InvalidType;
+    }
+    if (!condType.equals(Ast.Type{.Bool})) {
+        utils.todo("Error on while type checking\n", .{});
+        return error.InvalidType;
+    }
+
+    const blockNode = ast.get(while_n.block).kind.Block;
+    try typeCheckBlock(ast, blockNode, fName, returnType);
+}
+
+// Done
+pub fn typeCheckDelete(ast: *Ast, delete: Ast.Node.Kind.Delete, fName: []const u8, returnType: Ast.Type) !void {
+    const expr = delete.expr;
+    const exprNode = ast.get(expr).kind.Expression;
+    const exprType = try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
+    if (exprType == null) {
+        utils.todo("Error on delete type checking\n", .{});
+        return error.InvalidType;
+    }
+    // expect a struct of some form
+    // FIXME:
+    if (exprType.kind != .Struct) {
+        utils.todo("Error on delete type checking\n", .{});
+        return error.InvalidType;
+    }
+}
+
+// Done
+pub fn typeCheckReturn(ast: *Ast, ret: Ast.Node.Kind.Return, fName: []const u8, returnType: Ast.Type) !void {
+    const expr = ret.expr;
+    if (expr == null) {
+        if (!returnType.equals(Ast.Type{.Void})) {
+            utils.todo("Error on return type checking\n", .{});
+            return error.InvalidType;
+        }
+        return;
+    }
+    const exprNode = ast.get(expr).kind.Expression;
+    const exprType = try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
+    if (exprType == null) {
+        utils.todo("Error on return type checking\n", .{});
+        return error.InvalidType;
+    }
+    if (!exprType.equals(returnType)) {
+        utils.todo("Error on return type checking\n", .{});
+        return error.InvalidType;
+    }
+}
+
+// Done
+pub fn getAndCheckInvocation(ast: *Ast, invocation: Ast.Node.Kind.Invocation, fName: []const u8, returnType: Ast.Type) !Ast.Type {
+    _ = returnType;
+    _ = fName;
+    const funcName = ast.get(invocation.funcName).token._range.getSubStrFromStr(ast.input);
+    const func = ast.getFunctionFromName(funcName);
+    if (func == null) {
+        utils.todo("Error on invocation type checking\n", .{});
+        return;
+    }
+    // check the arguments
+    const args = invocation.args;
+    const funcProto = ast.get(func.?.proto).kind.FunctionProto.parameters;
+    if (args == null) {
+        // check the definition of the function
+        if (funcProto == null) {
+            return Ast.Type{.Void};
+        } else {
+            utils.todo("Error on invocation type checking\n", .{});
+            return error.InvalidFunctionCall;
+        }
+    }
+
+    var argsList = Ast.Node.Kind.Argument.getArgumentTypes(args, ast);
+    var funcPList = Ast.Node.Kind.Parameter.getParamTypes(funcProto, ast);
+
+    if (argsList == null) {
+        if (funcPList == null) {
+            // return the return type of the function
+            return ast.getFunctionReturnTypeFromName(funcName);
+        }
+        utils.todo("Error on invocation type checking\n", .{});
+        return error.InvalidFunctionCall;
+    }
+
+    if (funcPList == null) {
+        utils.todo("Error on invocation type checking\n", .{});
+        return error.InvalidFunctionCall;
+    }
+
+    funcPList = funcPList.?;
+    argsList = argsList.?;
+    if (argsList.len != funcPList.len) {
+        utils.todo("Error on invocation type checking\n", .{});
+        return error.InvalidFunctionCall;
+    }
+
+    var i: usize = 0;
+    while (i < argsList.len) {
+        const argType = argsList[i];
+        const paramType = funcPList[i];
+        if (!argType.equals(paramType)) {
+            utils.todo("Error on invocation type checking\n", .{});
+            return error.InvalidFunctionCall;
+        }
+        i += 1;
+    }
+
+    return try ast.getFunctionReturnTypeFromName(funcName);
+}
+
+// Done
+pub fn getAndCheckTypeExpression(ast: *Ast, expr: Ast.Node.Kind.Expression, fName: []const u8, returnType: Ast.Type) !Ast.Type {
+    // get the type of the expression
+    const node = ast.get(expr.expr);
+    const kind = node.kind;
+    switch (kind) {
+        .BinaryOperation => {
+            return try ast.getAndCheckBinaryOperation(ast, node, fName, returnType);
+        },
+        .UnaryOperation => {
+            return try ast.getAndCheckUnaryOperation(ast, node, fName, returnType);
+        },
+        .Factor => {
+            return try ast.getAndCheckFactor(ast, kind.Factor, fName, returnType);
+        },
+        else => {
+            utils.todo("Error on expression type checking\n", .{});
+            return error.InvalidType;
+        },
+    }
+}
+
+pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) !Ast.Type {
+    const token = binaryOp.token;
+    FIXME: this is where I am working right now!
+}
+
 ///////////
 // TESTS //
 ///////////
