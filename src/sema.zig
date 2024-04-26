@@ -11,6 +11,26 @@ const SemaError = error{
     InvalidReturnPath,
 };
 
+const TypeError = error{
+    InvalidType,
+    InvalidFunctionCall,
+    OutOfBounds,
+    OutOfMemory,
+    ReturnTypeNotVoid,
+    InvalidReturnType,
+    InvalidAssignmentType,
+    InvalidReadExptedTypeInt,
+    InvalidAssignmentNoDeclaration,
+    StructHasNoMember,
+    BinaryOperationTypeMismatch,
+    InvalidTypeExptectedInt,
+    InvalidTypeExpectedBool,
+    InvalidFunctionCallNoDefinedArguments,
+    NoSuchFunction,
+    FunctionParametersMustNotBeShadowed,
+    FunctionParametersMustBeUnique,
+};
+
 const MAIN: []const u8 = "main";
 
 fn ensureHasMain(ast: *const Ast) SemaError!void {
@@ -173,57 +193,105 @@ fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaEr
     }
 }
 
-fn getExpressionType(ast: *const Ast, exprNode: Ast.Node.Kind) !Ast.Type {
-    _ = ast;
-    const expr = exprNode.Expression;
-    const token = exprNode.token;
-    _ = token;
-    switch (expr) {}
+pub fn typeCheck(ast: *Ast) !void {
+    // get all functions out of map
+    var funcsKeys = ast.functionMap.keyIterator();
+    while (funcsKeys.next()) |key| {
+        const func = ast.getFunctionFromName(key.*).?;
+        try typeCheckFunction(ast, func.*);
+    }
 }
-
 // Done
-pub fn typeCheckFunction(ast: *Ast, func: Ast.Node.Kind.FunctionType) !void {
-    const functionName = func.getName(ast);
-    const returnType = func.getReturnType(ast).?;
-
-    var statementList = func.getBody(ast).getStatementList();
-    if (statementList == null) {
+pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
+    var fc = func.kind.Function;
+    const functionName = fc.getName(ast);
+    const returnType = fc.getReturnType(ast).?;
+    const fBody = ast.get(fc.body).*;
+    const fstatementsIndex = fBody.kind.FunctionBody.statements;
+    if(fstatementsIndex == null){
+        std.debug.print("wahoo \n",.{});
+    }
+    if (fstatementsIndex == null) {
         return;
     }
-    try typeCheckStatementList(ast, statementList, functionName, returnType);
+    // ensure that there are no local declarations with the same name as the parameters
+    // get the parameters
+    const fProto = ast.get(fc.proto).*.kind.FunctionProto.parameters;
+    if (fProto != null) {
+        const paraMNodes = ast.get(fProto.?).*.kind.Parameters;
+        const last = paraMNodes.lastParam orelse paraMNodes.firstParam.? + 1;
+        var paramNames = std.StringHashMap(bool).init(ast.allocator);
+        var iter: ?usize = paraMNodes.firstParam;
+        while (iter != null) {
+            const param = ast.get(iter.?).*;
+            const ident = ast.get(param.kind.TypedIdentifier.ident).token._range.getSubStrFromStr(ast.input);
+            // find if the ident is already in the list
+            if (paramNames.contains(ident)) {
+                return error.FunctionParametersMustBeUnique;
+            }
+            const declMe = ast.getFunctionDeclarationTypeFromName(functionName, ident);
+            if (declMe != null) {
+                return error.FunctionParametersMustNotBeShadowed;
+            }
+            try paramNames.put(ident, true);
+            iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1, last + 1);
+        }
+        paramNames.deinit();
+        // for each of the parameters check that there is no local declaration with the same name
+    }
+    try typeCheckStatementList(ast, fstatementsIndex, functionName, returnType);
 }
 
 // Done
-pub fn typeCheckStatementList(ast: *Ast, statementList: Ast.Node.Kind.StatementList, fName: []const u8, returnType: Ast.Type) !void {
-    const list = statementList.getList();
-    for (list) |statement| {
-        try typeCheckStatement(ast, statement, fName, returnType);
+pub fn typeCheckStatementList(ast: *Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    ast.printAst();
+    std.debug.print("statementListn: {d}\n", .{statementListn.?});
+    const list = try StatemenListgetList(statementListn, ast);
+    if (list == null) {
+        return;
+    }
+    for (list.?) |statement| {
+        std.debug.print("Statement {any}\n", .{statement});
+        const statNode = ast.get(statement).*;
+        try typeCheckStatement(ast, statNode, fName, returnType);
     }
 }
 
-pub fn typeCheckStatement(ast: *Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) !void {
-    _ = returnType;
-    _ = fName;
-    _ = ast;
-    const node = statement.kind.Statement;
-    _ = node;
+pub fn typeCheckStatement(ast: *Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    const kind = statement.kind;
+    _ = switch (kind) {
+    .Block => { try typeCheckBlock(ast, statement, fName, returnType); return; },
+    .Assignment => { try typeCheckAssignment(ast, statement, fName, returnType); return; },
+    .Print => { try typeCheckPrint(ast, statement, fName, returnType); return; },
+    .ConditionalIf => { try typeCheckConditional(ast, statement, fName, returnType); return; },
+    .While => { try typeCheckWhile(ast, statement, fName, returnType); return; },
+    .Delete => { try typeCheckDelete(ast, statement, fName, returnType); return; },
+    .Return => { try typeCheckReturn(ast, statement, fName, returnType); return; },
+    .Invocation => { _ = try getAndCheckInvocation(ast, statement, fName, returnType); return; },
+    else => {
+        utils.todo("Error on statement type checking\n", .{});
+        return error.InvalidType;
+    },
+    };
+    return error.InvalidType;
 }
 
 // Done
-pub fn typeCheckBlock(ast: *Ast, block: Ast.Node.Kind.Block, fName: []const u8, returnType: Ast.Type) !void {
+pub fn typeCheckBlock(ast: *Ast, blockn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // Block to statement list
+    const block = blockn.kind.Block;
     const statementIndex = block.statements;
     if (statementIndex == null) {
         return;
     }
-    const statementList = ast.get(statementIndex).kind.StatementList;
-    try typeCheckStatementList(ast, statementList, fName, returnType);
+    try typeCheckStatementList(ast, statementIndex.?, fName, returnType);
 }
 
 // Done
-pub fn typeCheckAssignment(ast: *Ast, assignment: Ast.Node.Kind.Assignment, fName: []const u8, returnType: Ast.Type) !void {
-    const left = assignment.left;
-    const right = assignment.right;
+pub fn typeCheckAssignment(ast: *Ast, assignmentn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    const assignment = assignmentn.kind.Assignment;
+    const left = assignment.lhs;
+    const right = assignment.rhs;
     if (left == null) {
         utils.todo("Error on assignment type checking\n", .{});
         return;
@@ -233,60 +301,56 @@ pub fn typeCheckAssignment(ast: *Ast, assignment: Ast.Node.Kind.Assignment, fNam
         return;
     }
     // check if right is type read
-    const leftType = Ast.Node.Kind.LValue.getType(left, ast, fName);
+    const leftType = try LValuegetType(left, ast, fName);
     if (leftType == null) {
         utils.todo("Error on assignment type checking\n", .{});
         return;
     }
     const rightNode = ast.get(right.?).kind;
     if (rightNode == .Read) {
-        const readType = Ast.Type{.Int};
+        const readType = Ast.Type.Int;
         // expect lhs to be of type int
-        if (!leftType.equals(readType)) {
-            std.debug.print("Error on assignment type checking\n");
-            std.debug.print("must read to an int type\n");
-            return error.InvalidType;
+        if (!leftType.?.equals(readType)) {
+            // TODO: add error
+            return error.InvalidReadExptedTypeInt;
         }
+        return;
     }
 
     // right hand side is an expression
-    const rightExpr = ast.get(right.?).kind.Expression;
+    const rightExpr = ast.get(right.?).*;
     const rightType = try getAndCheckTypeExpression(ast, rightExpr, fName, returnType);
-    if (rightType == null) {
-        utils.todo("Error on assignment type checking\n", .{});
-        return error.InvalidType;
+    if(rightType.isStruct()){
+        std.debug.print("rightType: {s}\n", .{rightType.Struct});
+        std.debug.print("leftType: {s}\n", .{leftType.?.Struct});
     }
-    if (!leftType.equals(rightType)) {
-        utils.todo("Error on assignment type checking\n", .{});
-        return error.InvalidType;
+    if (!leftType.?.equals(rightType)) {
+        // FIXME: add error
+        return error.InvalidAssignmentType;
     }
 }
 
 // Done
-pub fn typeCheckPrint(ast: *Ast, print: Ast.Node.Kind.Print, fName: []const u8, returnType: Ast.Type) !void {
+pub fn typeCheckPrint(ast: *Ast, printn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    const print = printn.kind.Print;
     const expr = print.expr;
-    const exprType = try getAndCheckTypeExpression(ast, expr, fName, returnType);
-    if (exprType == null) {
-        utils.todo("Error on print type checking\n", .{});
-        return error.InvalidType;
-    }
-    if (!exprType.equals(Ast.Type{.Int})) {
-        utils.todo("Error on print type checking\n", .{});
-        return error.InvalidType;
+    const exprNode = ast.get(expr).*;
+    const exprType = try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
+    if (!exprType.equals(Ast.Type.Int)) {
+        // TODO: add error
+        return TypeError.InvalidReadExptedTypeInt;
     }
 }
 
 // Done
-pub fn typeCheckConditional(ast: *Ast, conditional: Ast.Node.Kind.ConditionalIfType, fName: []const u8, returnType: Ast.Type) !void {
+pub fn typeCheckConditional(ast: *Ast, conditionaln: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // first check if conditional is bool
+    const conditional = conditionaln.kind.ConditionalIf;
     const cond = conditional.cond;
-    const condNode = ast.get(cond).kind.Expression;
+    const condNode = ast.get(cond).*;
+    std.debug.print("condNode: {any}\n", .{cond});
     const condType = try getAndCheckTypeExpression(ast, condNode, fName, returnType);
-    if (condType == null) {
-        utils.todo("Error on conditional type checking\n", .{});
-        return error.InvalidType;
-    }
-    if (!condType.equals(Ast.Type{.Bool})) {
+    if (!condType.equals(Ast.Type.Bool)) {
         utils.todo("Error on conditional type checking\n", .{});
         return error.InvalidType;
     }
@@ -294,107 +358,101 @@ pub fn typeCheckConditional(ast: *Ast, conditional: Ast.Node.Kind.ConditionalIfT
     const isIfElse = conditional.isIfElse(ast);
     if (isIfElse) {
         const ifElseNode = ast.get(conditional.block).kind.ConditionalIfElse;
-        const ifBlockNode = ast.get(ifElseNode.ifBlock).kind.Block;
-        const elseBlockNode = ast.get(ifElseNode.elseBlock).kind.Block;
+        const ifBlockNode = ast.get(ifElseNode.ifBlock).*;
+        const elseBlockNode = ast.get(ifElseNode.elseBlock).*;
         try typeCheckBlock(ast, ifBlockNode, fName, returnType);
         try typeCheckBlock(ast, elseBlockNode, fName, returnType);
     } else {
-        const ifBlockNode = ast.get(conditional.block).kind.Block;
+        const ifBlockNode = ast.get(conditional.block).*;
         try typeCheckBlock(ast, ifBlockNode, fName, returnType);
     }
 }
 
 // Done
-pub fn typeCheckWhile(ast: *Ast, while_n: Ast.Node.Kind.While, fName: []const u8, returnType: Ast.Type) !void {
+pub fn typeCheckWhile(ast: *Ast, while_nN: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // first check if conditional is bool
+    const while_n = while_nN.kind.While;
     const cond = while_n.cond;
-    const condNode = ast.get(cond).kind.Expression;
+    const condNode = ast.get(cond).*;
     const condType = try getAndCheckTypeExpression(ast, condNode, fName, returnType);
-    if (condType == null) {
-        utils.todo("Error on while type checking\n", .{});
-        return error.InvalidType;
-    }
-    if (!condType.equals(Ast.Type{.Bool})) {
+    if (!condType.equals(Ast.Type.Bool)) {
         utils.todo("Error on while type checking\n", .{});
         return error.InvalidType;
     }
 
-    const blockNode = ast.get(while_n.block).kind.Block;
+    const blockNode = ast.get(while_n.block).*;
     try typeCheckBlock(ast, blockNode, fName, returnType);
 }
 
 // Done
-pub fn typeCheckDelete(ast: *Ast, delete: Ast.Node.Kind.Delete, fName: []const u8, returnType: Ast.Type) !void {
+pub fn typeCheckDelete(ast: *Ast, deleten: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    const delete = deleten.kind.Delete;
     const expr = delete.expr;
-    const exprNode = ast.get(expr).kind.Expression;
+    const exprNode = ast.get(expr).*;
     const exprType = try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
-    if (exprType == null) {
-        utils.todo("Error on delete type checking\n", .{});
-        return error.InvalidType;
-    }
-    // expect a struct of some form
-    // FIXME:
-    if (exprType.kind != .Struct) {
+    if (!exprType.equalsNoCont(Ast.Type{ .Struct = "cunny" })) {
         utils.todo("Error on delete type checking\n", .{});
         return error.InvalidType;
     }
 }
 
 // Done
-pub fn typeCheckReturn(ast: *Ast, ret: Ast.Node.Kind.Return, fName: []const u8, returnType: Ast.Type) !void {
+pub fn typeCheckReturn(ast: *Ast, retn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    const ret = retn.kind.Return;
     const expr = ret.expr;
     if (expr == null) {
-        if (!returnType.equals(Ast.Type{.Void})) {
-            utils.todo("Error on return type checking\n", .{});
-            return error.InvalidType;
+        if (!returnType.equals(Ast.Type.Void)) {
+            return error.ReturnTypeNotVoid;
         }
         return;
     }
-    const exprNode = ast.get(expr).kind.Expression;
+    const exprNode = ast.get(expr.?).*;
     const exprType = try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
-    if (exprType == null) {
-        utils.todo("Error on return type checking\n", .{});
-        return error.InvalidType;
-    }
     if (!exprType.equals(returnType)) {
-        utils.todo("Error on return type checking\n", .{});
-        return error.InvalidType;
+        // FIXME: add proper error
+        return error.InvalidReturnType;
     }
 }
 
 // Done
-pub fn getAndCheckInvocation(ast: *Ast, invocation: Ast.Node.Kind.Invocation, fName: []const u8, returnType: Ast.Type) !Ast.Type {
-    _ = returnType;
-    _ = fName;
+pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    const invocation = invocationn.kind.Invocation;
     const funcName = ast.get(invocation.funcName).token._range.getSubStrFromStr(ast.input);
     const func = ast.getFunctionFromName(funcName);
+
     if (func == null) {
         utils.todo("Error on invocation type checking\n", .{});
-        return;
+        return error.InvalidFunctionCall;
     }
     // check the arguments
     const args = invocation.args;
-    const funcProto = ast.get(func.?.proto).kind.FunctionProto.parameters;
+    const funcProto = ast.get(func.?.kind.Function.proto).*.kind.FunctionProto.parameters;
     if (args == null) {
         // check the definition of the function
         if (funcProto == null) {
-            return Ast.Type{.Void};
+            return ast.getFunctionReturnTypeFromName(funcName).?;
         } else {
-            utils.todo("Error on invocation type checking\n", .{});
-            return error.InvalidFunctionCall;
+            return error.InvalidFunctionCallNoDefinedArguments;
         }
     }
 
-    var argsList = Ast.Node.Kind.Argument.getArgumentTypes(args, ast);
-    var funcPList = Ast.Node.Kind.Parameter.getParamTypes(funcProto, ast);
+    var argsList = try ArgumentsgetArgumentTypes(args, ast, fName, returnType);
+    var funcPList = try ParametergetParamTypes(funcProto, ast);
+    std.debug.print("argsList: {any}\n", .{argsList});
+    std.debug.print("funcPList: {any}\n", .{funcPList});
 
     if (argsList == null) {
         if (funcPList == null) {
             // return the return type of the function
-            return ast.getFunctionReturnTypeFromName(funcName);
+            const temp = ast.getFunctionReturnTypeFromName(funcName);
+            if(temp == null){
+                return error.NoSuchFunction;
+            }
+            return temp.?;
         }
-        utils.todo("Error on invocation type checking\n", .{});
-        return error.InvalidFunctionCall;
+        // This occurs when the function has no arguments
+        // but the function has parameters
+        return error.InvalidFunctionCallNoDefinedArguments;
     }
 
     if (funcPList == null) {
@@ -404,58 +462,429 @@ pub fn getAndCheckInvocation(ast: *Ast, invocation: Ast.Node.Kind.Invocation, fN
 
     funcPList = funcPList.?;
     argsList = argsList.?;
-    if (argsList.len != funcPList.len) {
+    if (argsList.?.len != funcPList.?.len) {
         utils.todo("Error on invocation type checking\n", .{});
         return error.InvalidFunctionCall;
     }
 
     var i: usize = 0;
-    while (i < argsList.len) {
-        const argType = argsList[i];
-        const paramType = funcPList[i];
+    while (i < argsList.?.len) {
+        const argType = argsList.?[i];
+        const paramType = funcPList.?[i];
         if (!argType.equals(paramType)) {
-            utils.todo("Error on invocation type checking\n", .{});
             return error.InvalidFunctionCall;
         }
         i += 1;
     }
 
-    return try ast.getFunctionReturnTypeFromName(funcName);
+    return ast.getFunctionReturnTypeFromName(funcName).?;
 }
 
 // Done
-pub fn getAndCheckTypeExpression(ast: *Ast, expr: Ast.Node.Kind.Expression, fName: []const u8, returnType: Ast.Type) !Ast.Type {
-    // get the type of the expression
-    const node = ast.get(expr.expr);
-    const kind = node.kind;
-    switch (kind) {
+pub fn getAndCheckTypeExpression(ast: *Ast, exprn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    switch(exprn.kind){
         .BinaryOperation => {
-            return try ast.getAndCheckBinaryOperation(ast, node, fName, returnType);
+            return try getAndCheckBinaryOperation(ast, exprn, fName, returnType);
         },
         .UnaryOperation => {
-            return try ast.getAndCheckUnaryOperation(ast, node, fName, returnType);
+            return try getAndCheckUnaryOperation(ast, exprn, fName, returnType);
         },
-        .Factor => {
-            return try ast.getAndCheckFactor(ast, kind.Factor, fName, returnType);
+        .Selector => {
+            return try getAndCheckSelector(ast, exprn, fName, returnType);
+        },
+        .Expression => {
+            const expr = exprn.kind.Expression;
+            // get the type of the expression
+            const node = ast.get(expr.expr).*;
+            const kind = node.kind;
+            switch (kind) {
+            .BinaryOperation => {
+                return try getAndCheckBinaryOperation(ast, node, fName, returnType);
+            },
+            .UnaryOperation => {
+                return try getAndCheckUnaryOperation(ast, node, fName, returnType);
+            },
+            .Selector => {
+                return try getAndCheckSelector(ast, node, fName, returnType);
+            },
+            else => {
+                utils.todo("Error on expression type checking\n", .{});
+                return error.InvalidType;
+            },
+            }
         },
         else => {
+            std.debug.print("exprn.kind: {any}\n", .{exprn.kind});
+            // print the index into the ast
             utils.todo("Error on expression type checking\n", .{});
             return error.InvalidType;
         },
     }
+
 }
 
-pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) !Ast.Type {
+// TODO: fix the errors
+pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
     const token = binaryOp.token;
-    FIXME: this is where I am working right now!
+    switch (token.kind) {
+        .Lt, .Gt, .GtEq, .DoubleEq, .NotEq => {
+            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
+            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
+            const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
+            const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
+            if (!lhsType.equals(rhsType)) {
+                return error.BinaryOperationTypeMismatch;
+            }
+            if (!lhsType.equals(Ast.Type.Int)) {
+                return error.InvalidTypeExptectedInt;
+            }
+            return Ast.Type.Bool;
+        },
+        .Or, .And => {
+            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
+            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
+            const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
+            const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
+
+            if (!lhsType.equals(rhsType)) {
+                return error.BinaryOperationTypeMismatch;
+            }
+            if (!lhsType.equals(Ast.Type.Bool)) {
+                return error.InvalidTypeExpectedBool;
+            }
+            return Ast.Type.Bool;
+        },
+        .Mul,
+        .Minus,
+        .Plus,
+        .Div,
+        => {
+            ast.printAst();
+            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
+            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
+            const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
+            const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
+            if (!lhsType.equals(rhsType)) {
+                // TODO: add error
+                return error.BinaryOperationTypeMismatch;
+            }
+            if (!lhsType.equals(Ast.Type.Int)) {
+                // TODO: add error
+                return error.InvalidTypeExptectedInt;
+            }
+            return lhsType;
+        },
+        else => {
+            std.debug.print("token.kind: {any}\n", .{token.kind});
+            utils.todo("Error on binary operation type checking\n", .{});
+            return error.InvalidType;
+        },
+    }
+    unreachable;
 }
 
+pub fn getAndCheckUnaryOperation(ast: *Ast, unaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    const token = unaryOp.token;
+    switch (token.kind) {
+        .Not => {
+            const expr = ast.get(unaryOp.kind.UnaryOperation.on).*;
+            const exprType = try getAndCheckTypeExpression(ast, expr, fName, returnType);
+            if (!exprType.equals(Ast.Type.Bool)) {
+                return error.InvalidTypeExpectedBool;
+            }
+            return exprType;
+        },
+        .Minus => {
+            const expr = ast.get(unaryOp.kind.UnaryOperation.on).*;
+            const exprType = try getAndCheckTypeExpression(ast, expr, fName, returnType);
+            if (!exprType.equals(Ast.Type.Int)) {
+                return error.InvalidTypeExptectedInt;
+            }
+            return exprType;
+        },
+        else => {
+            utils.todo("Error on unary operation type checking\n", .{});
+            return error.InvalidType;
+        },
+    }
+    unreachable;
+}
+
+pub fn getAndCheckSelector(ast: *Ast, selectorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    const selector = selectorn.kind.Selector;
+    const factorNode = ast.get(selector.factor).*;
+    const factorType = try getAndCheckFactor(ast, factorNode, fName, returnType);
+    const chainType = try SelectorChaingetType(selector.chain, ast, factorType);
+    if (chainType == null) {
+        return factorType;
+    }
+    return chainType.?;
+}
+
+pub fn getAndCheckFactor(ast: *Ast, factorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    const factor = factorn.kind.Factor;
+    const kind = factor.factor;
+    const node = ast.get(kind).*;
+    switch (node.kind) {
+        .Number => return Ast.Type.Int,
+        .True, .False => return Ast.Type.Bool,
+        .Null => return Ast.Type.Null,
+        .New => return try getAndCheckNew(ast, node),
+        .Invocation => return try getAndCheckInvocation(ast, node, fName, returnType),
+        .Expression => return try getAndCheckTypeExpression(ast, node, fName, returnType),
+        .Identifier => return try getAndCheckLocalIdentifier(ast, node, fName),
+        else => {
+            utils.todo("Error on factor type checking\n", .{});
+            return error.InvalidType;
+        },
+    }
+    unreachable;
+}
+
+pub fn getAndCheckNew(ast: *Ast, newn: Ast.Node) TypeError!Ast.Type {
+    const new = newn.kind.New;
+    const name = ast.get(new.ident).token._range.getSubStrFromStr(ast.input);
+    const structType = ast.getStructNodeFromName(name);
+    if (structType == null) {
+        utils.todo("Error on new type checking\n", .{});
+        return error.InvalidType;
+    }
+    return Ast.Type{ .Struct = name };
+}
+
+pub fn getAndCheckLocalIdentifier(ast: *Ast, localId: Ast.Node, fName: []const u8) TypeError!Ast.Type {
+    const token = localId.token;
+    const name = token._range.getSubStrFromStr(ast.input);
+    const func = ast.getFunctionFromName(fName).?.kind.Function.proto;
+    const param = ast.get(func).*.kind.FunctionProto.parameters;
+
+    const funcDecl = ast.getFunctionDeclarationTypeFromName(fName,name );
+    const funcParam = try ParamatergetParamTypeFromName(param, ast, name);
+    const globalDecl = ast.getDeclarationGlobalFromName(name);
+    const localDecl = funcParam orelse funcDecl orelse globalDecl;
+    std.debug.print("name: {s}\n", .{name});
+    if (localDecl == null) {
+        return error.InvalidType;
+    }
+    return localDecl.?;
+}
+
+pub fn SelectorChaingetType(this: ?usize, ast: *Ast, ty: Ast.Type) !?Ast.Type {
+    if (this == null) {
+        return null;
+    }
+
+    // check if type is a struct
+    if (!ty.isStruct()) {
+        utils.todo("this must be a struct, do error proper", .{});
+        return null;
+    }
+    // get the ident of the struct
+    const ident = ty.Struct;
+
+    var result: ?Ast.Type = null;
+    var tmpIdent = ident;
+    var chaini = this;
+    if (chaini == null) {
+        return ty;
+    }
+    tmpIdent = ty.Struct;
+    tmpIdent = ast.get(ast.getStructNodeFromName(tmpIdent).?.kind.TypeDeclaration.ident).token._range.getSubStrFromStr(ast.input);
+
+    var chain = ast.get(chaini.?).kind.SelectorChain;
+    while (true) {
+        const chainIdent = ast.get(chain.ident).token._range.getSubStrFromStr(ast.input);
+        const field = ast.getStructFieldType(tmpIdent, chainIdent);
+        if (field == null) {
+            // TODO: add error
+            return error.StructHasNoMember;
+        }
+        if(field.?.isStruct()){
+            tmpIdent = field.?.Struct;
+            tmpIdent = ast.get(ast.getStructNodeFromName(tmpIdent).?.kind.TypeDeclaration.ident).token._range.getSubStrFromStr(ast.input);
+        }
+        result = field;
+        if (chain.next == null) {
+            return result;
+        } else {
+            chain = ast.get(chain.next.?).kind.SelectorChain;
+        }
+    }
+
+}
+pub fn ParametergetParamTypes(this: ?usize, ast: *Ast) !?[]Ast.Type {
+    if (this == null) {
+        return null;
+    }
+    const self = ast.get(this.?).kind.Parameters;
+    if (self.firstParam == null) {
+        return null;
+    }
+    var last = self.lastParam;
+    if (last == null) {
+        last = self.firstParam.? + 1;
+    }
+    var list = std.ArrayList(Ast.Type).init(ast.allocator);
+    var iter: ?usize = self.firstParam;
+    while (iter != null) {
+        const param = ast.get(iter.?).*;
+        // find next TypedIdentifier
+        iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1,last.? + 1);
+
+        const ty = try TypedIdentifergetType(param,ast);
+        try list.append(ty);
+    }
+    const res = try list.toOwnedSlice();
+    list.deinit();
+    return res;
+}
+
+pub fn ParamatergetParamTypeFromName(this: ?usize, ast: *Ast, name: []const u8) !?Ast.Type {
+    if (this == null) {
+        return null;
+    }
+    const self = ast.get(this.?).kind.Parameters;
+    if (self.firstParam == null) {
+        return null;
+    }
+    var last = self.lastParam;
+    if (last == null) {
+        last = self.firstParam.? + 1;
+    }
+    var iter: ?usize = self.firstParam;
+    while (iter != null) {
+        const param = ast.get(iter.?).*;
+        const identNode = ast.get(param.kind.TypedIdentifier.ident);
+        const ident = identNode.token._range.getSubStrFromStr(ast.input);
+        if (std.mem.eql(u8, ident, name)) {
+            return try TypedIdentifergetType(param,ast);
+        }
+        // find next TypedIdentifier
+        iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1,last.? + 1);
+    }
+    return null;
+}
+
+pub fn TypedIdentifergetType(tid: Ast.Node, ast: *Ast) !Ast.Type {
+    const ty = ast.get(tid.kind.TypedIdentifier.type).*.kind.Type.kind;
+    const ff = ast.get(ty).*.kind;
+    _ = switch (ff) {
+        .IntType => return Ast.Type.Int,
+        .BoolType => return Ast.Type.Bool,
+        .Void => return Ast.Type.Void,
+        .StructType => {
+            const name = ast.get(ty).*.token._range.getSubStrFromStr(ast.input);
+            return Ast.Type{ .Struct = name };
+        },
+        else => {
+            utils.todo("this must be defined previously, do error proper", .{});
+        },
+    };
+    return error.InvalidType;
+}
+pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *Ast, fName: []const u8, returnType: Ast.Type) !?[]Ast.Type {
+    if (this == null) {
+        return null;
+    }
+    const self = ast.get(this.?).kind.Arguments;
+    var list = std.ArrayList(Ast.Type).init(ast.allocator);
+    const last: usize = self.lastArg orelse self.firstArg + 1;
+    var iter: ?usize = self.firstArg;
+    ast.printAst();
+    while (iter != null) {
+        const arg = ast.get(iter.?).*;
+        // find next occurence of ArgumentEnd
+        const ty = try getAndCheckTypeExpression(ast, arg, fName, returnType);
+        try list.append(ty);
+        iter = ast.findIndexWithin(.ArgumentEnd, iter.? + 1,last + 1);
+        if(iter != null){
+            iter = iter.? + 1;
+        }
+    }
+    const res = try list.toOwnedSlice();
+    list.deinit();
+    return res;
+}
+pub fn LValuegetType(this: ?usize, ast: *Ast, fName: []const u8) !?Ast.Type {
+    if (this == null) {
+        // TODO add error
+        return null;
+    }
+    const self = ast.get(this.?).kind.LValue;
+    const identNode = ast.get(self.ident);
+    const ident = identNode.token._range.getSubStrFromStr(ast.input);
+    // const g_decl = ast.getDeclarationGlobalFromName(ident);
+    const f_decl = try getAndCheckLocalIdentifier(ast, identNode.*, fName);
+    std.debug.print("name {s}\n", .{ident});
+    var decl = f_decl;
+    // if (decl == null) {
+    //     // TODO: add error
+    //     return error.InvalidAssignmentNoDeclaration;
+    // }
+
+    var result: ?Ast.Type = null;
+    var tmpIdent = ident;
+    var chaini = self.chain;
+    if (chaini == null) {
+        return decl;
+    }
+    tmpIdent = decl.Struct;
+    tmpIdent = ast.get(ast.getStructNodeFromName(tmpIdent).?.kind.TypeDeclaration.ident).token._range.getSubStrFromStr(ast.input);
+
+    var chain = ast.get(chaini.?).kind.SelectorChain;
+    while (true) {
+        const chainIdent = ast.get(chain.ident).token._range.getSubStrFromStr(ast.input);
+        const field = ast.getStructFieldType(tmpIdent, chainIdent);
+        if (field == null) {
+            // TODO: add error
+            return error.StructHasNoMember;
+        }
+        if(field.?.isStruct()){
+            tmpIdent = field.?.Struct;
+            tmpIdent = ast.get(ast.getStructNodeFromName(tmpIdent).?.kind.TypeDeclaration.ident).token._range.getSubStrFromStr(ast.input);
+        }
+        result = field;
+        if (chain.next == null) {
+            return result;
+        } else {
+            chain = ast.get(chain.next.?).kind.SelectorChain;
+        }
+    }
+}
+
+
+pub fn StatemenListgetList(this: ?usize, ast: *Ast) TypeError!?[]usize {
+    if (this == null) {
+        return null;
+    }
+    const self = ast.get(this.?).kind.StatementList;
+    var list = std.ArrayList(usize).init(ast.allocator);
+    const last = self.lastStatement orelse self.firstStatement + 1;
+    var iter: ?usize = self.firstStatement;
+    while (iter != null){
+        if(iter.? > last){
+            break;
+        }
+
+        const stmt = ast.get(iter.?).kind.Statement;
+
+        try list.append(stmt.statement);
+        iter = stmt.finalIndex;
+    }
+    const res = try list.toOwnedSlice();
+    list.deinit();
+    return res;
+}
 ///////////
 // TESTS //
 ///////////
 
+
 const ting = std.testing;
 const debugAlloc = std.heap.page_allocator;
+
+
+
 
 fn testMe(input: []const u8) !Ast {
     const tokens = try @import("lexer.zig").Lexer.tokenizeFromStr(input, debugAlloc);
@@ -533,4 +962,326 @@ test "sema.super_nested_fallthrough_fail_on_ifelse" {
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
     const result = allFunctionsHaveValidReturnPaths(&ast);
     try ting.expectError(SemaError.InvalidReturnPath, result);
+}
+
+test "sema.get_and_check_invocation" {
+    const source = "fun foo () void {} fun main() void {foo();}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("foo");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.get_and_check_invocation_with_args" {
+    const source = "fun foo (int a) void {} fun main() void {foo(1);}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("foo");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.get_and_check_invocation_with_args_fail" {
+    const source = "fun foo (int a) void {} fun main() void {foo(true);}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try ting.expectError(TypeError.InvalidFunctionCall, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema_get_and_check_invocations_with_mul_args_pass"{
+    const source = "fun foo (int a, bool b) void {} fun main() void {foo(1, true);}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("foo");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema_get_and_check_invocations_with_mul_args_fail"{
+    const source = "fun foo (int a, bool b) void {} fun main() void {foo(1, 1);}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try ting.expectError(TypeError.InvalidFunctionCall, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema_get_and_check_invocations_with_mul_args_fail2"{
+    const source = "fun foo (int a, bool b) void {} fun main() void {foo(true, true);}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try ting.expectError(TypeError.InvalidFunctionCall, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.get_and_check_invocation_with_return" {
+    const source = "fun foo () int {return 1;} fun main() void {foo();}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("foo");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.get_and_check_invocation_with_return_fail" {
+    const source = "fun foo () bool {return 1;} fun main() void {foo();}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("foo");
+    var funcLit = func.?.*;
+    try ting.expectError(TypeError.InvalidReturnType, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_assignment_int" {
+    const source = "fun main() void {int a; a = 1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_assignment_bool" {
+    const source = "fun main() void {bool a; a = true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_assignment_fail" {
+    const source = "fun main() void {int a; a = true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_assignment_fail2" {
+    const source = "fun main() void {bool a; a = 1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_struct_assignment_member" {
+    const source = "struct S {int a;}; fun main() void {struct S s; s.a = 1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_struct_assignment_member_fail" {
+    const source = "struct S {int a;}; fun main() void {struct S s; s.a = true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_struct_assignment_member_no_such_member" {
+    const source = "struct S {int a;}; fun main() void {struct S s; s.b = 1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try ting.expectError(TypeError.StructHasNoMember, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_print_int" {
+    const source = "fun main() void {print(1);}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_print_bool" {
+    const source = "fun main() void {print(true);}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.InvalidReadExptedTypeInt, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_binop_int" {
+    const source = "fun main() void {int a; a = 1 + 1 + 1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_binop_int_many" {
+    const source = "fun main() void {int a; int b; int c; a =1; b = 2; c = a + b;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+test "sema.check_binop_int_fail" {
+    const source = "fun main() void {int a; a = 1 + true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_binop_int_function_call" {
+    const source = "fun foo() int {return 1;} fun main() void {int a; a = 1 + foo();}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_binop_int_function_call_fail" {
+    const source = "fun foo() bool {return true;} fun main() void {int a; a = 1 + foo();}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_binop_all_ops" {
+    const source = "fun main() void {int a; a = 1 + 1 - 1 * 1 / 1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_binop_all_ops_and_logic" {
+    const source = "fun main() void {bool a; a = 1 + 1 - 1 * 1 / 1 > 1 && true || false;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_binop_many_ops_fail" {
+    const source = "fun main() void {int a; a = 1 + 1 - 1 * 1 / true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_unop_not" {
+    const source = "fun main() void {bool a; a = !true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_unop_not_fail" {
+    const source = "fun main() void {int a; a = !1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.InvalidTypeExpectedBool, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_unop_minus" {
+    const source = "fun main() void {int a; a = -1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_unop_minus_fail" {
+    const source = "fun main() void {bool a; a = -true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheckFunction(&ast, funcLit));
+}
+
+//FIXME: this seems so wrong lmao
+test "sema.check_unop_in_binops" {
+    const source = "fun main() void {int a; a = 1 + -1 + 1 - -1 * 1 / -1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_logical_unop_in_binops" {
+    const source = "fun main() void {bool a; a = !true && !false || !true && !false && !true || !false && !true || !false && !true && !false;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_logical_unop_in_binops_fail" {
+    const source = "fun main() void {bool a; a = !1 && !false || !true && !false && !true || !false && !true || !false && !true && !false;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.InvalidTypeExpectedBool, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_deep_struct" {
+    const source = "struct S {int a; struct S s;}; fun main() void {struct S s; s.s.s.s.s.s.a = 1;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_deep_struct_assignment_fail" {
+    const source = "struct S {int a; struct S s;}; fun main() void {struct S s; s.s.s.s.s.s.a = true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_deep_struct_assignment"{
+    const source = "struct S {int a; struct S s;}; fun main() void {struct S s; struct S b; s.s.s.s.s.s.a = 1; b.s.s.s.s.s.s.s =s;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+
+test "sema.check_mixed.mini"{
+    // load source from file
+    const source = @embedFile("mixed.mini");
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    try typeCheckFunction(&ast, funcLit);
+}
+test "sema.check_mixed_wrong_new.mini"{
+    // load source from file
+    const source = @embedFile("mixed_wrong_new.mini");
+    var ast = try testMe(source);
+    // expect error InvalidAssignmentType
+    try ting.expectError(TypeError.InvalidAssignmentType, typeCheck(&ast));
+}
+// test for InvalidFunctionCallNoDefinedArguments
+test "sema.check_invocationwithnoargsbutparams"{
+    const source = "fun foo(int a) void {} fun main() void {foo();}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error InvalidFunctionCallNoDefinedArguments
+    try ting.expectError(TypeError.InvalidFunctionCallNoDefinedArguments, typeCheckFunction(&ast, funcLit));
+}
+
+test "sema.check_binop_mul_bools" {
+    const source = "fun main() void {bool a; a = true / true;}";
+    var ast = try testMe(source);
+    var func = ast.getFunctionFromName("main");
+    var funcLit = func.?.*;
+    // expect error
+    try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheckFunction(&ast, funcLit));
 }

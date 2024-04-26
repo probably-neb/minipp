@@ -503,7 +503,7 @@ pub const Parser = struct {
         }
 
         const node = Node{
-            .kind = NodeKind{ .LocalDeclarations = .{ .firstDecl = firstDeclIndex, .lastDecl = lastDeclIndex } },
+            .kind = NodeKind{ .LocalDeclarations = .{ .firstDecl = firstDeclIndex, .lastDecl = self.ast.items.len } },
             .token = tok,
         };
         try self.set(declarationsIndex, node);
@@ -1262,6 +1262,7 @@ pub const Parser = struct {
         // Expect (Expression ("," Expression)*)?
         // Expect Expression
         const firstArgIndex = try self.parseExpression();
+        _ = try self.astAppend(.ArgumentEnd, tok);
 
         var lastArgIndex: ?usize = null;
 
@@ -1271,6 +1272,7 @@ pub const Parser = struct {
             try self.expectToken(TokenKind.Comma);
             // Expect Expression
             lastArgIndex = try self.parseExpression();
+            _ = try self.astAppend(.ArgumentEnd, tok);
         }
 
         // Expect )
@@ -1424,12 +1426,13 @@ pub const Parser = struct {
         var arena = arenaAlloc.allocator();
 
         const expr = try self.prattParseExpression(arena, 0);
+        const last = self.ast.items.len;
         log.info("\nEXTRACTED: {any}\n", .{expr});
         const treeIndex = try self.reconstructTree(expr);
 
         // NOTE: unessary?
         const node = Node{
-            .kind = NodeKind{ .Expression = .{ .expr = treeIndex } },
+            .kind = NodeKind{ .Expression = .{ .expr = treeIndex, .last = last} },
             .token = tok,
         };
         try self.set(expressionIndex, node);
@@ -1443,6 +1446,7 @@ pub const Parser = struct {
         switch (tok.kind) {
             .Not, .Minus => |uop| {
                 const bp = prefix_binding_power(uop);
+                _ = try self.consumeToken();
                 const rhs = try self.prattParseExpression(arena, bp);
                 lhs.* = Expr{ .Uop = .{
                     .op = tok,
@@ -1744,6 +1748,7 @@ pub fn main() !void {
     const tokens = try Lexer.tokenizeFromStr(source, std.heap.page_allocator);
     const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
     log.err("Parsed successfully\n", .{});
+    std.debug.print("haha penis", .{});
     try parser.prettyPrintAst();
 }
 
@@ -1976,20 +1981,22 @@ test "parseArguments" {
     try ting.expect(items[3].kind == .Factor);
     try ting.expect(items[4].kind == .New);
     try ting.expect(items[5].kind == .Identifier);
+    try ting.expect(items[6].kind == .ArgumentEnd);
 
     // 2 + 2
-    try ting.expect(items[6].kind == .Expression);
-    try ting.expect(items[7].kind == .BinaryOperation);
+    try ting.expect(items[7].kind == .Expression);
+    try ting.expect(items[8].kind == .BinaryOperation);
 
     // 2 +
-    try ting.expect(items[8].kind == .Selector);
-    try ting.expect(items[9].kind == .Factor);
-    try ting.expect(items[10].kind == .Number);
+    try ting.expect(items[9].kind == .Selector);
+    try ting.expect(items[10].kind == .Factor);
+    try ting.expect(items[11].kind == .Number);
 
     // + 2
-    try ting.expect(items[11].kind == .Selector);
-    try ting.expect(items[12].kind == .Factor);
-    try ting.expect(items[13].kind == .Number);
+    try ting.expect(items[12].kind == .Selector);
+    try ting.expect(items[13].kind == .Factor);
+    try ting.expect(items[14].kind == .Number);
+    try ting.expect(items[15].kind == .ArgumentEnd);
 }
 
 // FIXME:

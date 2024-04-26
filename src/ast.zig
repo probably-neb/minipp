@@ -34,6 +34,28 @@ pub fn mapStructs(ast: *Ast) !void {
     }
 }
 
+pub fn printAst(self: *Ast) void{
+    var i: usize = 0;
+    const nodes = self.nodes.items;
+    for (nodes) |node| {
+        const kind = node.kind;
+        const token = node.token;
+        std.debug.print("{d}: {s} {s}", .{i, @tagName(kind), token._range.getSubStrFromStr(self.input)});
+        switch (kind){
+            .BinaryOperation => {
+                const binOp = node.kind.BinaryOperation;
+                std.debug.print(" lhs: {any}", .{binOp.lhs});
+                std.debug.print(" rhs: {any}\n", .{binOp.rhs});
+
+            },
+            else => {
+                std.debug.print("\n", .{});
+            },
+        }
+        i += 1;
+    }
+}
+
 pub fn mapFunctions(ast: *Ast) !void {
     const nodes = ast.nodes.items;
     var i: usize = 0;
@@ -51,7 +73,7 @@ pub fn mapFunctions(ast: *Ast) !void {
     }
 }
 
-pub fn getFunctionFromName(ast: *Ast, name: []const u8) ?*const Node.Kind.Function {
+pub fn getFunctionFromName(ast: *Ast, name: []const u8) ?*const Node {
     const index = ast.functionMap.get(name);
     if (index) |i| {
         return ast.get(i);
@@ -89,12 +111,15 @@ pub fn getStructNodeFromName(ast: *Ast, name: []const u8) ?*const Node {
     return null;
 }
 
+
+
 pub fn getStructFieldType(ast: *Ast, structName: []const u8, fieldName: []const u8) ?Type {
     const structNode = ast.getStructNodeFromName(structName);
     if (structNode == null) {
         return null;
     }
     const decls = ast.get(structNode.?.kind.TypeDeclaration.declarations);
+    ast.printAst();
     return decls.kind.StructFieldDeclarations.getMemberType(ast, fieldName);
 }
 
@@ -211,12 +236,17 @@ pub const Node = struct {
             //Ben you will hate this :D
             fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
-                for (self.firstDecl..last) |declIndex| {
-                    const decl = ast.get(declIndex).kind.TypedIdentifier;
+                var iter: ?usize = self.firstDecl;
+                while(iter != null){
+                    if( iter.? > last){
+                        break;
+                    }
+                    const decl = ast.get(iter.?).kind.TypedIdentifier;
                     const name = decl.getName(ast);
                     if (std.mem.eql(u8, name, memberName)) {
                         return decl.getType(ast);
                     }
+                    iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1, last + 1);
                 }
                 return null;
             }
@@ -239,6 +269,7 @@ pub const Node = struct {
         /// A helper for traversing later, to constrain the search and include all
         /// nodes in the function, even if it only has one (with a nested subtree) statement
         FunctionEnd,
+        ArgumentEnd,
         /// Declaration of a function, i.e. all info related to a function
         /// except the body
         FunctionProto: FunctionProtoType,
@@ -248,26 +279,6 @@ pub const Node = struct {
             /// When null, only one parameter
             /// Pointer to `TypedIdentifier`
             lastParam: ?Ref(.TypedIdentifier) = null,
-
-            fn getParamTypes(this: ?usize, ast: *const Ast) ?[]Type {
-                if (this == null) {
-                    return null;
-                }
-                const self = ast.get(this.?).kind.Parameters;
-                if (self.firstParam == null) {
-                    return null;
-                }
-                const last = self.lastParam orelse self.firstParam + 1;
-                var list = std.ArrayList(Type).init(ast.allocator);
-                for (self.firstParam..last) |paramIndex| {
-                    const param = ast.get(paramIndex).kind.TypedIdentifier;
-                    const ty = param.getType(ast);
-                    list.append(ty);
-                }
-                const res = list.toToOwnedSlice();
-                list.deinit();
-                return res;
-            }
         },
         ReturnType: ReturnTypeType,
         FunctionBody: FunctionBodyType,
@@ -287,12 +298,18 @@ pub const Node = struct {
 
             fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
-                for (self.firstDecl..last) |declIndex| {
-                    const decl = ast.get(declIndex).kind.TypedIdentifier;
+                var iter: ?usize = self.firstDecl;
+                while(iter != null){
+                    if( iter.? > last){
+                        break;
+                    }
+                    std.debug.print("iter={d} last={d}\n", .{iter.?, last});
+                    const decl = ast.get(iter.?).kind.TypedIdentifier;
                     const name = decl.getName(ast);
                     if (std.mem.eql(u8, name, memberName)) {
                         return decl.getType(ast);
                     }
+                    iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1, last + 1);
                 }
                 return null;
             }
@@ -310,22 +327,6 @@ pub const Node = struct {
             /// Pointer to `Statement`
             /// null if only one statement
             lastStatement: ?Ref(.Statement) = null,
-
-            fn getList(this: ?usize, ast: *Ast) ?[]usize {
-                if (this == null) {
-                    return null;
-                }
-                const self = ast.get(this.?).kind.StatementList;
-                var list = std.ArrayList(usize).init(ast.allocator);
-                const last = self.lastStatement orelse self.firstStatement + 1;
-                for (self.firstStatement..last) |stmtIndex| {
-                    const stmt = ast.get(stmtIndex);
-                    list.append(stmt);
-                }
-                const res = list.toToOwnedSlice();
-                list.deinit();
-                return res;
-            }
         },
         /// Statement holds only one field, the index of the actual statement
         /// it is still usefull, however, as the possible statements are vast,
@@ -386,44 +387,6 @@ pub const Node = struct {
             /// null if no selectors
             chain: ?Ref(.SelectorChain) = null,
             // TODO: for adding the int_array access this will need to be changed
-            fn getType(this: ?usize, ast: *const Ast, fName: []const u8) ?Type {
-                if (this == null) {
-                    return null;
-                }
-                const self = ast.get(this.?).kind.LValue;
-                const identNode = ast.get(self.ident);
-                const ident = identNode.token._range.getSubStrFromStr(ast.input);
-                const g_decl = ast.getDeclarationGlobalFromName(ident);
-                const f_decl = ast.getFunctionDeclarationTypeFromName(fName, ident);
-                var decl = f_decl orelse g_decl;
-                if (decl == null) {
-                    utils.todo("this must be defined previously, do error proper", .{});
-                }
-                var result: ?Type = null;
-                var tmpIdent = ident;
-                var chain = self.chain;
-                if (chain == null) {
-                    return decl;
-                }
-                chain = ast.get(chain.?).kind.SelectorChain;
-                while (true) {
-                    if (chain == null) {
-                        return result;
-                    } else {
-                        chain = ast.get(chain.?).kind.SelectorChain;
-                    }
-                    // find the struct
-                    const structNode = ast.getStructNodeFromName(tmpIdent);
-                    const chainIdent = ast.get(chain.ident).token._range.getSubStrFromStr(ast.input);
-                    const field = ast.getStructFieldType(structNode, chainIdent);
-                    if (field == null) {
-                        utils.todo("No member found for struct , do error proper\n", .{});
-                    }
-                    tmpIdent = chainIdent;
-                    result = field;
-                    chain = chain.next;
-                }
-            }
         },
         Expression: ExpressionType,
         BinaryOperation: struct {
@@ -473,23 +436,6 @@ pub const Node = struct {
             /// Pointer to `Expression`
             /// null if only one argument
             lastArg: ?Ref(.Expression) = null,
-
-            fn getArgumentTypes(this: ?usize, ast: *const Ast) ?[]Type {
-                if (this == null) {
-                    return null;
-                }
-                const self = ast.get(this.?).kind.Arguments;
-                var list = std.ArrayList(Type).init(ast.allocator);
-                const last = self.lastArg orelse self.firstArg + 1;
-                for (self.firstArg..last) |argIndex| {
-                    const arg = ast.get(argIndex).kind.Expression;
-                    const ty = arg.getType(ast);
-                    list.append(ty);
-                }
-                const res = list.toToOwnedSlice();
-                list.deinit();
-                return res;
-            }
         },
         /// A number literal, token points to value
         Number,
@@ -536,7 +482,7 @@ pub const Node = struct {
             }
 
             pub fn getBody(self: *const Self, ast: *const Ast) FunctionBodyType {
-                return ast.get(self.body).kind.FunctionBody;
+                return ast.get(self.body).*.kind.FunctionBody;
             }
         };
 
@@ -778,26 +724,11 @@ pub const Node = struct {
             expr: RefOneOf(.{
                 .BinaryOperation,
                 .UnaryOperation,
-                .Factor,
+                .Selector,
             }),
+            last: usize,
 
             const Self = @This();
-
-            pub fn getType(self: Self, ast: *const Ast) Type {
-                // FIXME: BORQED
-                const factor = ast.get(self.expr).kind.Factor;
-                const factorKind = ast.get(factor.factor).kind;
-                switch (factorKind) {
-                    .Number => return .Int,
-                    .True => return .Bool,
-                    .False => return .Bool,
-                    .New => return .{ .Struct = "TODO" },
-                    .Null => return .Null,
-                    .Identifier => {
-                        utils.todo("implement name resolution", .{});
-                    },
-                }
-            }
         };
 
         pub const ConditionalIfType = struct {
@@ -856,6 +787,13 @@ pub const Type = union(enum) {
 
     const Self = @This();
 
+    pub fn isStruct(self: Self) bool {
+        return @intFromEnum(self) == @intFromEnum(Type.Struct);
+    }
+
+    pub fn equalsNoCont(self: Self, other: Self) bool {
+        return @intFromEnum(self) == @intFromEnum(other);
+    }
     pub fn equals(self: Self, other: Self) bool {
         const tmp = @intFromEnum(self) ^ @intFromEnum(other);
         // if struct
@@ -866,6 +804,10 @@ pub const Type = union(enum) {
         return tmp == 0;
     }
 };
+
+pub fn generateTypeInt() Type {
+    return .Int;
+}
 
 // Required for the `Ref` to work because if we use
 // @typeInfo to extract the Union, zig complains (reasonably)
@@ -891,6 +833,7 @@ const KindTagDupe = enum {
     Functions,
     Function,
     FunctionEnd,
+    ArgumentEnd,
     FunctionProto,
     Parameters,
     ReturnType,
@@ -1104,7 +1047,7 @@ test "ast.getFunctionFromName" {
     errdefer log.print();
     const input = "fun main() void{}";
     var ast = try testMe(input);
-    const node = ast.getFunctionFromName("main");
+    var node = ast.getFunctionFromName("main");
     try ting.expect(node != null);
     const func = node.?.kind.Function;
     const proto = ast.get(func.proto);
