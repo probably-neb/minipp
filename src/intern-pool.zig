@@ -12,7 +12,7 @@ pub const StrID = u32;
 
 pub const InternPool = @This();
 
-pub const Error = error{StringNotPresent};
+pub const Error = error{ StringNotPresent, OutOfMemory };
 
 pub fn init(allocator: std.mem.Allocator) InternPool {
     return InternPool{
@@ -37,7 +37,7 @@ fn addInner(self: *InternPool, str: []const u8) std.mem.Allocator.Error!StrID {
     return index;
 }
 
-pub fn add(self: *InternPool, str: []const u8) std.mem.Allocator.Error!StrID {
+pub fn intern(self: *InternPool, str: []const u8) std.mem.Allocator.Error!StrID {
     // This is not arbitrary I swear.
     // Why on gods green earth would you desire this capability
     utils.assert(str.len > 0, "Can't intern an empty string", .{});
@@ -70,19 +70,19 @@ const testAlloc = std.heap.page_allocator;
 
 test "intern.multiple_interns_ignored" {
     var pool = init(testAlloc);
-    const i = try pool.add("foo");
-    try ting.expectEqual(i, try pool.add("foo"));
-    try ting.expectEqual(i, try pool.add("foo"));
+    const i = try pool.intern("foo");
+    try ting.expectEqual(i, try pool.intern("foo"));
+    try ting.expectEqual(i, try pool.intern("foo"));
 }
 
 test "intern.get" {
     var pool = init(testAlloc);
-    const i = try pool.add("foo");
+    const i = try pool.intern("foo");
     try ting.expectEqualStrings("foo", try pool.get(i));
 }
 
 test "intern.get_fake_id_is_err" {
     var pool = init(testAlloc);
-    const i = try pool.add("foo");
+    const i = try pool.intern("foo");
     try ting.expectError(error.StringNotPresent, pool.get(i + 1));
 }
