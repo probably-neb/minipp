@@ -4,6 +4,82 @@ pub const std = @import("std");
 
 pub const LLVM = @This();
 
+pub const IR = struct {
+    /// fuck...
+    types: TypeList,
+    globals: std.mem.ArrayList(Ref),
+    funcs: std.mem.ArrayList(Function),
+
+    pub fn init(alloc: std.mem.Allocator) IR {
+        return .{
+            .types = TypeList.init(alloc),
+            .globals = InstructionList.init(alloc),
+            .funcs = FunctionList.init(alloc),
+        };
+    }
+};
+
+pub const Function = struct {
+    bbs: std.mem.ArrayList(BasicBlock),
+
+    pub fn init(alloc: std.mem.Allocator) Function {
+        return .{
+            .bbs = std.mem.ArrayList(BasicBlock).init(alloc),
+        };
+    }
+};
+
+pub const FunctionList = struct {
+    items: List,
+    pub const List = std.mem.ArrayList(Function);
+
+    pub fn init(alloc: std.mem.Allocator) FunctionList {
+        return .{ .items = List.init(alloc) };
+    }
+};
+
+pub const BasicBlock = struct {
+    insts: InstructionList,
+    incomers: std.mem.ArrayList(Label),
+    outgoers: [2]?Label,
+
+    pub fn init(alloc: std.mem.Allocator) BasicBlock {
+        return .{
+            .insts = InstructionList.init(alloc),
+            .incomers = std.mem.ArrayList(Label).init(alloc),
+            .outgoers = [2]?Label{ null, null },
+        };
+    }
+};
+
+/// Literally just a list of types
+/// Abstracted so we can change it as needed and define helpers
+pub const TypeList = struct {
+    items: Map,
+
+    pub const Map = std.AutoArrayHashMap(u32, Type);
+
+    pub fn init(alloc: std.mem.Allocator) TypeList {
+        return .{ .items = Map.init(alloc) };
+    }
+
+    // TODO: !!!
+};
+
+/// Literally just a list of types... for now... bwahahaha
+/// Abstracted so we can change it as needed and define helpers
+pub const InstructionList = struct {
+    items: List,
+
+    pub const List = std.ArrayList(Inst);
+
+    pub fn init(alloc: std.mem.Allocator) InstructionList {
+        return .{ .insts = List.init(alloc) };
+    }
+
+    // TODO: !!!
+};
+
 /// This is for LLVM 3.4.2 (with some differences for newer versions noted inline). The full
 /// manual is linked from the course website. There are often multiple variants of each of the
 /// following instructions; I list here only what I used (a sampling of what is available).
@@ -162,6 +238,19 @@ pub const Inst = struct {
                 .rhs = inst.op2,
             };
         }
+
+        pub fn toInst(inst: Binop) Inst {
+            // NOTE: written by copilot - must be double checked
+            switch (inst.op) {
+                .Add => return Inst.add(inst.register, inst.lhs, inst.rhs),
+                .Mul => return Inst.mul(inst.register, inst.lhs, inst.rhs),
+                .Div => return Inst.div(inst.register, inst.lhs, inst.rhs),
+                .Sub => return Inst.sub(inst.register, inst.lhs, inst.rhs),
+                .And => return Inst.and_(inst.register, inst.lhs, inst.rhs),
+                .Or => return Inst.or_(inst.register, inst.lhs, inst.rhs),
+                .Xor => return Inst.xor(inst.register, inst.lhs, inst.rhs),
+            }
+        }
     };
     /// `<result> = add <ty> <op1>, <op2>`
     pub fn add(res: Ref, lhs: Ref, rhs: Ref) Inst {
@@ -206,10 +295,14 @@ pub const Inst = struct {
                 .rhs = inst.op2,
             };
         }
+
+        pub fn toInst(inst: Cmp) Inst {
+            return Inst.cmp(inst.res, inst.cond, inst.lhs, inst.rhs);
+        }
     };
     // Comparison and Branching
-    /// <result> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
-    pub fn icmp(res: Ref, cond: Op.Cond, lhs: Ref, rhs: Ref) Inst {
+    /// <recmp> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
+    pub fn cmp(res: Ref, cond: Op.Cond, lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Cmp, .res = res, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .cond = cond } };
     }
 
@@ -224,6 +317,10 @@ pub const Inst = struct {
                 .iffalse = inst.op2,
             };
         }
+
+        pub fn toInst(inst: Br) Inst {
+            return Inst.br(inst.on, inst.iftrue, inst.iffalse);
+        }
     };
     /// br i1 <cond>, label <iftrue>, label <iffalse>
     pub fn br(cond: Ref, iftrue: Ref, iffalse: Ref) Inst {
@@ -234,6 +331,9 @@ pub const Inst = struct {
         dest: Ref,
         pub fn get(inst: Inst) Jmp {
             return .{ .dest = inst.op1 };
+        }
+        pub fn toInst(inst: Jmp) Inst {
+            return Inst.jmp(inst.dest);
         }
     };
     /// `br label <dest>`
@@ -254,6 +354,9 @@ pub const Inst = struct {
                 .ty = inst.ty1,
                 .ptr = inst.op1,
             };
+        }
+        pub fn toInst(inst: Load) Inst {
+            return Inst.load(inst.res, inst.ty, inst.ptr);
         }
     };
     // Loads & Stores
@@ -277,6 +380,10 @@ pub const Inst = struct {
                 .from = inst.op2,
             };
         }
+
+        pub fn toInst(inst: Store) Inst {
+            return Inst.store(inst.ty, inst.to, inst.fromType, inst.from);
+        }
     };
     /// `store <ty> value, <ty>* <pointer>`
     pub fn store(ty: Type, to: Ref, fromType: Type, from: Ref) Inst {
@@ -297,6 +404,10 @@ pub const Inst = struct {
                 .ptrVal = inst.op1,
                 .index = inst.op2,
             };
+        }
+
+        pub fn toInst(inst: Gep) Inst {
+            return Inst.gep(inst.res, inst.resTy, inst.ptrTy, inst.ptrVal, inst.index);
         }
     };
     /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
@@ -319,6 +430,9 @@ pub const Inst = struct {
                 .args = inst.extra.args,
             };
         }
+        pub fn toInst(inst: Call) Inst {
+            return Inst.call(inst.res, inst.retTy, inst.fun, inst.args);
+        }
     };
     // Invocation
     /// `<result> = call <ty> <fnptrval>(<args>)`
@@ -336,6 +450,9 @@ pub const Inst = struct {
                 .ty = inst.ty1,
                 .val = inst.op1,
             };
+        }
+        pub fn toInst(inst: Ret) Inst {
+            return Inst.ret(inst.ty, inst.val);
         }
     };
     /// `ret void`
@@ -355,6 +472,9 @@ pub const Inst = struct {
                 .res = inst.res,
                 .ty = inst.ty1,
             };
+        }
+        pub fn toInst(inst: Alloc) Inst {
+            return Inst.alloc(inst.res, inst.ty);
         }
     };
     // Allocation
@@ -386,6 +506,13 @@ pub const Inst = struct {
                 .toType = inst.ty2,
             };
         }
+        pub fn toInst(inst: Misc) Inst {
+            switch (inst.kind) {
+                .bitcast => Inst.bitcast(inst.res, inst.fromType, inst.from, inst.toType),
+                .trunc => Inst.trunc(inst.res, inst.fromType, inst.from, inst.toType),
+                .zext => Inst.zext(inst.res, inst.fromType, inst.from, inst.toType),
+            }
+        }
     };
     // Miscellaneous
     /// `<result> = bitcast <ty> <value> to <ty2> ; cast type`
@@ -409,6 +536,9 @@ pub const Inst = struct {
             return .{
                 .entries = inst.extra.phi,
             };
+        }
+        pub fn toInst(inst: Phi) Inst {
+            return Inst.phi(inst.res, inst.type, inst.entries);
         }
     };
     /// `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
