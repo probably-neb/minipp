@@ -7,6 +7,7 @@ const Self = @This();
 const std = @import("std");
 
 const Level = enum {
+    Trace,
     Info,
     Err,
     Warn,
@@ -31,6 +32,10 @@ fn logInner(level: Level, comptime msg: []const u8, vars: anytype) void {
         return;
     };
 }
+
+pub fn trace(comptime msg: []const u8, vars: anytype) void {
+    logInner(Level.Trace, msg, vars);
+}
 /// Log a message with the `info` level. Fails silently if the message can't be formatted.
 pub fn info(comptime msg: []const u8, vars: anytype) void {
     logInner(Level.Info, msg, vars);
@@ -51,6 +56,7 @@ pub fn print() void {
             .Info => std.log.info("{s}", .{msg.msg}),
             .Err => std.log.err("{s}", .{msg.msg}),
             .Warn => std.log.warn("{s}", .{msg.msg}),
+            .Trace => std.log.debug("{s}", .{msg.msg}),
         }
     }
 }
