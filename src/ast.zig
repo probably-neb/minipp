@@ -478,8 +478,7 @@ pub const Node = struct {
 
             pub fn getName(self: *const Self, ast: *const Ast) []const u8 {
                 const protoNode = ast.get(self.proto);
-                const nameNode = ast.get(protoNode.kind.FunctionProto.name);
-                const name = nameNode.token._range.getSubStrFromStr(ast.input);
+                const name = ast.getIdentValue(protoNode.kind.FunctionProto.name);
                 return name;
             }
 
@@ -719,11 +718,8 @@ pub const Node = struct {
                     else => unreachable,
                 }
             }
-            pub fn getName(self: Self, ast: *Ast) []const u8 {
-                const idNode = ast.get(self.ident);
-                const token = idNode.token;
-                const name = token._range.getSubStrFromStr(ast.input);
-                return name;
+            pub fn getName(self: Self, ast: *const Ast) []const u8 {
+                return ast.getIdentValue(self.ident);
             }
         };
         pub const ExpressionType = struct {
@@ -958,6 +954,14 @@ pub fn findIndexWithin(ast: *const Ast, nodeKind: NodeKindTag, start: usize, end
 
 pub fn get(ast: *const Ast, i: usize) *const Node {
     return &ast.nodes.items[i];
+}
+
+pub fn getIdentValue(ast: *const Ast, identIndex: usize) []const u8 {
+    const idNode = ast.get(identIndex);
+    utils.assert(cmpNodeKindAndTag(idNode.*, .Identifier), "expected Identifier, got {s}", .{@tagName(idNode.kind)});
+    const token = idNode.token;
+    const name = token._range.getSubStrFromStr(ast.input);
+    return name;
 }
 
 pub const FuncIter = struct {
