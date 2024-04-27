@@ -98,7 +98,6 @@ fn allReturnPathsHaveReturnType(ast: *const Ast, func: Ast.Node.Kind.FunctionTyp
 }
 
 fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
-    // TODO:
     // decend the tree if we hit a conditional call a function that checks if the conditional
     // has a return statement, if both sides return then we are good.
     // otherwise continue decending for a fall through.
@@ -208,8 +207,8 @@ pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
     const returnType = fc.getReturnType(ast).?;
     const fBody = ast.get(fc.body).*;
     const fstatementsIndex = fBody.kind.FunctionBody.statements;
-    if(fstatementsIndex == null){
-        std.debug.print("wahoo \n",.{});
+    if (fstatementsIndex == null) {
+        std.debug.print("wahoo \n", .{});
     }
     if (fstatementsIndex == null) {
         return;
@@ -217,7 +216,7 @@ pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
     // ensure that there are no local declarations with the same name as the parameters
     // get the parameters
     const fProto = ast.get(fc.proto).*.kind.FunctionProto.parameters;
-    if (fProto != null) {
+    if (fProto == null) {
         const paraMNodes = ast.get(fProto.?).*.kind.Parameters;
         const last = paraMNodes.lastParam orelse paraMNodes.firstParam.? + 1;
         var paramNames = std.StringHashMap(bool).init(ast.allocator);
@@ -234,7 +233,7 @@ pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
                 return error.FunctionParametersMustNotBeShadowed;
             }
             try paramNames.put(ident, true);
-            iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1, last + 1);
+            iter = ast.findIndexWithin(.TypedIdentifier, iter.? + 1, last + 1);
         }
         paramNames.deinit();
         // for each of the parameters check that there is no local declaration with the same name
@@ -260,18 +259,42 @@ pub fn typeCheckStatementList(ast: *Ast, statementListn: ?usize, fName: []const 
 pub fn typeCheckStatement(ast: *Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     const kind = statement.kind;
     _ = switch (kind) {
-    .Block => { try typeCheckBlock(ast, statement, fName, returnType); return; },
-    .Assignment => { try typeCheckAssignment(ast, statement, fName, returnType); return; },
-    .Print => { try typeCheckPrint(ast, statement, fName, returnType); return; },
-    .ConditionalIf => { try typeCheckConditional(ast, statement, fName, returnType); return; },
-    .While => { try typeCheckWhile(ast, statement, fName, returnType); return; },
-    .Delete => { try typeCheckDelete(ast, statement, fName, returnType); return; },
-    .Return => { try typeCheckReturn(ast, statement, fName, returnType); return; },
-    .Invocation => { _ = try getAndCheckInvocation(ast, statement, fName, returnType); return; },
-    else => {
-        utils.todo("Error on statement type checking\n", .{});
-        return error.InvalidType;
-    },
+        .Block => {
+            try typeCheckBlock(ast, statement, fName, returnType);
+            return;
+        },
+        .Assignment => {
+            try typeCheckAssignment(ast, statement, fName, returnType);
+            return;
+        },
+        .Print => {
+            try typeCheckPrint(ast, statement, fName, returnType);
+            return;
+        },
+        .ConditionalIf => {
+            try typeCheckConditional(ast, statement, fName, returnType);
+            return;
+        },
+        .While => {
+            try typeCheckWhile(ast, statement, fName, returnType);
+            return;
+        },
+        .Delete => {
+            try typeCheckDelete(ast, statement, fName, returnType);
+            return;
+        },
+        .Return => {
+            try typeCheckReturn(ast, statement, fName, returnType);
+            return;
+        },
+        .Invocation => {
+            _ = try getAndCheckInvocation(ast, statement, fName, returnType);
+            return;
+        },
+        else => {
+            utils.todo("Error on statement type checking\n", .{});
+            return error.InvalidType;
+        },
     };
     return error.InvalidType;
 }
@@ -320,7 +343,7 @@ pub fn typeCheckAssignment(ast: *Ast, assignmentn: Ast.Node, fName: []const u8, 
     // right hand side is an expression
     const rightExpr = ast.get(right.?).*;
     const rightType = try getAndCheckTypeExpression(ast, rightExpr, fName, returnType);
-    if(rightType.isStruct()){
+    if (rightType.isStruct()) {
         std.debug.print("rightType: {s}\n", .{rightType.Struct});
         std.debug.print("leftType: {s}\n", .{leftType.?.Struct});
     }
@@ -445,7 +468,7 @@ pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8
         if (funcPList == null) {
             // return the return type of the function
             const temp = ast.getFunctionReturnTypeFromName(funcName);
-            if(temp == null){
+            if (temp == null) {
                 return error.NoSuchFunction;
             }
             return temp.?;
@@ -482,7 +505,7 @@ pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8
 
 // Done
 pub fn getAndCheckTypeExpression(ast: *Ast, exprn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
-    switch(exprn.kind){
+    switch (exprn.kind) {
         .BinaryOperation => {
             return try getAndCheckBinaryOperation(ast, exprn, fName, returnType);
         },
@@ -498,19 +521,19 @@ pub fn getAndCheckTypeExpression(ast: *Ast, exprn: Ast.Node, fName: []const u8, 
             const node = ast.get(expr.expr).*;
             const kind = node.kind;
             switch (kind) {
-            .BinaryOperation => {
-                return try getAndCheckBinaryOperation(ast, node, fName, returnType);
-            },
-            .UnaryOperation => {
-                return try getAndCheckUnaryOperation(ast, node, fName, returnType);
-            },
-            .Selector => {
-                return try getAndCheckSelector(ast, node, fName, returnType);
-            },
-            else => {
-                utils.todo("Error on expression type checking\n", .{});
-                return error.InvalidType;
-            },
+                .BinaryOperation => {
+                    return try getAndCheckBinaryOperation(ast, node, fName, returnType);
+                },
+                .UnaryOperation => {
+                    return try getAndCheckUnaryOperation(ast, node, fName, returnType);
+                },
+                .Selector => {
+                    return try getAndCheckSelector(ast, node, fName, returnType);
+                },
+                else => {
+                    utils.todo("Error on expression type checking\n", .{});
+                    return error.InvalidType;
+                },
             }
         },
         else => {
@@ -520,7 +543,6 @@ pub fn getAndCheckTypeExpression(ast: *Ast, exprn: Ast.Node, fName: []const u8, 
             return error.InvalidType;
         },
     }
-
 }
 
 // TODO: fix the errors
@@ -658,7 +680,7 @@ pub fn getAndCheckLocalIdentifier(ast: *Ast, localId: Ast.Node, fName: []const u
     const func = ast.getFunctionFromName(fName).?.kind.Function.proto;
     const param = ast.get(func).*.kind.FunctionProto.parameters;
 
-    const funcDecl = ast.getFunctionDeclarationTypeFromName(fName,name );
+    const funcDecl = ast.getFunctionDeclarationTypeFromName(fName, name);
     const funcParam = try ParamatergetParamTypeFromName(param, ast, name);
     const globalDecl = ast.getDeclarationGlobalFromName(name);
     const localDecl = funcParam orelse funcDecl orelse globalDecl;
@@ -676,6 +698,7 @@ pub fn SelectorChaingetType(this: ?usize, ast: *Ast, ty: Ast.Type) !?Ast.Type {
 
     // check if type is a struct
     if (!ty.isStruct()) {
+        // Dylan this is not what `utils.todo` is for
         utils.todo("this must be a struct, do error proper", .{});
         return null;
     }
@@ -699,7 +722,7 @@ pub fn SelectorChaingetType(this: ?usize, ast: *Ast, ty: Ast.Type) !?Ast.Type {
             // TODO: add error
             return error.StructHasNoMember;
         }
-        if(field.?.isStruct()){
+        if (field.?.isStruct()) {
             tmpIdent = field.?.Struct;
             tmpIdent = ast.get(ast.getStructNodeFromName(tmpIdent).?.kind.TypeDeclaration.ident).token._range.getSubStrFromStr(ast.input);
         }
@@ -710,7 +733,6 @@ pub fn SelectorChaingetType(this: ?usize, ast: *Ast, ty: Ast.Type) !?Ast.Type {
             chain = ast.get(chain.next.?).kind.SelectorChain;
         }
     }
-
 }
 pub fn ParametergetParamTypes(this: ?usize, ast: *Ast) !?[]Ast.Type {
     if (this == null) {
@@ -729,9 +751,9 @@ pub fn ParametergetParamTypes(this: ?usize, ast: *Ast) !?[]Ast.Type {
     while (iter != null) {
         const param = ast.get(iter.?).*;
         // find next TypedIdentifier
-        iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1,last.? + 1);
+        iter = ast.findIndexWithin(.TypedIdentifier, iter.? + 1, last.? + 1);
 
-        const ty = try TypedIdentifergetType(param,ast);
+        const ty = try TypedIdentifergetType(param, ast);
         try list.append(ty);
     }
     const res = try list.toOwnedSlice();
@@ -757,10 +779,10 @@ pub fn ParamatergetParamTypeFromName(this: ?usize, ast: *Ast, name: []const u8) 
         const identNode = ast.get(param.kind.TypedIdentifier.ident);
         const ident = identNode.token._range.getSubStrFromStr(ast.input);
         if (std.mem.eql(u8, ident, name)) {
-            return try TypedIdentifergetType(param,ast);
+            return try TypedIdentifergetType(param, ast);
         }
         // find next TypedIdentifier
-        iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1,last.? + 1);
+        iter = ast.findIndexWithin(.TypedIdentifier, iter.? + 1, last.? + 1);
     }
     return null;
 }
@@ -796,8 +818,8 @@ pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *Ast, fName: []const u8, ret
         // find next occurence of ArgumentEnd
         const ty = try getAndCheckTypeExpression(ast, arg, fName, returnType);
         try list.append(ty);
-        iter = ast.findIndexWithin(.ArgumentEnd, iter.? + 1,last + 1);
-        if(iter != null){
+        iter = ast.findIndexWithin(.ArgumentEnd, iter.? + 1, last + 1);
+        if (iter != null) {
             iter = iter.? + 1;
         }
     }
@@ -839,7 +861,7 @@ pub fn LValuegetType(this: ?usize, ast: *Ast, fName: []const u8) !?Ast.Type {
             // TODO: add error
             return error.StructHasNoMember;
         }
-        if(field.?.isStruct()){
+        if (field.?.isStruct()) {
             tmpIdent = field.?.Struct;
             tmpIdent = ast.get(ast.getStructNodeFromName(tmpIdent).?.kind.TypeDeclaration.ident).token._range.getSubStrFromStr(ast.input);
         }
@@ -852,7 +874,6 @@ pub fn LValuegetType(this: ?usize, ast: *Ast, fName: []const u8) !?Ast.Type {
     }
 }
 
-
 pub fn StatemenListgetList(this: ?usize, ast: *Ast) TypeError!?[]usize {
     if (this == null) {
         return null;
@@ -861,8 +882,8 @@ pub fn StatemenListgetList(this: ?usize, ast: *Ast) TypeError!?[]usize {
     var list = std.ArrayList(usize).init(ast.allocator);
     const last = self.lastStatement orelse self.firstStatement + 1;
     var iter: ?usize = self.firstStatement;
-    while (iter != null){
-        if(iter.? > last){
+    while (iter != null) {
+        if (iter.? > last) {
             break;
         }
 
@@ -879,12 +900,8 @@ pub fn StatemenListgetList(this: ?usize, ast: *Ast) TypeError!?[]usize {
 // TESTS //
 ///////////
 
-
 const ting = std.testing;
 const debugAlloc = std.heap.page_allocator;
-
-
-
 
 fn testMe(input: []const u8) !Ast {
     const tokens = try @import("lexer.zig").Lexer.tokenizeFromStr(input, debugAlloc);
@@ -988,7 +1005,7 @@ test "sema.get_and_check_invocation_with_args_fail" {
     try ting.expectError(TypeError.InvalidFunctionCall, typeCheckFunction(&ast, funcLit));
 }
 
-test "sema_get_and_check_invocations_with_mul_args_pass"{
+test "sema_get_and_check_invocations_with_mul_args_pass" {
     const source = "fun foo (int a, bool b) void {} fun main() void {foo(1, true);}";
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("foo");
@@ -996,7 +1013,7 @@ test "sema_get_and_check_invocations_with_mul_args_pass"{
     try typeCheckFunction(&ast, funcLit);
 }
 
-test "sema_get_and_check_invocations_with_mul_args_fail"{
+test "sema_get_and_check_invocations_with_mul_args_fail" {
     const source = "fun foo (int a, bool b) void {} fun main() void {foo(1, 1);}";
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
@@ -1004,7 +1021,7 @@ test "sema_get_and_check_invocations_with_mul_args_fail"{
     try ting.expectError(TypeError.InvalidFunctionCall, typeCheckFunction(&ast, funcLit));
 }
 
-test "sema_get_and_check_invocations_with_mul_args_fail2"{
+test "sema_get_and_check_invocations_with_mul_args_fail2" {
     const source = "fun foo (int a, bool b) void {} fun main() void {foo(true, true);}";
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
@@ -1244,7 +1261,7 @@ test "sema.check_deep_struct_assignment_fail" {
     try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
 }
 
-test "sema.check_deep_struct_assignment"{
+test "sema.check_deep_struct_assignment" {
     const source = "struct S {int a; struct S s;}; fun main() void {struct S s; struct S b; s.s.s.s.s.s.a = 1; b.s.s.s.s.s.s.s =s;}";
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
@@ -1252,7 +1269,7 @@ test "sema.check_deep_struct_assignment"{
     try typeCheckFunction(&ast, funcLit);
 }
 
-test "sema.check_mixed.mini"{
+test "sema.check_mixed.mini" {
     // load source from file
     const source = @embedFile("mixed.mini");
     var ast = try testMe(source);
@@ -1260,7 +1277,7 @@ test "sema.check_mixed.mini"{
     var funcLit = func.?.*;
     try typeCheckFunction(&ast, funcLit);
 }
-test "sema.check_mixed_wrong_new.mini"{
+test "sema.check_mixed_wrong_new.mini" {
     // load source from file
     const source = @embedFile("mixed_wrong_new.mini");
     var ast = try testMe(source);
@@ -1268,7 +1285,7 @@ test "sema.check_mixed_wrong_new.mini"{
     try ting.expectError(TypeError.InvalidAssignmentType, typeCheck(&ast));
 }
 // test for InvalidFunctionCallNoDefinedArguments
-test "sema.check_invocationwithnoargsbutparams"{
+test "sema.check_invocationwithnoargsbutparams" {
     const source = "fun foo(int a) void {} fun main() void {foo();}";
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
