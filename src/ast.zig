@@ -982,6 +982,55 @@ pub const FuncIter = struct {
     }
 };
 
+/// A generic iterator over nodes of a specific kind
+/// designed to be wrapped in `*Type` struct helper function
+/// that finds first, last
+pub fn NodeIter(comptime tag: NodeKindTag) type {
+    return struct {
+        ast: *const Ast,
+        i: usize,
+        first: usize,
+        last: usize,
+
+        const Self = @This();
+
+        fn init(ast: *const Ast, first: usize, last: ?usize) Self {
+            const firstIndex = first;
+            const lastIndex = last orelse first;
+            return Self{ .ast = ast, .first = firstIndex, .i = firstIndex, .last = lastIndex };
+        }
+
+        pub fn next(self: *Self) ?Node {
+            if (self.i > self.last) {
+                return null;
+            }
+            // PERF: use a hashmap to store the indexes of the functions
+            const nodeIndex = self.ast.findIndex(tag, self.i);
+            if (nodeIndex) |i| {
+                self.i = i + 1;
+                const n = self.ast.nodes.items[i];
+                return n;
+            }
+            self.i = self.last + 1;
+            return null;
+        }
+
+        // WARN: somewhat expensive. Iterates over all entries
+        pub fn calculateLen(self: Self) usize {
+            // create a copy of the iterator with the initial state
+            // (i == first) so we do not mutate the original iterator
+            var copy = Self{ .ast = self.ast, .i = self.first, .first = self.first, .last = self.last };
+            var length: usize = 0;
+            // the |_| is needed so zig realizes I want them to go until
+            // next is null, otherwise get `expected bool` compile error
+            while (copy.next()) |_| : (length += 1) {
+                // do nothing
+            }
+            return length;
+        }
+    };
+}
+
 pub fn iterFuncs(ast: *const Ast) FuncIter {
     return FuncIter.new(ast);
 }
