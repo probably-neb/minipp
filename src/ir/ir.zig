@@ -2,36 +2,73 @@
 
 pub const std = @import("std");
 
-pub const LLVM = @This();
+const Ast = @import("../ast.zig");
+const utils = @import("../utils.zig");
 
-pub const IR = struct {
-    /// fuck...
-    types: TypeList,
-    globals: std.mem.ArrayList(Ref),
-    funcs: std.mem.ArrayList(Function),
+const InternPool = @import("../intern-pool.zig");
+/// The ID of a string stored in the intern pool
+/// Henceforth, all operations involving variable or struct names
+/// shall utilize the power of this type, rather than `std.mem.eql(u8, a, b);`
+const StrID = InternPool.StrID;
 
-    pub fn init(alloc: std.mem.Allocator) IR {
-        return .{
-            .types = TypeList.init(alloc),
-            .globals = InstructionList.init(alloc),
-            .funcs = FunctionList.init(alloc),
-        };
-    }
-};
+pub const IR = @This();
+
+types: TypeList,
+globals: InstructionList,
+funcs: FunctionList,
+intern_pool: InternPool,
+alloc: std.mem.Allocator,
+
+pub fn init(alloc: std.mem.Allocator) IR {
+    return .{
+        .types = TypeList.init(alloc),
+        .globals = InstructionList.init(alloc),
+        .funcs = FunctionList.init(alloc),
+        .intern_pool = InternPool.init(alloc),
+        .alloc = alloc,
+    };
+}
+
+pub fn internIdent(self: *IR, ident: []const u8) StrID {
+    return self.intern_pool.intern(ident) catch |err| {
+        // The only way this can fail is if the intern pool is out of memory
+        // I'm not typing try all over the place just so it bubbles up further
+        // Im sawy mistew kewwey
+        std.debug.panic("Failed to intern ident: {any}\n", .{err});
+    };
+}
+
+pub fn internIdentNodeAt(self: *IR, ast: *const Ast, identIdx: usize) StrID {
+    const str = ast.getIdentValue(identIdx);
+    return self.internIdent(str);
+}
+
+pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
+    return switch (astType) {
+        .Int => .int,
+        .Bool => .bool,
+        .Void => .void,
+        .Null => .null,
+        .Struct => |name| blk: {
+            const structID = self.internIdent(name);
+            break :blk .{ .strct = structID };
+        },
+    };
+}
 
 pub const Function = struct {
-    bbs: std.mem.ArrayList(BasicBlock),
+    bbs: std.ArrayList(BasicBlock),
 
     pub fn init(alloc: std.mem.Allocator) Function {
         return .{
-            .bbs = std.mem.ArrayList(BasicBlock).init(alloc),
+            .bbs = std.ArrayList(BasicBlock).init(alloc),
         };
     }
 };
 
 pub const FunctionList = struct {
     items: List,
-    pub const List = std.mem.ArrayList(Function);
+    pub const List = std.ArrayList(Function);
 
     pub fn init(alloc: std.mem.Allocator) FunctionList {
         return .{ .items = List.init(alloc) };
@@ -40,27 +77,112 @@ pub const FunctionList = struct {
 
 pub const BasicBlock = struct {
     insts: InstructionList,
-    incomers: std.mem.ArrayList(Label),
+    incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
 
     pub fn init(alloc: std.mem.Allocator) BasicBlock {
         return .{
             .insts = InstructionList.init(alloc),
-            .incomers = std.mem.ArrayList(Label).init(alloc),
+            .incomers = std.ArrayList(Label).init(alloc),
             .outgoers = [2]?Label{ null, null },
         };
     }
 };
+
+/// A lookup table where the index of the item is the key
+pub fn LinearLookupTable(comptime T: type) type {
+    return struct {
+        items: []T,
+        len: u32,
+
+        const Self = @This();
+
+        pub const Key = u32;
+
+        pub fn init(items: []T) Self {
+            return .{ .items = items, .len = @intCast(items.len) };
+        }
+
+        pub fn lookup(self: Self, item: T) Key {
+            const key = self.safeLookup(item);
+            if (key) |k| {
+                return k;
+            }
+            @panic("Item not found in lookup table");
+        }
+
+        pub fn safeLookup(self: Self, item: T) ?Key {
+            for (self.items, 0..) |existing, i| {
+                if (existing == item) {
+                    return i;
+                }
+            }
+            return null;
+        }
+
+        pub fn entry(self: Self, key: Key) T {
+            return self.items[key];
+        }
+    };
+}
+
+pub const StructType = struct {
+    // NOTE: same as this structs ID
+    name: StrID,
+    /// Lookup table for field names, where index of fields StrID
+    /// is the index of the field i.e. its FieldID
+    /// The slice is assumed to be allocated and freed if necessary by the TypeList
+    fieldLookup: FieldList,
+
+    const FieldList = LinearLookupTable(Field);
+
+    pub const Field = struct {
+        name: StrID,
+        ty: Type,
+
+        pub fn init(name: StrID, ty: Type) Field {
+            return .{ .name = name, .ty = ty };
+        }
+    };
+
+    pub const FieldID = u32;
+
+    pub fn init(name: StrID, fields: []Field) StructType {
+        const fieldLookup = FieldList.init(fields);
+        return .{ .name = name, .fieldLookup = fieldLookup };
+    }
+
+    pub fn getFieldWithName(self: StructType, name: StrID) Field {
+        const idx = self.fieldLookup.lookup(name);
+        return self.fieldLookup.get(idx);
+    }
+};
+
+pub const StructID = StrID;
 
 /// Literally just a list of types
 /// Abstracted so we can change it as needed and define helpers
 pub const TypeList = struct {
     items: Map,
 
-    pub const Map = std.AutoArrayHashMap(u32, Type);
+    // TODO: use lookup table
+    pub const Map = std.AutoArrayHashMap(StructID, Item);
+    pub const Item = StructType;
 
     pub fn init(alloc: std.mem.Allocator) TypeList {
         return .{ .items = Map.init(alloc) };
+    }
+
+    /// Note the lack of a way to add one item at a time,
+    /// only many
+    pub fn fill(self: *TypeList, items: []Item) !void {
+        for (items) |item| {
+            try self.items.put(item.name, item);
+        }
+    }
+
+    pub fn len(self: *const TypeList) usize {
+        return self.items.count();
     }
 
     // TODO: !!!
@@ -74,7 +196,7 @@ pub const InstructionList = struct {
     pub const List = std.ArrayList(Inst);
 
     pub fn init(alloc: std.mem.Allocator) InstructionList {
-        return .{ .insts = List.init(alloc) };
+        return .{ .items = List.init(alloc) };
     }
 
     // TODO: !!!
@@ -153,10 +275,13 @@ pub const Op = enum {
 /// Purposefully left ambiguous (not i32, i64 etc)
 /// for flexibility and because I'm not sure which to use
 /// for bools
-pub const Type = enum {
+pub const Type = union(enum) {
     void,
     int,
     bool,
+    null,
+    // sawy dylan
+    strct: StructID,
     /// The type used instead of optionals
     pub const default = Type.void;
 };
