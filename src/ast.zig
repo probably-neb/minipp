@@ -234,21 +234,30 @@ pub const Node = struct {
             }
 
             //Ben you will hate this :D
+            //You are correcy my friend. I do in fact hate this
             fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
-                var iter: ?usize = self.firstDecl;
-                while(iter != null){
-                    if( iter.? > last){
+                var iterator: ?usize = self.firstDecl;
+                while (iterator) |it| : (iterator = ast.findIndexWithin(.TypedIdentifier, it + 1, last + 1)) {
+                    if (it > last) {
                         break;
                     }
-                    const decl = ast.get(iter.?).kind.TypedIdentifier;
+                    const decl = ast.get(it).kind.TypedIdentifier;
                     const name = decl.getName(ast);
                     if (std.mem.eql(u8, name, memberName)) {
                         return decl.getType(ast);
                     }
-                    iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1, last + 1);
                 }
                 return null;
+            }
+
+            //Dylan you will hate this :D
+            pub fn iter(self: Self, ast: *const Ast) NodeIter(.TypedIdentifier) {
+                return NodeIter(.TypedIdentifier).init(
+                    ast,
+                    self.firstDecl,
+                    self.lastDecl,
+                );
             }
         },
 
