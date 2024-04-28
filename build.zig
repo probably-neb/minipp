@@ -10,6 +10,8 @@ const files = [_]SourceFile{
     .{ .path = "src/parser.zig", .name = "parser" },
     .{ .path = "src/sema.zig", .name = "sema" },
     .{ .path = "src/utils.zig", .name = "utils" },
+    .{ .path = "src/ir/ir.zig", .name = "ir" },
+    .{ .path = "src/ir/stack.zig", .name = "ir-stack" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -37,6 +39,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = .{ .path = file.path },
             .target = target,
             .optimize = build_mode,
+            .main_pkg_path = .{ .path = "src" },
         });
         const run_test = b.addRunArtifact(file_tests);
         test_step.dependOn(&run_test.step);
