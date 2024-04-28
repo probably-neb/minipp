@@ -10,13 +10,18 @@ const utils = @import("../utils.zig");
 pub const StackGen = @This();
 const Ctx = StackGen;
 
-alloc: std.mem.Allocator,
+/// An arena allocator used for temporary allocations. Any
+/// memory that persists in the IR should be allocated using
+/// the IR's allocator
+arena: std.heap.ArenaAllocator,
 
 pub fn generate(alloc: std.mem.Allocator, ast: *const Ast) !IR {
-    const this = StackGen{
-        .alloc = alloc,
-    };
+    const arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+
+    const this = StackGen{ .arena = arena };
     _ = this;
+
     var ir = IR.init(alloc);
 
     const globals = try gen_globals(&ir, ast);
