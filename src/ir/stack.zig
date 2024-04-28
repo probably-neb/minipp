@@ -19,19 +19,46 @@ pub fn generate(alloc: std.mem.Allocator, ast: *const Ast) !IR {
     _ = this;
     var ir = IR.init(alloc);
 
-    gen_global_decls(&ir, ast);
+    const globals = try gen_globals(&ir, ast);
+    ir.globals.fill(globals);
+
     const types = try gen_types(&ir, ast);
     try ir.types.fill(types);
 
     return ir;
 }
 
-pub fn gen_global_decls(ir: *IR, ast: *const Ast) void {
-    _ = ir;
-    _ = ast;
+pub const MemError = std.mem.Allocator.Error;
+
+pub fn gen_globals(ir: *IR, ast: *const Ast) MemError![]IR.GlobalsList.Item {
+    const Global = IR.GlobalsList.Item;
+    const programDecls = ast.find(.ProgramDeclarations, 0) orelse unreachable;
+    const globalDeclsIndex = programDecls.kind.ProgramDeclarations.declarations;
+    if (globalDeclsIndex == null) {
+        // wierd I know but it coerces to empty list because
+        // zig has reasonable defaults
+        // there is a test that checks for this do not worry
+        return undefined;
+    }
+    var globalDeclsIter = ast.get(globalDeclsIndex.?).kind.LocalDeclarations.iter(ast);
+
+    const numDecls = globalDeclsIter.calculateLen();
+    const globalDecls: []Global = try ir.alloc.alloc(Global, numDecls);
+
+    var gi: usize = 0;
+    while (globalDeclsIter.next()) |globalNode| : (gi += 1) {
+        const global = globalNode.kind.TypedIdentifier;
+
+        const ident = ir.internIdent(global.getName(ast));
+        const irType = ir.astTypeToIRType(global.getType(ast));
+
+        globalDecls[gi] = Global.init(ident, irType);
+    }
+
+    return globalDecls;
 }
 
-pub fn gen_types(ir: *IR, ast: *const Ast) std.mem.Allocator.Error![]IR.TypeList.Item {
+pub fn gen_types(ir: *IR, ast: *const Ast) MemError![]IR.TypeList.Item {
     const Struct = IR.TypeList.Item;
     const Field = Struct.Field;
 
@@ -97,7 +124,7 @@ test "stack.types.none" {
     try ting.expectEqual(@as(usize, 0), ir.types.len());
 }
 
-test "stack.types.2" {
+test "stack.types.multiple" {
     errdefer log.print();
     const input = "struct Foo { int a; bool b; }; struct Bar { int c; int d; int e;}; fun main() void {}";
     const ir = try testMe(input);
@@ -108,4 +135,22 @@ test "stack.types.2" {
     try ting.expectEqual(@as(usize, 2), foo.numFields());
     try ting.expectEqualStrings("Bar", ir.getIdent(bar.name));
     try ting.expectEqual(@as(usize, 3), bar.numFields());
+}
+
+test "stack.globals.multiple" {
+    const input = "struct Foo { int a; bool b; }; int a; bool b; fun main() void {}";
+    const ir = try testMe(input);
+    try ting.expectEqual(@as(usize, 2), ir.globals.len());
+    const a = ir.globals.index(0);
+    const b = ir.globals.index(1);
+    try ting.expectEqualStrings("a", ir.getIdent(a.name));
+    try ting.expectEqual(IR.Type.int, a.type);
+    try ting.expectEqualStrings("b", ir.getIdent(b.name));
+    try ting.expectEqual(IR.Type.bool, b.type);
+}
+
+test "stack.globals.none" {
+    const input = "struct Foo { int a; bool b; }; fun main() void {}";
+    const ir = try testMe(input);
+    try ting.expectEqual(@as(usize, 0), ir.globals.len());
 }

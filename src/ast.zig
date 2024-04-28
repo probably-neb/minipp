@@ -303,20 +303,29 @@ pub const Node = struct {
 
             fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
-                var iter: ?usize = self.firstDecl;
-                while (iter != null) {
-                    if (iter.? > last) {
+                var iterator: ?usize = self.firstDecl;
+                while (iterator != null) {
+                    if (iterator.? > last) {
                         break;
                     }
-                    log.trace("iter={d} last={d}\n", .{ iter.?, last });
-                    const decl = ast.get(iter.?).kind.TypedIdentifier;
+                    log.trace("iter={d} last={d}\n", .{ iterator.?, last });
+                    const decl = ast.get(iterator.?).kind.TypedIdentifier;
                     const name = decl.getName(ast);
                     if (std.mem.eql(u8, name, memberName)) {
                         return decl.getType(ast);
                     }
-                    iter = ast.findIndexWithin(.TypedIdentifier, iter.? + 1, last + 1);
+                    iterator = ast.findIndexWithin(.TypedIdentifier, iterator.? + 1, last + 1);
                 }
                 return null;
+            }
+
+            //Dylan you will hate this :D
+            pub fn iter(self: Self, ast: *const Ast) NodeIter(.TypedIdentifier) {
+                return NodeIter(.TypedIdentifier).init(
+                    ast,
+                    self.firstDecl,
+                    self.lastDecl,
+                );
             }
         },
 

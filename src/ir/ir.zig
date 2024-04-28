@@ -15,7 +15,7 @@ const StrID = InternPool.StrID;
 pub const IR = @This();
 
 types: TypeList,
-globals: InstructionList,
+globals: GlobalsList,
 funcs: FunctionList,
 intern_pool: InternPool,
 alloc: std.mem.Allocator,
@@ -23,7 +23,7 @@ alloc: std.mem.Allocator,
 pub fn init(alloc: std.mem.Allocator) IR {
     return .{
         .types = TypeList.init(alloc),
-        .globals = InstructionList.init(alloc),
+        .globals = GlobalsList.init(),
         .funcs = FunctionList.init(alloc),
         .intern_pool = InternPool.init(alloc),
         .alloc = alloc,
@@ -61,6 +61,42 @@ pub fn getIdent(self: *const IR, id: StrID) []const u8 {
     // this is only supposed to be used for debugging, so just panic
     return self.intern_pool.get(id) catch unreachable;
 }
+
+pub const GlobalsList = struct {
+    items: List,
+
+    pub const List = LinearLookupTable(StrID, Item);
+    pub const Item = struct {
+        name: StrID,
+        type: Type,
+
+        pub fn init(name: StrID, ty: Type) Item {
+            return .{ .name = name, .type = ty };
+        }
+
+        pub fn getKey(self: Item) StrID {
+            return self.name;
+        }
+    };
+
+    pub fn init() GlobalsList {
+        return .{ .items = undefined };
+    }
+
+    pub fn fill(self: *GlobalsList, items: []Item) void {
+        const lut = List.init(items, Item.getKey);
+        self.items = lut;
+    }
+
+    pub fn index(self: *const GlobalsList, idx: usize) Item {
+        return self.items.items[idx];
+    }
+
+    pub fn len(self: *const GlobalsList) usize {
+        return self.items.len;
+    }
+};
+
 pub const Function = struct {
     bbs: std.ArrayList(BasicBlock),
 
