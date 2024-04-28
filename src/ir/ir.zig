@@ -95,37 +95,41 @@ pub const BasicBlock = struct {
 };
 
 /// A lookup table where the index of the item is the key
-pub fn LinearLookupTable(comptime T: type) type {
+pub fn LinearLookupTable(comptime Key: type, comptime Value: type) type {
     return struct {
-        items: []T,
+        items: []Value,
         len: u32,
+        getKey: GetKey,
 
         const Self = @This();
 
-        pub const Key = u32;
+        pub const ID = u32;
 
-        pub fn init(items: []T) Self {
-            return .{ .items = items, .len = @intCast(items.len) };
+        pub const GetKey = *const fn (val: Value) Key;
+
+        pub fn init(items: []Value, getKey: GetKey) Self {
+            return .{ .items = items, .len = @intCast(items.len), .getKey = getKey };
         }
 
-        pub fn lookup(self: Self, item: T) Key {
-            const key = self.safeLookup(item);
-            if (key) |k| {
-                return k;
+        pub fn lookup(self: Self, key: Key) Key {
+            const maybe_id = self.safeLookup(key);
+            if (maybe_id) |id| {
+                return id;
             }
             @panic("Item not found in lookup table");
         }
 
-        pub fn safeLookup(self: Self, item: T) ?Key {
+        pub fn safeLookup(self: Self, key: Key) ?ID {
             for (self.items, 0..) |existing, i| {
-                if (existing == item) {
+                const itemKey = self.getKey(existing);
+                if (itemKey == key) {
                     return i;
                 }
             }
             return null;
         }
 
-        pub fn entry(self: Self, key: Key) T {
+        pub fn entry(self: Self, key: ID) Value {
             return self.items[key];
         }
     };
@@ -139,7 +143,7 @@ pub const StructType = struct {
     /// The slice is assumed to be allocated and freed if necessary by the TypeList
     fieldLookup: FieldList,
 
-    const FieldList = LinearLookupTable(Field);
+    const FieldList = LinearLookupTable(StrID, Field);
 
     pub const Field = struct {
         name: StrID,
@@ -148,12 +152,16 @@ pub const StructType = struct {
         pub fn init(name: StrID, ty: Type) Field {
             return .{ .name = name, .ty = ty };
         }
+
+        pub fn getKey(self: Field) StrID {
+            return self.name;
+        }
     };
 
     pub const FieldID = u32;
 
     pub fn init(name: StrID, fields: []Field) StructType {
-        const fieldLookup = FieldList.init(fields);
+        const fieldLookup = FieldList.init(fields, Field.getKey);
         return .{ .name = name, .fieldLookup = fieldLookup };
     }
 
