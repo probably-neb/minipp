@@ -1277,7 +1277,7 @@ pub const Parser = struct {
 
         // Expect )
         try self.expectToken(TokenKind.RParen);
-
+        _ = try self.astAppend(.ArgumentsEnd, tok);
         const node = Node{
             .kind = NodeKind{ .Arguments = .{ .firstArg = firstArgIndex, .lastArg = lastArgIndex } },
             .token = tok,
@@ -1396,9 +1396,13 @@ pub const Parser = struct {
                 self.readPos = expr.Atom.start + 1;
 
                 const atomIndex = try self.parseSelector();
-
+                std.debug.print("\n", .{});
+                prettyPrintTokens(self,  self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
+                std.debug.print("\n", .{});
+                prettyPrintTokens(self,  self.tokens[expr.Atom.start..self.pos]);
+                std.debug.print("\n", .{});
                 // I really should have made this error shorter before the hundredth time I saw it
-                utils.assert(self.pos == (expr.Atom.start + expr.Atom.len), "either didn't skip enough tokens when extracting atom or didn't parse enough when reconstructing tree... either way shits borqed! glhf!!!\n Expected to parse: \n{any}\nBut Parsed: \n{any}\n", .{ self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)], self.tokens[expr.Atom.start..self.pos] });
+                utils.assert(self.pos == (expr.Atom.start + expr.Atom.len), "either didn't skip enough tokens when extracting atom or didn't parse enough when reconstructing tree... either way shits borqed! glhf!!!\n Expected to parse: \n {any} \nBut Parsed: \n {any} \n", .{ self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)], self.tokens[expr.Atom.start..self.pos] });
 
                 // restore read and write pos
                 self.pos = posSave;
@@ -1532,15 +1536,22 @@ pub const Parser = struct {
                         count -= 1;
                     }
                 }
-                const final = self.tokens[self.pos - 1];
-                utils.assert(final.kind == .RParen, "final token not RParen, is: {}\n", .{final});
+                const current = try self.currentToken();
+                if(current.kind == .Dot){
+                    _ = try self.consumeToken();
+                    try self.expectToken(.Identifier);
+                    numTokens += 2;
+                } else {
+                    const final = self.tokens[self.pos - 1];
+                    utils.assert(final.kind == .RParen, "final token not RParen, is: {}\n", .{final});
+                }
             },
             .KeywordNew => {
                 _ = try self.expectToken(.KeywordNew);
                 // Note - leaving checking if the thing after new is right until it's parsed later...
                 // this is probably a badddd idea (malformed expressions like what! (with the lights on!!??))
-                // FIXME:
-                _ = try self.consumeToken();
+                // FIXME: NOTE: for the introductoin of array_list this will have to be changed
+                _ = try self.expectToken(.Identifier);
                 numTokens += 1;
                 utils.assert(numTokens == 2, "New token has more than 2 tokens\n", .{});
             },
@@ -1743,6 +1754,11 @@ pub const Parser = struct {
     }
 };
 
+pub fn prettyPrintTokens(parser: *Parser, tokens: []Token) void {
+    for (tokens) |token| {
+        std.debug.print("{s} ", .{token._range.getSubStrFromStr(parser.input)});
+    }
+}
 pub fn main() !void {
     const source = "struct test{ int a; }; fun A() void{ int d;d=2+5;}";
     const tokens = try Lexer.tokenizeFromStr(source, std.heap.page_allocator);

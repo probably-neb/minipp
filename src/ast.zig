@@ -275,6 +275,7 @@ pub const Node = struct {
         /// nodes in the function, even if it only has one (with a nested subtree) statement
         FunctionEnd,
         ArgumentEnd,
+        ArgumentsEnd,
         /// Declaration of a function, i.e. all info related to a function
         /// except the body
         FunctionProto: FunctionProtoType,
@@ -844,6 +845,7 @@ const KindTagDupe = enum {
     Function,
     FunctionEnd,
     ArgumentEnd,
+    ArgumentsEnd,
     FunctionProto,
     Parameters,
     ReturnType,

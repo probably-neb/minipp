@@ -486,6 +486,8 @@ pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8
     funcPList = funcPList.?;
     argsList = argsList.?;
     if (argsList.?.len != funcPList.?.len) {
+        // print the position of argslist
+        std.debug.print("argsList: {d}\n", .{args.?});
         utils.todo("Error on invocation type checking\n", .{});
         return error.InvalidFunctionCall;
     }
@@ -494,7 +496,22 @@ pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8
     while (i < argsList.?.len) {
         const argType = argsList.?[i];
         const paramType = funcPList.?[i];
-        if (!argType.equals(paramType)) {
+        if(argType.equals(Ast.Type.Null)){
+            if(!paramType.isStruct()){
+                // print them out
+                std.debug.print("argType: {s}\n", .{@tagName(argType)});
+                std.debug.print("paramType: {s}\n", .{@tagName(paramType)});
+                return error.InvalidFunctionCall;
+            }
+        } else if (!argType.equals(paramType)) {
+            std.debug.print("argType: {s}\n", .{@tagName(argType)});
+            std.debug.print("paramType: {s}\n", .{@tagName(paramType)});
+            if(argType.isStruct()){
+                std.debug.print("argType: {s}\n", .{argType.Struct});
+            }
+            if(paramType.isStruct()){
+                std.debug.print("paramType: {s}\n", .{paramType.Struct});
+            }
             return error.InvalidFunctionCall;
         }
         i += 1;
@@ -549,7 +566,7 @@ pub fn getAndCheckTypeExpression(ast: *Ast, exprn: Ast.Node, fName: []const u8, 
 pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
     const token = binaryOp.token;
     switch (token.kind) {
-        .Lt, .Gt, .GtEq, .DoubleEq, .NotEq => {
+        .Lt, .Gt, .GtEq, .LtEq, .DoubleEq, .NotEq => {
             const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
             const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
@@ -788,14 +805,16 @@ pub fn ParamatergetParamTypeFromName(this: ?usize, ast: *Ast, name: []const u8) 
 }
 
 pub fn TypedIdentifergetType(tid: Ast.Node, ast: *Ast) !Ast.Type {
-    const ty = ast.get(tid.kind.TypedIdentifier.type).*.kind.Type.kind;
-    const ff = ast.get(ty).*.kind;
+    const ty = ast.get(tid.kind.TypedIdentifier.type).*.kind.Type;
+    const ff = ast.get(ty.kind).*.kind;
     _ = switch (ff) {
         .IntType => return Ast.Type.Int,
         .BoolType => return Ast.Type.Bool,
         .Void => return Ast.Type.Void,
         .StructType => {
-            const name = ast.get(ty).*.token._range.getSubStrFromStr(ast.input);
+            const ident = ast.get(ty.structIdentifier.?).*.token._range.getSubStrFromStr(ast.input);
+            // identifier to name
+            const name = ident;
             return Ast.Type{ .Struct = name };
         },
         else => {
@@ -812,17 +831,42 @@ pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *Ast, fName: []const u8, ret
     var list = std.ArrayList(Ast.Type).init(ast.allocator);
     const last: usize = self.lastArg orelse self.firstArg + 1;
     var iter: ?usize = self.firstArg;
+
     ast.printAst();
+    var depth: usize = 0;
+
     while (iter != null) {
         const arg = ast.get(iter.?).*;
-        // find next occurence of ArgumentEnd
         const ty = try getAndCheckTypeExpression(ast, arg, fName, returnType);
         try list.append(ty);
-        iter = ast.findIndexWithin(.ArgumentEnd, iter.? + 1, last + 1);
-        if (iter != null) {
-            iter = iter.? + 1;
+
+        // Move to the next argument, considering nested Arguments and ArgumentEnds
+        var cursor = iter.? + 1;
+        var flag = true;
+        while (flag and cursor <= last) {
+            const node = ast.get(cursor).*;
+            switch (node.kind) {
+            .Arguments => depth += 1,
+            .ArgumentEnd => {
+                if (depth == 0) {
+                    flag = false;
+                }
+            },
+            .ArgumentsEnd => {
+                if (depth > 0) {
+                    depth -= 1;
+                } else {
+                    return error.InvalidFunctionCall;
+                }
+            },
+            else => {}
+            }
+            cursor += 1;
         }
+
+        iter = if (flag == false) cursor else null;
     }
+
     const res = try list.toOwnedSlice();
     list.deinit();
     return res;
@@ -1301,4 +1345,11 @@ test "sema.check_binop_mul_bools" {
     var funcLit = func.?.*;
     // expect error
     try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheckFunction(&ast, funcLit));
+}
+test "sema.4mini"{
+    // load source from file
+    const source = @embedFile("4.mini");
+    var ast = try testMe(source);
+    // expect error InvalidAssignmentType
+    try typeCheck(&ast);
 }
