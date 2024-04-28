@@ -53,10 +53,10 @@ pub fn warn(comptime msg: []const u8, vars: anytype) void {
 pub fn print() void {
     for (msgs.items) |msg| {
         switch (msg.level) {
-            .Info => std.log.info("{s}", .{msg.msg}),
-            .Err => std.log.err("{s}", .{msg.msg}),
-            .Warn => std.log.warn("{s}", .{msg.msg}),
-            .Trace => std.log.debug("{s}", .{msg.msg}),
+            .Info => std.debug.print("INFO  : {s}", .{msg.msg}),
+            .Err => std.debug.print("ERROR : {s}", .{msg.msg}),
+            .Warn => std.debug.print("WARN  : {s}", .{msg.msg}),
+            .Trace => std.debug.print("TRACE : {s}", .{msg.msg}),
         }
     }
 }
