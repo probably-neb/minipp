@@ -1396,11 +1396,11 @@ pub const Parser = struct {
                 self.readPos = expr.Atom.start + 1;
 
                 const atomIndex = try self.parseSelector();
-                std.debug.print("\n", .{});
-                prettyPrintTokens(self,  self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
-                std.debug.print("\n", .{});
-                prettyPrintTokens(self,  self.tokens[expr.Atom.start..self.pos]);
-                std.debug.print("\n", .{});
+                log.trace("\n", .{});
+                prettyPrintTokens(self, self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
+                log.trace("\n", .{});
+                prettyPrintTokens(self, self.tokens[expr.Atom.start..self.pos]);
+                log.trace("\n", .{});
                 // I really should have made this error shorter before the hundredth time I saw it
                 utils.assert(self.pos == (expr.Atom.start + expr.Atom.len), "either didn't skip enough tokens when extracting atom or didn't parse enough when reconstructing tree... either way shits borqed! glhf!!!\n Expected to parse: \n {any} \nBut Parsed: \n {any} \n", .{ self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)], self.tokens[expr.Atom.start..self.pos] });
 
@@ -1436,7 +1436,7 @@ pub const Parser = struct {
 
         // NOTE: unessary?
         const node = Node{
-            .kind = NodeKind{ .Expression = .{ .expr = treeIndex, .last = last} },
+            .kind = NodeKind{ .Expression = .{ .expr = treeIndex, .last = last } },
             .token = tok,
         };
         try self.set(expressionIndex, node);
@@ -1537,7 +1537,7 @@ pub const Parser = struct {
                     }
                 }
                 const current = try self.currentToken();
-                if(current.kind == .Dot){
+                if (current.kind == .Dot) {
                     _ = try self.consumeToken();
                     try self.expectToken(.Identifier);
                     numTokens += 2;
@@ -1756,7 +1756,7 @@ pub const Parser = struct {
 
 pub fn prettyPrintTokens(parser: *Parser, tokens: []Token) void {
     for (tokens) |token| {
-        std.debug.print("{s} ", .{token._range.getSubStrFromStr(parser.input)});
+        log.trace("{s} ", .{token._range.getSubStrFromStr(parser.input)});
     }
 }
 pub fn main() !void {
@@ -1764,7 +1764,7 @@ pub fn main() !void {
     const tokens = try Lexer.tokenizeFromStr(source, std.heap.page_allocator);
     const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
     log.err("Parsed successfully\n", .{});
-    std.debug.print("haha penis", .{});
+    log.trace("haha penis", .{});
     try parser.prettyPrintAst();
 }
 

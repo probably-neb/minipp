@@ -40,15 +40,15 @@ pub fn printAst(self: *Ast) void {
     for (nodes) |node| {
         const kind = node.kind;
         const token = node.token;
-        std.debug.print("{d}: {s} {s}", .{ i, @tagName(kind), token._range.getSubStrFromStr(self.input) });
+        log.trace("{d}: {s} {s}", .{ i, @tagName(kind), token._range.getSubStrFromStr(self.input) });
         switch (kind) {
             .BinaryOperation => {
                 const binOp = node.kind.BinaryOperation;
-                std.debug.print(" lhs: {any}", .{binOp.lhs});
-                std.debug.print(" rhs: {any}\n", .{binOp.rhs});
+                log.trace(" lhs: {any}", .{binOp.lhs});
+                log.trace(" rhs: {any}\n", .{binOp.rhs});
             },
             else => {
-                std.debug.print("\n", .{});
+                log.trace("\n", .{});
             },
         }
         i += 1;
@@ -577,7 +577,7 @@ pub const Node = struct {
                     std.debug.panic("ast malformed: no FunctionEnd node found after first statement", .{});
                 };
                 utils.assert(last > first, "ast malformed: last={d} < first={d}", .{ last, first });
-                // std.debug.print("first={d} last={d}\n", .{ first, last });
+                // log.trace("first={d} last={d}\n", .{ first, last });
 
                 return ReturnsIter{
                     .ast = ast,
@@ -927,7 +927,7 @@ pub fn find(ast: *const Ast, nodeKind: NodeKindTag, startingAt: usize) ?Node {
         return null;
     }
     for (ast.nodes.items[startingAt..]) |node| {
-        // std.debug.print("node {s} - {d} =? kind {s} - {d}\n", .{ @tagName(node.kind), @intFromEnum(node.kind), @tagName(nodeKind), @intFromEnum(nodeKind) });
+        // log.trace("node {s} - {d} =? kind {s} - {d}\n", .{ @tagName(node.kind), @intFromEnum(node.kind), @tagName(nodeKind), @intFromEnum(nodeKind) });
         if (cmpNodeKindAndTag(node, nodeKind)) {
             return node;
         }

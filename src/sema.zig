@@ -98,6 +98,7 @@ fn allReturnPathsHaveReturnType(ast: *const Ast, func: Ast.Node.Kind.FunctionTyp
 }
 
 fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
+    // TODO:
     // decend the tree if we hit a conditional call a function that checks if the conditional
     // has a return statement, if both sides return then we are good.
     // otherwise continue decending for a fall through.
@@ -208,7 +209,7 @@ pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
     const fBody = ast.get(fc.body).*;
     const fstatementsIndex = fBody.kind.FunctionBody.statements;
     if (fstatementsIndex == null) {
-        std.debug.print("wahoo \n", .{});
+        log.trace("wahoo \n", .{});
     }
     if (fstatementsIndex == null) {
         return;
@@ -216,7 +217,7 @@ pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
     // ensure that there are no local declarations with the same name as the parameters
     // get the parameters
     const fProto = ast.get(fc.proto).*.kind.FunctionProto.parameters;
-    if (fProto == null) {
+    if (fProto != null) {
         const paraMNodes = ast.get(fProto.?).*.kind.Parameters;
         const last = paraMNodes.lastParam orelse paraMNodes.firstParam.? + 1;
         var paramNames = std.StringHashMap(bool).init(ast.allocator);
@@ -244,13 +245,13 @@ pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
 // Done
 pub fn typeCheckStatementList(ast: *Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
     ast.printAst();
-    std.debug.print("statementListn: {d}\n", .{statementListn.?});
+    log.trace("statementListn: {d}\n", .{statementListn.?});
     const list = try StatemenListgetList(statementListn, ast);
     if (list == null) {
         return;
     }
     for (list.?) |statement| {
-        std.debug.print("Statement {any}\n", .{statement});
+        log.trace("Statement {any}\n", .{statement});
         const statNode = ast.get(statement).*;
         try typeCheckStatement(ast, statNode, fName, returnType);
     }
@@ -344,8 +345,8 @@ pub fn typeCheckAssignment(ast: *Ast, assignmentn: Ast.Node, fName: []const u8, 
     const rightExpr = ast.get(right.?).*;
     const rightType = try getAndCheckTypeExpression(ast, rightExpr, fName, returnType);
     if (rightType.isStruct()) {
-        std.debug.print("rightType: {s}\n", .{rightType.Struct});
-        std.debug.print("leftType: {s}\n", .{leftType.?.Struct});
+        log.trace("rightType: {s}\n", .{rightType.Struct});
+        log.trace("leftType: {s}\n", .{leftType.?.Struct});
     }
     if (!leftType.?.equals(rightType)) {
         // FIXME: add error
@@ -371,7 +372,7 @@ pub fn typeCheckConditional(ast: *Ast, conditionaln: Ast.Node, fName: []const u8
     const conditional = conditionaln.kind.ConditionalIf;
     const cond = conditional.cond;
     const condNode = ast.get(cond).*;
-    std.debug.print("condNode: {any}\n", .{cond});
+    log.trace("condNode: {any}\n", .{cond});
     const condType = try getAndCheckTypeExpression(ast, condNode, fName, returnType);
     if (!condType.equals(Ast.Type.Bool)) {
         utils.todo("Error on conditional type checking\n", .{});
@@ -461,8 +462,8 @@ pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8
 
     var argsList = try ArgumentsgetArgumentTypes(args, ast, fName, returnType);
     var funcPList = try ParametergetParamTypes(funcProto, ast);
-    std.debug.print("argsList: {any}\n", .{argsList});
-    std.debug.print("funcPList: {any}\n", .{funcPList});
+    log.trace("argsList: {any}\n", .{argsList});
+    log.trace("funcPList: {any}\n", .{funcPList});
 
     if (argsList == null) {
         if (funcPList == null) {
@@ -487,7 +488,7 @@ pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8
     argsList = argsList.?;
     if (argsList.?.len != funcPList.?.len) {
         // print the position of argslist
-        std.debug.print("argsList: {d}\n", .{args.?});
+        log.trace("argsList: {d}\n", .{args.?});
         utils.todo("Error on invocation type checking\n", .{});
         return error.InvalidFunctionCall;
     }
@@ -496,21 +497,21 @@ pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8
     while (i < argsList.?.len) {
         const argType = argsList.?[i];
         const paramType = funcPList.?[i];
-        if(argType.equals(Ast.Type.Null)){
-            if(!paramType.isStruct()){
+        if (argType.equals(Ast.Type.Null)) {
+            if (!paramType.isStruct()) {
                 // print them out
-                std.debug.print("argType: {s}\n", .{@tagName(argType)});
-                std.debug.print("paramType: {s}\n", .{@tagName(paramType)});
+                log.trace("argType: {s}\n", .{@tagName(argType)});
+                log.trace("paramType: {s}\n", .{@tagName(paramType)});
                 return error.InvalidFunctionCall;
             }
         } else if (!argType.equals(paramType)) {
-            std.debug.print("argType: {s}\n", .{@tagName(argType)});
-            std.debug.print("paramType: {s}\n", .{@tagName(paramType)});
-            if(argType.isStruct()){
-                std.debug.print("argType: {s}\n", .{argType.Struct});
+            log.trace("argType: {s}\n", .{@tagName(argType)});
+            log.trace("paramType: {s}\n", .{@tagName(paramType)});
+            if (argType.isStruct()) {
+                log.trace("argType: {s}\n", .{argType.Struct});
             }
-            if(paramType.isStruct()){
-                std.debug.print("paramType: {s}\n", .{paramType.Struct});
+            if (paramType.isStruct()) {
+                log.trace("paramType: {s}\n", .{paramType.Struct});
             }
             return error.InvalidFunctionCall;
         }
@@ -554,7 +555,7 @@ pub fn getAndCheckTypeExpression(ast: *Ast, exprn: Ast.Node, fName: []const u8, 
             }
         },
         else => {
-            std.debug.print("exprn.kind: {any}\n", .{exprn.kind});
+            log.trace("exprn.kind: {any}\n", .{exprn.kind});
             // print the index into the ast
             utils.todo("Error on expression type checking\n", .{});
             return error.InvalidType;
@@ -614,7 +615,7 @@ pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const 
             return lhsType;
         },
         else => {
-            std.debug.print("token.kind: {any}\n", .{token.kind});
+            log.trace("token.kind: {any}\n", .{token.kind});
             utils.todo("Error on binary operation type checking\n", .{});
             return error.InvalidType;
         },
@@ -701,7 +702,7 @@ pub fn getAndCheckLocalIdentifier(ast: *Ast, localId: Ast.Node, fName: []const u
     const funcParam = try ParamatergetParamTypeFromName(param, ast, name);
     const globalDecl = ast.getDeclarationGlobalFromName(name);
     const localDecl = funcParam orelse funcDecl orelse globalDecl;
-    std.debug.print("name: {s}\n", .{name});
+    log.trace("name: {s}\n", .{name});
     if (localDecl == null) {
         return error.InvalidType;
     }
@@ -715,7 +716,6 @@ pub fn SelectorChaingetType(this: ?usize, ast: *Ast, ty: Ast.Type) !?Ast.Type {
 
     // check if type is a struct
     if (!ty.isStruct()) {
-        // Dylan this is not what `utils.todo` is for
         utils.todo("this must be a struct, do error proper", .{});
         return null;
     }
@@ -769,7 +769,6 @@ pub fn ParametergetParamTypes(this: ?usize, ast: *Ast) !?[]Ast.Type {
         const param = ast.get(iter.?).*;
         // find next TypedIdentifier
         iter = ast.findIndexWithin(.TypedIdentifier, iter.? + 1, last.? + 1);
-
         const ty = try TypedIdentifergetType(param, ast);
         try list.append(ty);
     }
@@ -846,20 +845,20 @@ pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *Ast, fName: []const u8, ret
         while (flag and cursor <= last) {
             const node = ast.get(cursor).*;
             switch (node.kind) {
-            .Arguments => depth += 1,
-            .ArgumentEnd => {
-                if (depth == 0) {
-                    flag = false;
-                }
-            },
-            .ArgumentsEnd => {
-                if (depth > 0) {
-                    depth -= 1;
-                } else {
-                    return error.InvalidFunctionCall;
-                }
-            },
-            else => {}
+                .Arguments => depth += 1,
+                .ArgumentEnd => {
+                    if (depth == 0) {
+                        flag = false;
+                    }
+                },
+                .ArgumentsEnd => {
+                    if (depth > 0) {
+                        depth -= 1;
+                    } else {
+                        return error.InvalidFunctionCall;
+                    }
+                },
+                else => {},
             }
             cursor += 1;
         }
@@ -881,7 +880,7 @@ pub fn LValuegetType(this: ?usize, ast: *Ast, fName: []const u8) !?Ast.Type {
     const ident = identNode.token._range.getSubStrFromStr(ast.input);
     // const g_decl = ast.getDeclarationGlobalFromName(ident);
     const f_decl = try getAndCheckLocalIdentifier(ast, identNode.*, fName);
-    std.debug.print("name {s}\n", .{ident});
+    log.trace("name {s}\n", .{ident});
     var decl = f_decl;
     // if (decl == null) {
     //     // TODO: add error
@@ -1346,7 +1345,7 @@ test "sema.check_binop_mul_bools" {
     // expect error
     try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheckFunction(&ast, funcLit));
 }
-test "sema.4mini"{
+test "sema.4mini" {
     // load source from file
     const source = @embedFile("4.mini");
     var ast = try testMe(source);
