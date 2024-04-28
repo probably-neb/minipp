@@ -4,6 +4,8 @@ const IR = @import("ir.zig");
 const Inst = IR.Inst;
 
 const Ast = @import("../ast.zig");
+const log = @import("../log.zig");
+const utils = @import("../utils.zig");
 
 pub const StackGen = @This();
 const Ctx = StackGen;
@@ -18,7 +20,8 @@ pub fn generate(alloc: std.mem.Allocator, ast: *const Ast) !IR {
     var ir = IR.init(alloc);
 
     gen_global_decls(&ir, ast);
-    try gen_types(&ir, ast);
+    const types = try gen_types(&ir, ast);
+    try ir.types.fill(types);
 
     return ir;
 }
@@ -28,18 +31,24 @@ pub fn gen_global_decls(ir: *IR, ast: *const Ast) void {
     _ = ast;
 }
 
-pub fn gen_types(ir: *IR, ast: *const Ast) std.mem.Allocator.Error!void {
+pub fn gen_types(ir: *IR, ast: *const Ast) std.mem.Allocator.Error![]IR.TypeList.Item {
     const Struct = IR.TypeList.Item;
     const Field = Struct.Field;
 
     var iter = ast.structMap.valueIterator();
 
+    // WARN: read the comment at the call to realloc at the end of this function
     const numDecls = iter.len;
+    log.trace("numDecls: {}\n", .{numDecls});
     const types: []Struct = try ir.alloc.alloc(Struct, numDecls);
 
     var ti: usize = 0;
 
     while (iter.next()) |declIndex| : (ti += 1) {
+        // Just a safeguard in case iter.len is lower than the number of declarations
+        // see comments before the return
+        utils.assert(ti <= numDecls, "ti <= numDecls in `gen_types`. There's a comment about this. I'm Sorry\n", .{});
+
         const decl = ast.get(declIndex.*).kind.TypeDeclaration;
         const structNameID = ir.internIdentNodeAt(ast, decl.ident);
 
@@ -63,7 +72,12 @@ pub fn gen_types(ir: *IR, ast: *const Ast) std.mem.Allocator.Error!void {
         types[ti] = Struct.init(structNameID, fields);
     }
 
-    try ir.types.fill(types);
+    // So.... the structMap iter.len is not accurate, only bigger as far as I can tell,
+    // so i'm doing the easy thing and just resizing the array here instead of figuring out
+    // how to get the correct size. I apologize in advance if `.len` is ever too small
+    // and there's an out of bounds error
+    const types_sized = try ir.alloc.realloc(types, ti);
+    return types_sized;
 }
 
 const ting = std.testing;
@@ -84,12 +98,14 @@ test "stack.types.none" {
 }
 
 test "stack.types.2" {
-    const input = "struct Foo { a: int, b: bool } struct fun main() void {}";
+    errdefer log.print();
+    const input = "struct Foo { int a; bool b; }; struct Bar { int c; int d; int e;}; fun main() void {}";
     const ir = try testMe(input);
-    try ting.expectEqual(@as(usize, 1), ir.types.len());
-    const foo = ir.types.at(0);
-    try ting.expectEqual("Foo", foo.name);
-    try ting.expectEqual(@as(usize, 2), foo.fields.len());
-    try ting.expectEqual("a", foo.fields.at(0).name);
-    try ting.expectEqual("b", foo.fields.at(1).name);
+    try ting.expectEqual(@as(usize, 2), ir.types.len());
+    const foo = ir.types.index(0);
+    const bar = ir.types.index(1);
+    try ting.expectEqualStrings("Foo", ir.getIdent(foo.name));
+    try ting.expectEqual(@as(usize, 2), foo.numFields());
+    try ting.expectEqualStrings("Bar", ir.getIdent(bar.name));
+    try ting.expectEqual(@as(usize, 3), bar.numFields());
 }

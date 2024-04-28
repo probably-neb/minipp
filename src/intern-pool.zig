@@ -48,7 +48,7 @@ pub fn intern(self: *InternPool, str: []const u8) std.mem.Allocator.Error!StrID 
 }
 
 /// Returns the string
-pub fn get(self: *InternPool, id: StrID) Error![]const u8 {
+pub fn get(self: *const InternPool, id: StrID) Error![]const u8 {
     var i: u32 = id;
     const pool = self.pool.items;
     while (i < pool.len and pool[i] != 0) : ({

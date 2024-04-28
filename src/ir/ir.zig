@@ -4,6 +4,7 @@ pub const std = @import("std");
 
 const Ast = @import("../ast.zig");
 const utils = @import("../utils.zig");
+const log = @import("../log.zig");
 
 const InternPool = @import("../intern-pool.zig");
 /// The ID of a string stored in the intern pool
@@ -56,6 +57,10 @@ pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
     };
 }
 
+pub fn getIdent(self: *const IR, id: StrID) []const u8 {
+    // this is only supposed to be used for debugging, so just panic
+    return self.intern_pool.get(id) catch unreachable;
+}
 pub const Function = struct {
     bbs: std.ArrayList(BasicBlock),
 
@@ -156,6 +161,10 @@ pub const StructType = struct {
         const idx = self.fieldLookup.lookup(name);
         return self.fieldLookup.get(idx);
     }
+
+    pub fn numFields(self: StructType) usize {
+        return @as(usize, self.fieldLookup.len);
+    }
 };
 
 pub const StructID = StrID;
@@ -183,6 +192,16 @@ pub const TypeList = struct {
 
     pub fn len(self: *const TypeList) usize {
         return self.items.count();
+    }
+
+    pub fn get(self: *const TypeList, id: StructID) ?Item {
+        return self.items.get(id);
+    }
+
+    /// WARN: I think I saw somewhere that the AutoArrayHashMap preserves
+    /// insertion order but I'm not sure
+    pub fn index(self: *const TypeList, idx: usize) Item {
+        return self.items.values()[idx];
     }
 
     // TODO: !!!
