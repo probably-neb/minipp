@@ -97,6 +97,15 @@ pub const GlobalsList = struct {
     }
 };
 
+pub const FunctionList = struct {
+    items: List,
+    pub const List = std.ArrayList(Function);
+
+    pub fn init(alloc: std.mem.Allocator) FunctionList {
+        return .{ .items = List.init(alloc) };
+    }
+};
+
 pub const Function = struct {
     bbs: std.ArrayList(BasicBlock),
 
@@ -107,19 +116,16 @@ pub const Function = struct {
     }
 };
 
-pub const FunctionList = struct {
-    items: List,
-    pub const List = std.ArrayList(Function);
-
-    pub fn init(alloc: std.mem.Allocator) FunctionList {
-        return .{ .items = List.init(alloc) };
-    }
-};
-
 pub const BasicBlock = struct {
     insts: InstructionList,
     incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
+
+    /// The ID of a basic block is it's index within the arraylist of
+    /// basic blocks in the `Function` type
+    /// This is done differently than the LUT based approach for almost
+    /// everthing else in the IR because the order of the basic blocks
+    pub const ID = u32;
 
     pub fn init(alloc: std.mem.Allocator) BasicBlock {
         return .{
@@ -168,6 +174,27 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
         }
     };
 }
+
+/// A lookup table where the index of the item is the key
+/// and it is backed by an `ArrayList`. The the arraylist itself is
+/// append only and therefore the keys never change
+pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn (val: Value) Key) type {
+    return struct {
+        items: List,
+        len: u32,
+
+        const Self = @This();
+
+        pub const ID = u32;
+
+        pub const List = std.ArrayList(Value);
+
+        pub fn init(items: List) Self {
+            return .{ .items = items, .len = @intCast(items.len) };
+        }
+
+        /// A wrapper around `safeLookup` that panics if the key is not
+        /// found
         pub fn lookup(self: Self, key: Key) Key {
             const maybe_id = self.safeLookup(key);
             if (maybe_id) |id| {
@@ -177,7 +204,7 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
         }
 
         pub fn safeLookup(self: Self, key: Key) ?ID {
-            for (self.items, 0..) |existing, i| {
+            for (self.items.items, 0..) |existing, i| {
                 const itemKey = getKey(existing);
                 if (itemKey == key) {
                     return i;
