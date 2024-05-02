@@ -22,9 +22,9 @@ alloc: std.mem.Allocator,
 
 pub fn init(alloc: std.mem.Allocator) IR {
     return .{
-        .types = TypeList.init(alloc),
+        .types = TypeList.init(),
         .globals = GlobalsList.init(),
-        .funcs = FunctionList.init(alloc),
+        .funcs = FunctionList.init(),
         .intern_pool = InternPool.init(alloc),
         .alloc = alloc,
     };
@@ -99,20 +99,33 @@ pub const GlobalsList = struct {
 
 pub const FunctionList = struct {
     items: List,
-    pub const List = std.ArrayList(Function);
+    pub const List = StaticSizeLookupTable(StrID, Function, Function.getKey);
 
-    pub fn init(alloc: std.mem.Allocator) FunctionList {
-        return .{ .items = List.init(alloc) };
+    pub fn init() FunctionList {
+        return .{ .items = undefined };
+    }
+    /// Note the lack of a way to add one item at a time,
+    /// only many at once
+    pub fn fill(self: *FunctionList, items: []Function) void {
+        self.items = List.init(items);
     }
 };
 
 pub const Function = struct {
+    name: StrID,
     bbs: std.ArrayList(BasicBlock),
+    returnType: Type,
 
-    pub fn init(alloc: std.mem.Allocator) Function {
+    pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type) Function {
         return .{
             .bbs = std.ArrayList(BasicBlock).init(alloc),
+            .name = name,
+            .returnType = returnType,
         };
+    }
+
+    pub fn getKey(self: Function) StrID {
+        return self.name;
     }
 };
 
@@ -257,6 +270,10 @@ pub const StructType = struct {
     pub fn numFields(self: StructType) usize {
         return @as(usize, self.fieldLookup.len);
     }
+
+    pub fn getKey(self: StructType) StrID {
+        return self.name;
+    }
 };
 
 pub const StructID = StrID;
@@ -264,26 +281,24 @@ pub const StructID = StrID;
 /// Literally just a list of types
 /// Abstracted so we can change it as needed and define helpers
 pub const TypeList = struct {
-    items: Map,
+    items: List,
 
     // TODO: use lookup table
-    pub const Map = std.AutoArrayHashMap(StructID, Item);
+    pub const List = StaticSizeLookupTable(StructID, Item, Item.getKey);
     pub const Item = StructType;
 
-    pub fn init(alloc: std.mem.Allocator) TypeList {
-        return .{ .items = Map.init(alloc) };
+    pub fn init() TypeList {
+        return .{ .items = undefined };
     }
 
     /// Note the lack of a way to add one item at a time,
-    /// only many
-    pub fn fill(self: *TypeList, items: []Item) !void {
-        for (items) |item| {
-            try self.items.put(item.name, item);
-        }
+    /// only many at once
+    pub fn fill(self: *TypeList, items: []Item) void {
+        self.items = List.init(items);
     }
 
     pub fn len(self: *const TypeList) usize {
-        return self.items.count();
+        return @intCast(self.items.len);
     }
 
     pub fn get(self: *const TypeList, id: StructID) ?Item {
@@ -293,7 +308,7 @@ pub const TypeList = struct {
     /// WARN: I think I saw somewhere that the AutoArrayHashMap preserves
     /// insertion order but I'm not sure
     pub fn index(self: *const TypeList, idx: usize) Item {
-        return self.items.values()[idx];
+        return self.items.items[idx];
     }
 
     // TODO: !!!

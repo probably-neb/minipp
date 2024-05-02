@@ -28,7 +28,10 @@ pub fn generate(alloc: std.mem.Allocator, ast: *const Ast) !IR {
     ir.globals.fill(globals);
 
     const types = try gen_types(&ir, ast);
-    try ir.types.fill(types);
+    ir.types.fill(types);
+
+    const funcs = try gen_functions(&ir, ast);
+    ir.funcs.fill(funcs);
 
     return ir;
 }
@@ -111,6 +114,48 @@ pub fn gen_types(ir: *IR, ast: *const Ast) MemError![]IR.TypeList.Item {
     const types_sized = try ir.alloc.realloc(types, ti);
     return types_sized;
 }
+
+pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
+    const Fun = IR.Function;
+
+    // NOTE: not using the `iterFuncs` method because we wan't to use the
+    // `calculateLen` helper and I'm too lazy rn to port it
+    var funcIter = Ast.NodeIter(.Function).init(ast, 0, ast.nodes.items.len);
+    const numFuncs = funcIter.calculateLen();
+    log.trace("num funcs := {}\n", .{numFuncs});
+    var funcs: []Fun = try ir.alloc.alloc(Fun, numFuncs);
+    var fi: usize = 0;
+
+    while (funcIter.next()) |funcNode| : (fi += 1) {
+        funcs[fi] = try gen_function(ir, ast, funcNode.kind.Function);
+    }
+    return funcs;
+}
+
+pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionType) !IR.Function {
+    const Fun = IR.Function;
+    const funName = ir.internIdent(funNode.getName(ast));
+    const funReturnType = ir.astTypeToIRType(funNode.getReturnType(ast).?);
+    var fun = Fun.init(ir.alloc, funName, funReturnType);
+    // TODO: exit/entry blocks should probably be stored separately
+    // i.e. entry = bb[0], exit = bb[1], rest = bb[2..exit)
+    // possibly as fields in `struct Function` with a helper on `Function`
+    // that checks `i < 2 ? [self.entry, self.exit][i] : self.bbs[i - 2]`
+
+    // entry block is the one that holds `alloca`s
+    // separated to make it easier to just append `alloca`s
+    // to the start and maintain hoisting (all allocas are in order at start of function)
+    const entryBB = fun.bbs.startNew();
+    _ = entryBB;
+    const exitBB = fun.bbs.startNew();
+    _ = exitBB;
+
+    return fun;
+}
+
+/////////////
+// TESTING //
+/////////////
 
 const ting = std.testing;
 const testAlloc = std.heap.page_allocator;

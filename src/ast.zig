@@ -679,6 +679,7 @@ pub const Node = struct {
 
             const Self = @This();
 
+            // FIXME: remove ? from return type, we don't return null!
             pub fn getType(self: Self, ast: *const Ast) ?Type {
                 const retTypeNode = ast.get(self.type).kind.ReturnType;
                 if (retTypeNode.type) |tyNodeIndex| {
@@ -1014,7 +1015,7 @@ pub fn NodeIter(comptime tag: NodeKindTag) type {
 
         const Self = @This();
 
-        fn init(ast: *const Ast, first: usize, last: ?usize) Self {
+        pub fn init(ast: *const Ast, first: usize, last: ?usize) Self {
             const firstIndex = first;
             const lastIndex = last orelse first;
             return Self{ .ast = ast, .first = firstIndex, .i = firstIndex, .last = lastIndex };
