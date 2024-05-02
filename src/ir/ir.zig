@@ -65,7 +65,7 @@ pub fn getIdent(self: *const IR, id: StrID) []const u8 {
 pub const GlobalsList = struct {
     items: List,
 
-    pub const List = LinearLookupTable(StrID, Item);
+    pub const List = StaticSizeLookupTable(StrID, Item, Item.getKey);
     pub const Item = struct {
         name: StrID,
         type: Type,
@@ -84,7 +84,7 @@ pub const GlobalsList = struct {
     }
 
     pub fn fill(self: *GlobalsList, items: []Item) void {
-        const lut = List.init(items, Item.getKey);
+        const lut = List.init(items);
         self.items = lut;
     }
 
@@ -131,20 +131,18 @@ pub const BasicBlock = struct {
 };
 
 /// A lookup table where the index of the item is the key
-pub fn LinearLookupTable(comptime Key: type, comptime Value: type) type {
+/// and the size never changes after being initialized
+pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn (val: Value) Key) type {
     return struct {
         items: []Value,
         len: u32,
-        getKey: GetKey,
 
         const Self = @This();
 
         pub const ID = u32;
 
-        pub const GetKey = *const fn (val: Value) Key;
-
-        pub fn init(items: []Value, getKey: GetKey) Self {
-            return .{ .items = items, .len = @intCast(items.len), .getKey = getKey };
+        pub fn init(items: []Value) Self {
+            return .{ .items = items, .len = @intCast(items.len) };
         }
 
         pub fn lookup(self: Self, key: Key) Key {
@@ -157,7 +155,30 @@ pub fn LinearLookupTable(comptime Key: type, comptime Value: type) type {
 
         pub fn safeLookup(self: Self, key: Key) ?ID {
             for (self.items, 0..) |existing, i| {
-                const itemKey = self.getKey(existing);
+                const itemKey = getKey(existing);
+                if (itemKey == key) {
+                    return i;
+                }
+            }
+            return null;
+        }
+
+        pub fn entry(self: Self, key: ID) Value {
+            return self.items[key];
+        }
+    };
+}
+        pub fn lookup(self: Self, key: Key) Key {
+            const maybe_id = self.safeLookup(key);
+            if (maybe_id) |id| {
+                return id;
+            }
+            @panic("Item not found in lookup table");
+        }
+
+        pub fn safeLookup(self: Self, key: Key) ?ID {
+            for (self.items, 0..) |existing, i| {
+                const itemKey = getKey(existing);
                 if (itemKey == key) {
                     return i;
                 }
@@ -179,7 +200,7 @@ pub const StructType = struct {
     /// The slice is assumed to be allocated and freed if necessary by the TypeList
     fieldLookup: FieldList,
 
-    const FieldList = LinearLookupTable(StrID, Field);
+    const FieldList = StaticSizeLookupTable(StrID, Field, Field.getKey);
 
     pub const Field = struct {
         name: StrID,
@@ -197,7 +218,7 @@ pub const StructType = struct {
     pub const FieldID = u32;
 
     pub fn init(name: StrID, fields: []Field) StructType {
-        const fieldLookup = FieldList.init(fields, Field.getKey);
+        const fieldLookup = FieldList.init(fields);
         return .{ .name = name, .fieldLookup = fieldLookup };
     }
 
