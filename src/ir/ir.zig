@@ -185,6 +185,25 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
         pub fn entry(self: Self, key: ID) Value {
             return self.items[key];
         }
+
+        /// Helper mainly for the `fromLUT` function for when the value is the key
+        pub fn IDgetKeyHelper(val: anytype) @TypeOf(val) {
+            return val;
+        }
+
+        /// Helper for creating a static size lookup table from another LUT given it's length
+        /// Because both will use the indices as keys, 0 in the new LUT will be the same
+        /// as 0 in the old LUT and so on
+        pub fn initSized(alloc: std.mem.Allocator, size: usize, maybeDefault: ?Value) !Self {
+            const default = maybeDefault orelse undefined;
+
+            const items = try alloc.alloc(Value, size);
+
+            for (0..size) |i| {
+                items[i] = default;
+            }
+            return Self.init(items);
+        }
     };
 }
 
