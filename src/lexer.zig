@@ -120,6 +120,7 @@ pub const TokenKind = enum {
     KeywordTrue,
     KeywordVoid,
     KeywordWhile,
+    KeywordIntArray,
     Unset,
 
     // NOTE: bool, int, void shouldn't be valid keywords, (valid /type/ names)
@@ -144,6 +145,7 @@ pub const TokenKind = enum {
         .{ "true", TokenKind.KeywordTrue },
         .{ "void", TokenKind.KeywordVoid },
         .{ "while", TokenKind.KeywordWhile },
+        .{ "int_array", TokenKind.KeywordIntArray },
     });
 
     pub fn equals(self: TokenKind, other: TokenKind) bool {
@@ -355,6 +357,7 @@ pub const Lexer = struct {
     }
 
     fn read_symbol(lxr: *Lexer) !TokenKind {
+        std.debug.print("read_symbol: {c}\n", .{lxr.ch});
         const tok: TokenKind = switch (lxr.ch) {
             '<' => if (lxr.step_if_next_is('=')) .LtEq else .Lt,
             '>' => if (lxr.step_if_next_is('=')) .GtEq else .Gt,
@@ -454,8 +457,11 @@ test "add" {
 }
 
 test "brackets" {
-    const tokens = try expect_results_in_tokens("[]", &[_]TokenKind{
+    const tokens = try expect_results_in_tokens("new int_array[10]", &[_]TokenKind{
+        .KeywordNew,
+        .KeywordIntArray,
         .LBracket,
+        .Number,
         .RBracket,
         .Eof,
     });
