@@ -57,6 +57,12 @@ Relies on dominance (cfg parents/control flow analysis i.e. if this bb is runnin
 
 
 
+# critical operations
+* Set return value
+* Input/Output (read+print)
+* impacts memory visible to other functions (modifying struct args / globals)
+* function calls
+
 
 
 ----

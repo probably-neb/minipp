@@ -112,12 +112,16 @@ pub const FunctionList = struct {
 };
 
 pub const Function = struct {
+    alloc: std.mem.Allocator,
     name: StrID,
-    bbs: std.ArrayList(BasicBlock),
     returnType: Type,
+    bbs: std.ArrayList(BasicBlock),
+    regs: LookupTable(Register.ID, Register, Register.getID),
+    insts: LookupTable(Inst.ID, Inst, Inst.getID),
 
     pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type) Function {
         return .{
+            .alloc = alloc,
             .bbs = std.ArrayList(BasicBlock).init(alloc),
             .name = name,
             .returnType = returnType,
@@ -127,12 +131,47 @@ pub const Function = struct {
     pub fn getKey(self: Function) StrID {
         return self.name;
     }
+
+    pub fn newBB(self: *Function) BasicBlock.ID {
+        const bb = BasicBlock.init(self.alloc);
+        const id = self.bbs.len();
+        self.bbs.append(bb);
+        return id;
+    }
+
+    pub fn addNamedInst(self: *Function, bb: BasicBlock.ID, inst: Inst, name: StrID) !void {
+        // reserve
+        const regID = try self.regs.add(undefined);
+        const instID = try self.insts.add(undefined);
+
+        // construct
+        const reg = Register{.id = regID, .inst = instID, .name = name, .bb = bb};
+        inst.res = Ref.local(regID, name);
+
+        // save
+        self.regs.set(regID, reg);
+        self.insts.set(instID, inst);
+    }
+};
+
+pub const Register = struct {
+    id: ID,
+    inst: Inst.ID,
+    name: StrID,
+    bb: BasicBlock.ID,
+
+    pub const ID = u32;
+
+    pub fn getID(self: Register) ID {
+        return self.id;
+    }
 };
 
 pub const BasicBlock = struct {
-    insts: InstructionList,
     incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
+    // and ORDERED list of the instruction ids of the instructions in this block
+    insts: std.ArrayList(Inst.ID),
 
     /// The ID of a basic block is it's index within the arraylist of
     /// basic blocks in the `Function` type
@@ -142,7 +181,6 @@ pub const BasicBlock = struct {
 
     pub fn init(alloc: std.mem.Allocator) BasicBlock {
         return .{
-            .insts = InstructionList.init(alloc),
             .incomers = std.ArrayList(Label).init(alloc),
             .outgoers = [2]?Label{ null, null },
         };
@@ -245,8 +283,19 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
             return null;
         }
 
-        pub fn entry(self: Self, key: ID) Value {
+        pub fn get(self: Self, key: ID) Value {
             return self.items[key];
+        }
+
+        pub fn set(self: *Self, key: ID, val: Value) void {
+            self.items[key] = value;
+        }
+
+        pub fn add(self: *Self, val: Value) !ID {
+            const id = self.len;
+            try self.items.append(val);
+            self.len += 1;
+            return id;
         }
     };
 }
@@ -435,23 +484,24 @@ pub const Type = union(enum) {
 pub const Ref = struct {
     /// ID
     i: u32,
+    name: StrID,
     kind: enum { local, global, label },
     /// Ref used when no ref needed
     pub const default = Ref.local(0);
 
     /// Helper function to create a ref to eine local
-    pub fn local(i: u32) Ref {
-        return Ref{ .i = i, .kind = .local };
+    pub fn local(i: u32, name: StrID) Ref {
+        return Ref{ .i = i, .kind = .local, .name = name };
     }
 
     /// Helper function to create a ref to eine global
-    pub fn global(i: u32) Ref {
-        return Ref{ .i = i, .kind = .global };
+    pub fn global(i: u32, name: StrID) Ref {
+        return Ref{ .i = i, .kind = .global, .name = name };
     }
 
     /// Helper function to create a ref to eine label
     pub fn label(i: u32) Ref {
-        return Ref{ .i = i, .kind = .label };
+        return Ref{ .i = i, .kind = .label, .name = i };
     }
 };
 
@@ -750,8 +800,8 @@ pub const Inst = struct {
     // Allocation
     /// `<result> = alloca <ty>`
     // Alloc,
-    pub fn alloca(res: Ref, ty: Type) Inst {
-        return .{ .op = .Alloc, .res = res, .ty1 = ty };
+    pub fn alloca(ty: Type) Inst {
+        return .{ .op = .Alloc, .ty1 = ty };
     }
 
     pub const Misc = struct {

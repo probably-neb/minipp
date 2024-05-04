@@ -133,10 +133,10 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
 }
 
 pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionType) !IR.Function {
-    const Fun = IR.Function;
     const funName = ir.internIdent(funNode.getName(ast));
     const funReturnType = ir.astTypeToIRType(funNode.getReturnType(ast).?);
-    var fun = Fun.init(ir.alloc, funName, funReturnType);
+
+    var fun = IR.Function.init(ir.alloc, funName, funReturnType);
     // TODO: exit/entry blocks should probably be stored separately
     // i.e. entry = bb[0], exit = bb[1], rest = bb[2..exit)
     // possibly as fields in `struct Function` with a helper on `Function`
@@ -145,10 +145,33 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
     // entry block is the one that holds `alloca`s
     // separated to make it easier to just append `alloca`s
     // to the start and maintain hoisting (all allocas are in order at start of function)
-    const entryBB = fun.bbs.startNew();
-    _ = entryBB;
-    const exitBB = fun.bbs.startNew();
+    const entryBB = fun.newBB();
+    // Exit is like entryBB in that it is intentionally bare, containing only
+    // the return instruction
+    // TODO: fun.addLocal(name, type) instead of the `Inst.alloca` below
+    // for consistency with exit and so we isolate how entry/exit blocks are stored
+    // / managed
+    const exitBB = fun.newBB();
+    // TODO: fun.addReturnReg(...regInfo);
+    // for easy
     _ = exitBB;
+
+    var declsIter = funNode.iterLocalDecls(ast);
+    while (declsIter.next()) |declNode| {
+        const decl = declNode.kind.TypedIdentifier;
+        const declName = ir.internIdent(decl.getName(ast));
+        const declType = ir.astTypedeclTypepe(decl.getType(ast));
+
+        const alloca = Inst.alloca(declType);
+        try fun.addNamedInst(entryBB, alloca, declName);
+    }
+
+    var statementsIter = funNode.iterStatements(ast);
+    while (statementsIter.next()) |stmtNode| {
+        _ = stmtNode;
+        // TODO: gen_statement(fun, bb, stmtNode)
+        continue;
+    }
 
     return fun;
 }

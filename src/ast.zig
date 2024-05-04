@@ -230,7 +230,7 @@ pub const Node = struct {
             }
 
             //Ben you will hate this :D
-            //You are correcy my friend. I do in fact hate this
+            //You are correct my friend. I do in fact hate this
             fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
                 var iterator: ?usize = self.firstDecl;
@@ -586,6 +586,30 @@ pub const Node = struct {
                 };
             }
 
+            pub fn iterStatements(self: Self, ast: *const Ast) NodeIter(.Statement) {
+                if (self.statements) |statementsIndex| {
+                    const statements = ast.get(statementsIndex).kind.StatementList;
+                    return NodeIter(.Statement).init(
+                        ast,
+                        statements.firstStatement,
+                        statements.lastStatement,
+                    );
+                }
+                return NodeIter(.Statement).initEmpty();
+            }
+
+            pub fn iterLocalDecls(self: Self, ast: *const Ast) NodeIter(.TypedIdentifier) {
+                if (self.declarations) |declsIndex| {
+                    const decls = ast.get(declsIndex).kind.LocalDeclarations;
+                    return NodeIter(.TypedIdentifier).init(
+                        ast,
+                        decls.firstDecl,
+                        decls.lastDecl,
+                    );
+                }
+                return NodeIter(.TypedIdentifier).initEmpty();
+            }
+
             test "ast.iterReturns.void" {
                 errdefer log.print();
                 const input = "fun main() void { return; }";
@@ -621,50 +645,11 @@ pub const Node = struct {
                 var ret = iter.next();
                 try std.testing.expect(ret != null);
 
-                // const expr1 = ast.get(ret.?.expr.?).kind.Expression;
-                // const expr1Selector = ast.get(expr1.expr).kind.Selector;
-                // const expr1Factor = ast.get(expr1Selector.factor).kind.Factor;
-                // const expr1Number = ast.get(expr1Factor.factor).token._range.getSubStrFromStr(ast.input);
-                // try std.testing.expectEqualStrings(expr1Number, "1");
-
                 ret = iter.next();
                 try std.testing.expect(ret != null);
 
-                // const expr2 = ast.get(ret.?.expr.?).kind.Expression;
-                // const expr2Selector = ast.get(expr2.expr).kind.Selector;
-                // const expr2Factor = ast.get(expr2Selector.factor).kind.Factor;
-                // const expr2Number = ast.get(expr2Factor.factor).token._range.getSubStrFromStr(ast.input);
-                // try std.testing.expectEqualStrings(expr2Number, "1");
-
                 try std.testing.expect(iter.next() == null);
             }
-            // test "ast.iterReturns.ret_expr" {
-            //     const input = "fun main() int { if (true) {return 1;} else {return 2;} }";
-            //     const ast = try testMe(input);
-            //     const func = (ast.find(.Function, 0) orelse unreachable).kind.Function;
-            //     const body = ast.get(func.body).kind.FunctionBody;
-            //     var iter = body.iterReturns(&ast);
-
-            //     var ret = iter.next();
-            //     try std.testing.expect(ret != null);
-
-            //     const expr1 = ast.get(ret.?.expr.?).kind.Expression;
-            //     const expr1Selector = ast.get(expr1.expr).kind.Selector;
-            //     const expr1Factor = ast.get(expr1Selector.factor).kind.Factor;
-            //     const expr1Number = ast.get(expr1Factor.factor).token._range.getSubStrFromStr(ast.input);
-            //     try std.testing.expectEqualStrings(expr1Number, "1");
-
-            //     ret = iter.next();
-            //     try std.testing.expect(ret != null);
-
-            //     const expr2 = ast.get(ret.?.expr.?).kind.Expression;
-            //     const expr2Selector = ast.get(expr2.expr).kind.Selector;
-            //     const expr2Factor = ast.get(expr2Selector.factor).kind.Factor;
-            //     const expr2Number = ast.get(expr2Factor.factor).token._range.getSubStrFromStr(ast.input);
-            //     try std.testing.expectEqualStrings(expr2Number, "1");
-
-            //     try std.testing.expect(iter.next() == null);
-            // }
 
             pub fn getStatementList(self: Self) ?Ref(.StatementList) {
                 return self.statements orelse null;
@@ -1019,6 +1004,11 @@ pub fn NodeIter(comptime tag: NodeKindTag) type {
             const firstIndex = first;
             const lastIndex = last orelse first;
             return Self{ .ast = ast, .first = firstIndex, .i = firstIndex, .last = lastIndex };
+        }
+
+        /// You know, for when the shit is null
+        pub fn initEmpty() Self {
+            return Self.init(undefined, 1, 0);
         }
 
         pub fn next(self: *Self) ?Node {
