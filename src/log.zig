@@ -31,6 +31,7 @@ fn logInner(level: Level, comptime msg: []const u8, vars: anytype) void {
         return;
     };
 }
+
 /// Log a message with the `info` level. Fails silently if the message can't be formatted.
 pub fn info(comptime msg: []const u8, vars: anytype) void {
     logInner(Level.Info, msg, vars);
