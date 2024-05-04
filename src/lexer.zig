@@ -367,7 +367,6 @@ pub const Lexer = struct {
     }
 
     fn read_symbol(lxr: *Lexer) !TokenKind {
-        std.debug.print("read_symbol: {c}\n", .{lxr.ch});
         const tok: TokenKind = switch (lxr.ch) {
             '<' => if (lxr.step_if_next_is('=')) .LtEq else .Lt,
             '>' => if (lxr.step_if_next_is('=')) .GtEq else .Gt,
