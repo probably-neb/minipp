@@ -96,6 +96,8 @@ pub const TokenKind = enum {
     RParen,
     LCurly,
     RCurly,
+    LBracket,
+    RBracket,
     Semicolon,
     Eof,
     Or,
@@ -366,6 +368,8 @@ pub const Lexer = struct {
             ')' => .RParen,
             '{' => .LCurly,
             '}' => .RCurly,
+            '[' => .LBracket,
+            ']' => .RBracket,
             '+' => .Plus,
             '*' => .Mul,
             '/' => .Div,
@@ -444,6 +448,15 @@ test "add" {
         .Number,
         .Plus,
         .Number,
+        .Eof,
+    });
+    defer testAlloc.free(tokens);
+}
+
+test "brackets" {
+    const tokens = try expect_results_in_tokens("[]", &[_]TokenKind{
+        .LBracket,
+        .RBracket,
         .Eof,
     });
     defer testAlloc.free(tokens);
