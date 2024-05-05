@@ -3,7 +3,7 @@ types -> {type-declaration}∗
 type-declaration -> 'struct' id '{' nested-decl '}' ';'
 nested-decl -> decl ';' { decl ';'}∗
 decl -> 'type' id
-type -> 'int' | 'bool' | 'struct' id
+type -> 'int' | 'bool' | 'struct' id | 'int_array'
 declarations -> {declaration}∗
 declaration -> 'type' id-list ';'
 id-list -> id {',' id}∗
