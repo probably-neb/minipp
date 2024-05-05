@@ -212,6 +212,13 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
                     const res = fun.addNamedInst(bb, inst, exprReg.name);
                     return res;
                 },
+                .Minus => {
+                    const onExpr = ast.get(unary.expr).kind.Expression;
+                    const exprReg = try gen_expression(ir, ast, fun, bb, onExpr);
+                    const inst = Inst.neg(IR.Ref.local(exprReg.id));
+                    const res = fun.addNamedInst(bb, inst, exprReg.name);
+                    return res;
+                },
                 else => utils.todo("gen_expression.unary", .{tok}),
             }
         },
@@ -277,28 +284,42 @@ const ExpectedInst = struct {
     // name: []const u8,
 };
 
+// TODO: consider making `IR.Function.withInsts(insts: []inst)` or similar
+// that takes an array of insts and creates the function with them
+// then we can compare in much more detail
 fn expectIRMatches(fun: IR.Function, expected: []const Inst) !void {
-    for (fun.insts.array(), 0..) |inst, i| {
-        var expectedInst = expected[i];
+    const got = fun.insts.array();
+    for (expected, 0..) |expectedInst, i| {
+        if (i >= got.len) {
+            // bro what was copilot thinking with this one
+            // try ting.expectEqualStrings("expected more insts", "got fewer insts");
+            log.err("expected more insts. Missing:\n{any}\n", .{expected[i..]});
+            return error.NotEnoughInstructions;
+        }
+        var gotInst = got[i];
         // NOTE: when expanding, must make sure the `res` field on the
         // expected insts are set as they won't be by the helper creator
         // functions
-        try ting.expectEqual(@intFromEnum(inst.op), @intFromEnum(expectedInst.op));
+        try ting.expectEqual(@intFromEnum(expectedInst.op), @intFromEnum(gotInst.op));
     }
 }
 
 test "stack.fun.empty" {
+    errdefer log.print();
     const ir = try testMe("fun main() void {}");
     try ting.expectEqual(@as(usize, 1), ir.funcs.items.len);
 }
 
 test "stack.fun.not-arg" {
+    errdefer log.print();
     const ir = try testMe("fun main() bool { bool a; return !a; }");
-    const main = try ir.getFunByName("main");
+    const mainName = try ir.getIdentID("main");
+    const main = try ir.getFun(mainName);
+    const a = try ir.getIdentID("a");
     const expected = [_]Inst{
         Inst.alloca(IR.Type.bool),
-        Inst.load(IR.Type.bool, IR.Ref.local(0, 0)),
-        Inst.ret(IR.Type.bool, IR.Ref.local(1, 0)),
+        Inst.load(IR.Type.bool, IR.Ref.local(0, a)),
+        Inst.ret(IR.Type.bool, IR.Ref.local(1, a)),
     };
     try expectIRMatches(main, &expected);
 }

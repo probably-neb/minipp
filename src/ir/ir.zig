@@ -62,8 +62,7 @@ pub fn getIdent(self: *const IR, id: StrID) []const u8 {
     return self.intern_pool.get(id) catch unreachable;
 }
 
-pub fn getFunByName(self: *const IR, name: []const u8) !Function {
-    const nameID = try self.intern_pool.getIDOf(name);
+pub fn getFun(self: *const IR, nameID: StrID) !Function {
     for (self.funcs.items.items) |func| {
         if (func.name == nameID) {
             return func;
@@ -71,6 +70,10 @@ pub fn getFunByName(self: *const IR, name: []const u8) !Function {
     }
 
     return error.NotFound;
+}
+
+pub fn getIdentID(self: *const IR, ident: []const u8) !StrID {
+    return self.intern_pool.getIDOf(ident);
 }
 
 pub const GlobalsList = struct {
