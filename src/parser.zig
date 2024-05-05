@@ -446,6 +446,7 @@ pub const Parser = struct {
         const token = try self.consumeToken();
 
         // Expect int | bool | struct (id)
+        // FIXME: SPENCER PUT THE ARRAY TYPE HERE AS A VALID TYPE
         switch (token.kind) {
             TokenKind.KeywordInt => {
                 const kind = NodeKind.IntType;
@@ -1397,9 +1398,9 @@ pub const Parser = struct {
 
                 const atomIndex = try self.parseSelector();
                 std.debug.print("\n", .{});
-                prettyPrintTokens(self,  self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
+                prettyPrintTokens(self, self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
                 std.debug.print("\n", .{});
-                prettyPrintTokens(self,  self.tokens[expr.Atom.start..self.pos]);
+                prettyPrintTokens(self, self.tokens[expr.Atom.start..self.pos]);
                 std.debug.print("\n", .{});
                 // I really should have made this error shorter before the hundredth time I saw it
                 utils.assert(self.pos == (expr.Atom.start + expr.Atom.len), "either didn't skip enough tokens when extracting atom or didn't parse enough when reconstructing tree... either way shits borqed! glhf!!!\n Expected to parse: \n {any} \nBut Parsed: \n {any} \n", .{ self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)], self.tokens[expr.Atom.start..self.pos] });
@@ -1436,7 +1437,7 @@ pub const Parser = struct {
 
         // NOTE: unessary?
         const node = Node{
-            .kind = NodeKind{ .Expression = .{ .expr = treeIndex, .last = last} },
+            .kind = NodeKind{ .Expression = .{ .expr = treeIndex, .last = last } },
             .token = tok,
         };
         try self.set(expressionIndex, node);
@@ -1537,7 +1538,7 @@ pub const Parser = struct {
                     }
                 }
                 const current = try self.currentToken();
-                if(current.kind == .Dot){
+                if (current.kind == .Dot) {
                     _ = try self.consumeToken();
                     try self.expectToken(.Identifier);
                     numTokens += 2;
@@ -1547,6 +1548,8 @@ pub const Parser = struct {
                 }
             },
             .KeywordNew => {
+                // FIXME: SPENCER PUT SOME CHECKS HERE TO CHECK FOR THE int_array after new AND EXPECT
+                // THE BRACKET, NUMBER, BRACKET tokens (making sure to update numTokens accordingly)
                 _ = try self.expectToken(.KeywordNew);
                 // Note - leaving checking if the thing after new is right until it's parsed later...
                 // this is probably a badddd idea (malformed expressions like what! (with the lights on!!??))
@@ -1726,6 +1729,11 @@ pub const Parser = struct {
                 lhsIndex = try self.astAppendNode(nullNode);
             },
             TokenKind.KeywordNew => {
+                // FIXME: SPENCER HAVE THE SAME EXPECT LOGIC YOU HAD IN `extractAtom` HERE
+                // BUT ACTUALLY CREATE THE AST NODES THIS TIME. TALK TO ME IF YOU ARE CONFUSED
+                // MAKE SURE TO RETURN error.InvalidToken IF THERE IS an int_array NOT FOLLOWED BY
+                // BRACKET NUMBER BRACKET
+
                 // Expect new
                 const newToken = try self.expectAndYeildToken(.KeywordNew);
                 const newIndex = try self.reserve();
