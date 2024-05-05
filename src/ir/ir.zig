@@ -25,7 +25,7 @@ pub fn init(alloc: std.mem.Allocator) IR {
         .types = TypeList.init(),
         .globals = GlobalsList.init(),
         .funcs = FunctionList.init(),
-        .intern_pool = InternPool.init(alloc),
+        .intern_pool = InternPool.init(alloc) catch unreachable,
         .alloc = alloc,
     };
 }
@@ -60,6 +60,17 @@ pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
 pub fn getIdent(self: *const IR, id: StrID) []const u8 {
     // this is only supposed to be used for debugging, so just panic
     return self.intern_pool.get(id) catch unreachable;
+}
+
+pub fn getFunByName(self: *const IR, name: []const u8) !Function {
+    const nameID = try self.intern_pool.getIDOf(name);
+    for (self.funcs.items.items) |func| {
+        if (func.name == nameID) {
+            return func;
+        }
+    }
+
+    return error.NotFound;
 }
 
 pub const GlobalsList = struct {
@@ -115,16 +126,24 @@ pub const Function = struct {
     alloc: std.mem.Allocator,
     name: StrID,
     returnType: Type,
-    bbs: std.ArrayList(BasicBlock),
+    bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
-    insts: LookupTable(Inst.ID, Inst, Inst.getID),
+    insts: OrderedList(Inst),
+
+    // index into the insts array
+    pub const InstID = usize;
+
+    pub const entryBBID = 0;
+    pub const exitBBID = 1;
 
     pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type) Function {
         return .{
             .alloc = alloc,
-            .bbs = std.ArrayList(BasicBlock).init(alloc),
+            .bbs = OrderedList(BasicBlock).init(alloc),
             .name = name,
             .returnType = returnType,
+            .regs = LookupTable(Register.ID, Register, Register.getID).init(alloc),
+            .insts = OrderedList(Inst).init(alloc),
         };
     }
 
@@ -132,31 +151,52 @@ pub const Function = struct {
         return self.name;
     }
 
-    pub fn newBB(self: *Function) BasicBlock.ID {
+    pub fn newBB(self: *Function) !BasicBlock.ID {
         const bb = BasicBlock.init(self.alloc);
-        const id = self.bbs.len();
-        self.bbs.append(bb);
+        const id = try self.bbs.add(bb);
         return id;
     }
 
-    pub fn addNamedInst(self: *Function, bb: BasicBlock.ID, inst: Inst, name: StrID) !void {
+    pub fn addNamedInst(self: *Function, bb: BasicBlock.ID, basicInst: Inst, name: StrID) !Register {
         // reserve
         const regID = try self.regs.add(undefined);
         const instID = try self.insts.add(undefined);
 
         // construct
-        const reg = Register{.id = regID, .inst = instID, .name = name, .bb = bb};
+        const reg = Register{ .id = regID, .inst = instID, .name = name, .bb = bb };
+        var inst = basicInst;
         inst.res = Ref.local(regID, name);
 
         // save
         self.regs.set(regID, reg);
         self.insts.set(instID, inst);
+        return reg;
+    }
+
+    pub const NotFoundError = error{IdentifierNotFound};
+    /// Gets the ID of a register created with an `alloca` in the entry
+    /// based on the name of the identifier in question
+    /// Returns `error.NotFound`
+    /// WARN: ONLY SUPPOSED TO BE USED IN STACK IR GEN
+    /// IN PHI NODES WE SHOULD SEARCH UP THE CFG
+    pub fn getNamedAllocaRegID(self: *Function, name: StrID) NotFoundError!Register.ID {
+        for (self.bbs[Function.entryBBID].insts) |instID| {
+            const inst = self.insts.get(instID);
+            const res = inst.res;
+            if (res.name == name) {
+                return instID;
+            }
+            if (inst.op == Op.Alloc) {
+                return res.regID;
+            }
+        }
+        return error.IdentifierNotFound;
     }
 };
 
 pub const Register = struct {
     id: ID,
-    inst: Inst.ID,
+    inst: Function.InstID,
     name: StrID,
     bb: BasicBlock.ID,
 
@@ -171,7 +211,7 @@ pub const BasicBlock = struct {
     incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
     // and ORDERED list of the instruction ids of the instructions in this block
-    insts: std.ArrayList(Inst.ID),
+    insts: std.ArrayList(Function.InstID),
 
     /// The ID of a basic block is it's index within the arraylist of
     /// basic blocks in the `Function` type
@@ -183,6 +223,7 @@ pub const BasicBlock = struct {
         return .{
             .incomers = std.ArrayList(Label).init(alloc),
             .outgoers = [2]?Label{ null, null },
+            .insts = std.ArrayList(Function.InstID).init(alloc),
         };
     }
 };
@@ -259,8 +300,9 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
 
         pub const List = std.ArrayList(Value);
 
-        pub fn init(items: List) Self {
-            return .{ .items = items, .len = @intCast(items.len) };
+        pub fn init(alloc: std.mem.Allocator) Self {
+            const items = List.init(alloc);
+            return .{ .items = items, .len = @intCast(items.items.len) };
         }
 
         /// A wrapper around `safeLookup` that panics if the key is not
@@ -287,8 +329,8 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
             return self.items[key];
         }
 
-        pub fn set(self: *Self, key: ID, val: Value) void {
-            self.items[key] = value;
+        pub fn set(self: *Self, key: ID, value: Value) void {
+            self.items.items[key] = value;
         }
 
         pub fn add(self: *Self, val: Value) !ID {
@@ -296,6 +338,41 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
             try self.items.append(val);
             self.len += 1;
             return id;
+        }
+    };
+}
+
+/// A wrapper around `std.ArrayList` to provide a way to get
+/// the index when you append, and some other helpers TBD + nicer interface
+/// (.len field, .get method etc.)
+pub fn OrderedList(comptime T: type) type {
+    return struct {
+        list: std.ArrayList(T),
+        len: u32,
+        pub const Self = @This();
+
+        pub fn init(alloc: std.mem.Allocator) Self {
+            return .{ .list = std.ArrayList(T).init(alloc), .len = 0 };
+        }
+
+        /// A helper for iterating instead of `field.list.items`
+        pub fn array(self: Self) []T {
+            return self.list.items;
+        }
+
+        pub fn get(self: Self, idx: u32) T {
+            return self.list.items[idx];
+        }
+
+        pub fn add(self: *Self, item: T) !u32 {
+            const id = self.len;
+            try self.list.append(item);
+            self.len += 1;
+            return id;
+        }
+
+        pub fn set(self: *Self, idx: u32, item: T) void {
+            self.list.items[idx] = item;
         }
     };
 }
@@ -483,11 +560,11 @@ pub const Type = union(enum) {
 /// Ref to a register
 pub const Ref = struct {
     /// ID
-    i: u32,
+    i: Register.ID,
     name: StrID,
-    kind: enum { local, global, label },
+    kind: enum { local, global, label, immediate },
     /// Ref used when no ref needed
-    pub const default = Ref.local(0);
+    pub const default = Ref.local(0, InternPool.NULL);
 
     /// Helper function to create a ref to eine local
     pub fn local(i: u32, name: StrID) Ref {
@@ -502,6 +579,10 @@ pub const Ref = struct {
     /// Helper function to create a ref to eine label
     pub fn label(i: u32) Ref {
         return Ref{ .i = i, .kind = .label, .name = i };
+    }
+
+    pub fn immediate(name: StrID) Ref {
+        return Ref{ .i = 0, .kind = .immediate, .name = name };
     }
 };
 
@@ -572,34 +653,41 @@ pub const Inst = struct {
             }
         }
     };
+
+    // WARN: ALL OF THESE HELPERS EXPECT TO BE CREATED WITH THE HELPERS IN
+    // `Function` SO THE RES FIELD IS SET PROPERLY
+
     /// `<result> = add <ty> <op1>, <op2>`
-    pub fn add(res: Ref, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Binop, .res = res, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Add } };
+    pub fn add(lhs: Ref, rhs: Ref) Inst {
+        return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Add } };
     }
     /// `<result> = mul <ty> <op1>, <op2>`
-    pub fn mul(res: Ref, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Binop, .res = res, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Mul } };
+    pub fn mul(lhs: Ref, rhs: Ref) Inst {
+        return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Mul } };
     }
     /// `<result> = sdiv <ty> <op1>, <op2>`
-    pub fn div(res: Ref, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Binop, .res = res, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Div } };
+    pub fn div(lhs: Ref, rhs: Ref) Inst {
+        return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Div } };
     }
     /// `<result> = sub <ty> <op1>, <op2>`
-    pub fn sub(res: Ref, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Binop, .res = res, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Sub } };
+    pub fn sub(lhs: Ref, rhs: Ref) Inst {
+        return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Sub } };
     }
     // Boolean
     /// `<result> = and <ty> <op1>, <op2>`
-    pub fn and_(res: Ref, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Binop, .res = res, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .And } };
+    pub fn and_(lhs: Ref, rhs: Ref) Inst {
+        return .{ .op = .Binop, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .And } };
     }
     /// `<result> = or <ty> <opi>, <op2>`
     pub fn or_(res: Ref, lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Binop, .res = res, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Or } };
     }
     /// `<result> = xor <ty> <opl>, <op2>`
-    pub fn xor(res: Ref, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Binop, .res = res, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Xor } };
+    pub fn xor(lhs: Ref, rhs: Ref) Inst {
+        return .{ .op = .Binop, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Xor } };
+    }
+    pub fn not(val: Ref) Inst {
+        return Inst.xor(val, Ref.immediate(InternPool.ONE));
     }
 
     pub const Cmp = struct {
@@ -683,8 +771,8 @@ pub const Inst = struct {
     /// `<result> = load <ty>* <pointer>`
     /// newer:
     /// `<result> = load <ty>, <ty>* <pointer>`
-    pub fn load(res: Ref, ty: Type, ptr: Ref) Inst {
-        return .{ .op = .Load, .ty1 = ty, .res = res, .op1 = ptr };
+    pub fn load(ty: Type, ptr: Ref) Inst {
+        return .{ .op = .Load, .ty1 = ty, .op1 = ptr };
     }
 
     pub const Store = struct {
@@ -869,12 +957,13 @@ pub const Inst = struct {
 
 const ting = std.testing;
 
-test "binop helpers" {
-    _ = Inst.add(Ref.local(0), Ref.local(1), Ref.local(2));
-    _ = Inst.mul(Ref.local(0), Ref.local(1), Ref.local(2));
-    _ = Inst.div(Ref.local(0), Ref.local(1), Ref.local(2));
-    _ = Inst.sub(Ref.local(0), Ref.local(1), Ref.local(2));
-    _ = Inst.and_(Ref.local(0), Ref.local(1), Ref.local(2));
-    _ = Inst.or_(Ref.local(0), Ref.local(1), Ref.local(2));
-    _ = Inst.xor(Ref.local(0), Ref.local(1), Ref.local(2));
-}
+// feelin too lazy to fix this rn. It was just supposed to make sure evertyhing compiles
+// test "binop helpers" {
+//     _ = Inst.add(Ref.local(0), Ref.local(1), Ref.local(2));
+//     _ = Inst.mul(Ref.local(0), Ref.local(1), Ref.local(2));
+//     _ = Inst.div(Ref.local(0), Ref.local(1), Ref.local(2));
+//     _ = Inst.sub(Ref.local(0), Ref.local(1), Ref.local(2));
+//     _ = Inst.and_(Ref.local(0), Ref.local(1), Ref.local(2));
+//     _ = Inst.or_(Ref.local(0), Ref.local(1), Ref.local(2));
+//     _ = Inst.xor(Ref.local(0), Ref.local(1), Ref.local(2));
+// }

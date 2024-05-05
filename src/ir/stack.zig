@@ -145,28 +145,30 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
     // entry block is the one that holds `alloca`s
     // separated to make it easier to just append `alloca`s
     // to the start and maintain hoisting (all allocas are in order at start of function)
-    const entryBB = fun.newBB();
+    const entryBB = try fun.newBB();
     // Exit is like entryBB in that it is intentionally bare, containing only
     // the return instruction
     // TODO: fun.addLocal(name, type) instead of the `Inst.alloca` below
     // for consistency with exit and so we isolate how entry/exit blocks are stored
     // / managed
-    const exitBB = fun.newBB();
+    const exitBB = try fun.newBB();
     // TODO: fun.addReturnReg(...regInfo);
     // for easy
     _ = exitBB;
 
-    var declsIter = funNode.iterLocalDecls(ast);
+    const funBody = funNode.getBody(ast);
+
+    var declsIter = funBody.iterLocalDecls(ast);
     while (declsIter.next()) |declNode| {
         const decl = declNode.kind.TypedIdentifier;
         const declName = ir.internIdent(decl.getName(ast));
-        const declType = ir.astTypedeclTypepe(decl.getType(ast));
+        const declType = ir.astTypeToIRType(decl.getType(ast));
 
         const alloca = Inst.alloca(declType);
-        try fun.addNamedInst(entryBB, alloca, declName);
+        _ = try fun.addNamedInst(entryBB, alloca, declName);
     }
 
-    var statementsIter = funNode.iterStatements(ast);
+    var statementsIter = funBody.iterStatements(ast);
     while (statementsIter.next()) |stmtNode| {
         _ = stmtNode;
         // TODO: gen_statement(fun, bb, stmtNode)
@@ -174,6 +176,47 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
     }
 
     return fun;
+}
+
+fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, statementNode: *const Ast.Node) !void {
+    const kind = statementNode.kind;
+
+    switch (kind) {
+        .Assignment => |assign| {
+            const to = ast.get(assign.lhs).kind.LValue;
+            const toName = ast.getIdentValue(to.ident);
+            // FIXME: handle selector chain
+            const allocRegID = fun.getNamedAllocaRegID(bb, toName);
+            _ = allocRegID;
+
+            // FIXME: rhs could also be a `read` handle!
+            const exprNode = ast.get(assign.rhs).kind.Expression;
+            const exprRegID = try gen_expression(ir, ast, fun, bb, exprNode);
+            _ = exprRegID;
+        },
+        else => utils.todo("gen_statement", .{kind}),
+    }
+}
+
+fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node.Kind.ExpressionType) !IR.Register {
+    const expr = ast.get(exprNode.expr);
+    const kind = expr.kind;
+    switch (kind) {
+        .UnaryOperation => |unary| {
+            const tok = expr.token;
+            switch (tok) {
+                .Not => {
+                    const onExpr = ast.get(unary.expr).kind.Expression;
+                    const exprReg = try gen_expression(ir, ast, fun, bb, onExpr);
+                    const inst = Inst.not(IR.Ref.local(exprReg.id));
+                    const res = fun.addNamedInst(bb, inst, exprReg.name);
+                    return res;
+                },
+                else => utils.todo("gen_expression.unary", .{tok}),
+            }
+        },
+        else => utils.todo("gen_expression", .{kind}),
+    }
 }
 
 /////////////
@@ -226,4 +269,36 @@ test "stack.globals.none" {
     const input = "struct Foo { int a; bool b; }; fun main() void {}";
     const ir = try testMe(input);
     try ting.expectEqual(@as(usize, 0), ir.globals.len());
+}
+
+const ExpectedInst = struct {
+    inst: IR.Inst,
+    // TODO:
+    // name: []const u8,
+};
+
+fn expectIRMatches(fun: IR.Function, expected: []const Inst) !void {
+    for (fun.insts.array(), 0..) |inst, i| {
+        var expectedInst = expected[i];
+        // NOTE: when expanding, must make sure the `res` field on the
+        // expected insts are set as they won't be by the helper creator
+        // functions
+        try ting.expectEqual(@intFromEnum(inst.op), @intFromEnum(expectedInst.op));
+    }
+}
+
+test "stack.fun.empty" {
+    const ir = try testMe("fun main() void {}");
+    try ting.expectEqual(@as(usize, 1), ir.funcs.items.len);
+}
+
+test "stack.fun.not-arg" {
+    const ir = try testMe("fun main() bool { bool a; return !a; }");
+    const main = try ir.getFunByName("main");
+    const expected = [_]Inst{
+        Inst.alloca(IR.Type.bool),
+        Inst.load(IR.Type.bool, IR.Ref.local(0, 0)),
+        Inst.ret(IR.Type.bool, IR.Ref.local(1, 0)),
+    };
+    try expectIRMatches(main, &expected);
 }

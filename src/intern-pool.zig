@@ -14,10 +14,25 @@ pub const InternPool = @This();
 
 pub const Error = error{ StringNotPresent, OutOfMemory };
 
-pub fn init(allocator: std.mem.Allocator) InternPool {
+// 0 := number zero
+pub const ZERO = 0;
+// 1 := number one
+pub const ONE = 1;
+// that leaves:
+pub const NULL = 2;
+
+pub fn init(allocator: std.mem.Allocator) !InternPool {
+    var map = std.StringHashMap(StrID).init(allocator);
+    var pool = try std.ArrayList(u8).initCapacity(allocator, 3);
+    pool.insertAssumeCapacity(0, 0);
+    try map.put("0", 0);
+    pool.insertAssumeCapacity(1, 1);
+    try map.put("1", 1);
+    pool.insertAssumeCapacity(2, 0);
+
     return InternPool{
-        .map = std.StringHashMap(StrID).init(allocator),
-        .pool = std.ArrayList(u8).init(allocator),
+        .map = map,
+        .pool = pool,
     };
 }
 
@@ -65,24 +80,28 @@ pub fn get(self: *const InternPool, id: StrID) Error![]const u8 {
     return str;
 }
 
+pub fn getIDOf(self: *const InternPool, str: []const u8) Error!StrID {
+    return self.map.get(str) orelse error.StringNotPresent;
+}
+
 const ting = std.testing;
 const testAlloc = std.heap.page_allocator;
 
 test "intern.multiple_interns_ignored" {
-    var pool = init(testAlloc);
+    var pool = try init(testAlloc);
     const i = try pool.intern("foo");
     try ting.expectEqual(i, try pool.intern("foo"));
     try ting.expectEqual(i, try pool.intern("foo"));
 }
 
 test "intern.get" {
-    var pool = init(testAlloc);
+    var pool = try init(testAlloc);
     const i = try pool.intern("foo");
     try ting.expectEqualStrings("foo", try pool.get(i));
 }
 
 test "intern.get_fake_id_is_err" {
-    var pool = init(testAlloc);
+    var pool = try init(testAlloc);
     const i = try pool.intern("foo");
     try ting.expectError(error.StringNotPresent, pool.get(i + 1));
 }
