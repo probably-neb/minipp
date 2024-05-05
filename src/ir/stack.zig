@@ -165,36 +165,39 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
         const declType = ir.astTypeToIRType(decl.getType(ast));
 
         const alloca = Inst.alloca(declType);
-        _ = try fun.addNamedInst(entryBB, alloca, declName);
+        _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
     }
 
     var statementsIter = funBody.iterStatements(ast);
     while (statementsIter.next()) |stmtNode| {
-        _ = stmtNode;
-        // TODO: gen_statement(fun, bb, stmtNode)
-        continue;
+        // FIXME: check for control flow
+        try gen_statement(ir, ast, &fun, entryBB, stmtNode);
     }
 
     return fun;
 }
 
-fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, statementNode: *const Ast.Node) !void {
+/// Generates the IR for a statement. NOTE: not supposed to handle control flow
+fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, statementNode: Ast.Node) !void {
     const kind = statementNode.kind;
 
     switch (kind) {
         .Assignment => |assign| {
             const to = ast.get(assign.lhs).kind.LValue;
-            const toName = ast.getIdentValue(to.ident);
+            const toName = ir.internIdentNodeAt(ast, to.ident);
             // FIXME: handle selector chain
-            const allocRegID = fun.getNamedAllocaRegID(bb, toName);
-            _ = allocRegID;
+            const allocReg = try fun.getNamedAllocaReg(toName);
+            _ = allocReg;
 
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).kind.Expression;
-            const exprRegID = try gen_expression(ir, ast, fun, bb, exprNode);
-            _ = exprRegID;
+            const exprReg = try gen_expression(ir, ast, fun, bb, exprNode);
+            _ = exprReg;
         },
-        else => utils.todo("gen_statement", .{kind}),
+        .ConditionalIf => unreachable,
+        .ConditionalIfElse => unreachable,
+        .While => unreachable,
+        else => utils.todo("gen_statement {any}\n", .{kind}),
     }
 }
 
@@ -204,26 +207,47 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
     switch (kind) {
         .UnaryOperation => |unary| {
             const tok = expr.token;
-            switch (tok) {
+            switch (tok.kind) {
                 .Not => {
-                    const onExpr = ast.get(unary.expr).kind.Expression;
+                    const onExpr = ast.get(unary.on).*.kind.Expression;
                     const exprReg = try gen_expression(ir, ast, fun, bb, onExpr);
-                    const inst = Inst.not(IR.Ref.local(exprReg.id));
-                    const res = fun.addNamedInst(bb, inst, exprReg.name);
+                    utils.assert(exprReg.type == IR.Type.bool, "Unary `!` on non-bool type {any}\n", .{exprReg.type});
+                    const inst = Inst.not(IR.Ref.local(exprReg.id, exprReg.name));
+                    const res = try fun.addNamedInst(bb, inst, exprReg.name, IR.Type.bool);
                     return res;
                 },
                 .Minus => {
-                    const onExpr = ast.get(unary.expr).kind.Expression;
+                    const onExpr = ast.get(unary.on).*.kind.Expression;
                     const exprReg = try gen_expression(ir, ast, fun, bb, onExpr);
-                    const inst = Inst.neg(IR.Ref.local(exprReg.id));
-                    const res = fun.addNamedInst(bb, inst, exprReg.name);
+                    utils.assert(exprReg.type == IR.Type.int, "Unary `-` on non-int type {any}\n", .{exprReg.type});
+                    const inst = Inst.neg(IR.Ref.local(exprReg.id, exprReg.name));
+                    const res = try fun.addNamedInst(bb, inst, exprReg.name, IR.Type.int);
                     return res;
                 },
-                else => utils.todo("gen_expression.unary", .{tok}),
+                else => unreachable,
             }
         },
-        else => utils.todo("gen_expression", .{kind}),
+        .Selector => |sel| {
+            const factor = ast.get(sel.factor).kind.Factor;
+            // I know I know, I just don't know what else to call it
+            const atomIndex = factor.factor;
+            const atom = ast.get(atomIndex);
+            switch (atom.kind) {
+                .Identifier => |ident| {
+                    _ = ident;
+                    const identID = ir.internToken(ast, atom.token);
+                    const reg = try fun.getNamedAllocaReg(identID);
+                    const inst = Inst.load(reg.type, IR.Ref.local(reg.id, reg.name));
+                    return try fun.addNamedInst(bb, inst, reg.name, reg.type);
+                },
+                else => utils.todo("gen_expression.selector.factor: {any}\n", .{atom.kind}),
+            }
+
+            // TODO: gen gep if chain not null
+        },
+        else => utils.todo("gen_expression: {any}\n", .{kind}),
     }
+    unreachable;
 }
 
 /////////////
@@ -310,14 +334,15 @@ test "stack.fun.empty" {
     try ting.expectEqual(@as(usize, 1), ir.funcs.items.len);
 }
 
-test "stack.fun.not-arg" {
+test "stack.fun.unary-ret" {
     errdefer log.print();
-    const ir = try testMe("fun main() bool { bool a; return !a; }");
+    const ir = try testMe("fun main() bool { bool a; a = !false; return a; }");
     const mainName = try ir.getIdentID("main");
     const main = try ir.getFun(mainName);
     const a = try ir.getIdentID("a");
     const expected = [_]Inst{
         Inst.alloca(IR.Type.bool),
+        Inst.not(IR.Ref.immediate(IR.InternPool.FALSE)),
         Inst.load(IR.Type.bool, IR.Ref.local(0, a)),
         Inst.ret(IR.Type.bool, IR.Ref.local(1, a)),
     };

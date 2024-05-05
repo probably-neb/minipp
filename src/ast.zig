@@ -3,7 +3,7 @@
 // `const Ast = @import("ast.zig");`
 
 const std = @import("std");
-const Token = @import("lexer.zig").Token;
+pub const Token = @import("lexer.zig").Token;
 const log = @import("log.zig");
 const utils = @import("utils.zig");
 
@@ -364,8 +364,8 @@ pub const Node = struct {
 
         Block: BlockType,
         Assignment: struct {
-            lhs: ?Ref(.LValue) = null,
-            rhs: ?RefOneOf(.{ .Expression, .Read }) = null,
+            lhs: Ref(.LValue),
+            rhs: RefOneOf(.{ .Expression, .Read }),
         },
         Print: struct {
             /// The expression to print

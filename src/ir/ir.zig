@@ -6,7 +6,7 @@ const Ast = @import("../ast.zig");
 const utils = @import("../utils.zig");
 const log = @import("../log.zig");
 
-const InternPool = @import("../intern-pool.zig");
+pub const InternPool = @import("../intern-pool.zig");
 /// The ID of a string stored in the intern pool
 /// Henceforth, all operations involving variable or struct names
 /// shall utilize the power of this type, rather than `std.mem.eql(u8, a, b);`
@@ -42,6 +42,11 @@ pub fn internIdent(self: *IR, ident: []const u8) StrID {
 pub fn internIdentNodeAt(self: *IR, ast: *const Ast, identIdx: usize) StrID {
     const str = ast.getIdentValue(identIdx);
     return self.internIdent(str);
+}
+
+pub fn internToken(self: *IR, ast: *const Ast, token: Ast.Token) StrID {
+    const value = token._range.getSubStrFromStr(ast.input);
+    return self.internIdent(value);
 }
 
 pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
@@ -134,7 +139,7 @@ pub const Function = struct {
     insts: OrderedList(Inst),
 
     // index into the insts array
-    pub const InstID = usize;
+    pub const InstID = u32;
 
     pub const entryBBID = 0;
     pub const exitBBID = 1;
@@ -160,13 +165,13 @@ pub const Function = struct {
         return id;
     }
 
-    pub fn addNamedInst(self: *Function, bb: BasicBlock.ID, basicInst: Inst, name: StrID) !Register {
+    pub fn addNamedInst(self: *Function, bb: BasicBlock.ID, basicInst: Inst, name: StrID, ty: Type) !Register {
         // reserve
         const regID = try self.regs.add(undefined);
         const instID = try self.insts.add(undefined);
 
         // construct
-        const reg = Register{ .id = regID, .inst = instID, .name = name, .bb = bb };
+        const reg = Register{ .id = regID, .inst = instID, .name = name, .bb = bb, .type = ty };
         var inst = basicInst;
         inst.res = Ref.local(regID, name);
 
@@ -182,15 +187,13 @@ pub const Function = struct {
     /// Returns `error.NotFound`
     /// WARN: ONLY SUPPOSED TO BE USED IN STACK IR GEN
     /// IN PHI NODES WE SHOULD SEARCH UP THE CFG
-    pub fn getNamedAllocaRegID(self: *Function, name: StrID) NotFoundError!Register.ID {
-        for (self.bbs[Function.entryBBID].insts) |instID| {
+    pub fn getNamedAllocaReg(self: *Function, name: StrID) NotFoundError!Register {
+        //       1   2            4          5     6   :(
+        for (self.bbs.get(Function.entryBBID).insts.items) |instID| {
             const inst = self.insts.get(instID);
             const res = inst.res;
             if (res.name == name) {
-                return instID;
-            }
-            if (inst.op == Op.Alloc) {
-                return res.regID;
+                return self.regs.get(res.i);
             }
         }
         return error.IdentifierNotFound;
@@ -202,6 +205,7 @@ pub const Register = struct {
     inst: Function.InstID,
     name: StrID,
     bb: BasicBlock.ID,
+    type: Type,
 
     pub const ID = u32;
 
@@ -329,7 +333,7 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
         }
 
         pub fn get(self: Self, key: ID) Value {
-            return self.items[key];
+            return self.items.items[key];
         }
 
         pub fn set(self: *Self, key: ID, value: Value) void {
@@ -570,21 +574,21 @@ pub const Ref = struct {
     pub const default = Ref.local(0, InternPool.NULL);
 
     /// Helper function to create a ref to eine local
-    pub fn local(i: u32, name: StrID) Ref {
+    pub inline fn local(i: u32, name: StrID) Ref {
         return Ref{ .i = i, .kind = .local, .name = name };
     }
 
     /// Helper function to create a ref to eine global
-    pub fn global(i: u32, name: StrID) Ref {
+    pub inline fn global(i: u32, name: StrID) Ref {
         return Ref{ .i = i, .kind = .global, .name = name };
     }
 
     /// Helper function to create a ref to eine label
-    pub fn label(i: u32) Ref {
+    pub inline fn label(i: u32) Ref {
         return Ref{ .i = i, .kind = .label, .name = i };
     }
 
-    pub fn immediate(name: StrID) Ref {
+    pub inline fn immediate(name: StrID) Ref {
         return Ref{ .i = 0, .kind = .immediate, .name = name };
     }
 };
@@ -661,35 +665,38 @@ pub const Inst = struct {
     // `Function` SO THE RES FIELD IS SET PROPERLY
 
     /// `<result> = add <ty> <op1>, <op2>`
-    pub fn add(lhs: Ref, rhs: Ref) Inst {
+    pub inline fn add(lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Add } };
     }
     /// `<result> = mul <ty> <op1>, <op2>`
-    pub fn mul(lhs: Ref, rhs: Ref) Inst {
+    pub inline fn mul(lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Mul } };
     }
     /// `<result> = sdiv <ty> <op1>, <op2>`
-    pub fn div(lhs: Ref, rhs: Ref) Inst {
+    pub inline fn div(lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Div } };
     }
     /// `<result> = sub <ty> <op1>, <op2>`
-    pub fn sub(lhs: Ref, rhs: Ref) Inst {
+    pub inline fn sub(lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Sub } };
+    }
+    pub inline fn neg(val: Ref) Inst {
+        return Inst.sub(Ref.immediate(InternPool.ZERO), val);
     }
     // Boolean
     /// `<result> = and <ty> <op1>, <op2>`
-    pub fn and_(lhs: Ref, rhs: Ref) Inst {
+    pub inline fn and_(lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Binop, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .And } };
     }
     /// `<result> = or <ty> <opi>, <op2>`
-    pub fn or_(res: Ref, lhs: Ref, rhs: Ref) Inst {
+    pub inline fn or_(res: Ref, lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Binop, .res = res, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Or } };
     }
     /// `<result> = xor <ty> <opl>, <op2>`
-    pub fn xor(lhs: Ref, rhs: Ref) Inst {
+    pub inline fn xor(lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Binop, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Xor } };
     }
-    pub fn not(val: Ref) Inst {
+    pub inline fn not(val: Ref) Inst {
         return Inst.xor(val, Ref.immediate(InternPool.ONE));
     }
 
@@ -698,7 +705,7 @@ pub const Inst = struct {
         opTypes: Type,
         lhs: Ref,
         rhs: Ref,
-        pub fn get(inst: Inst) Cmp {
+        pub inline fn get(inst: Inst) Cmp {
             return .{
                 .cond = inst.extra.cond,
                 .opTypes = inst.ty1,
@@ -707,13 +714,13 @@ pub const Inst = struct {
             };
         }
 
-        pub fn toInst(inst: Cmp) Inst {
+        pub inline fn toInst(inst: Cmp) Inst {
             return Inst.cmp(inst.res, inst.cond, inst.lhs, inst.rhs);
         }
     };
     // Comparison and Branching
     /// <recmp> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
-    pub fn cmp(res: Ref, cond: Op.Cond, lhs: Ref, rhs: Ref) Inst {
+    pub inline fn cmp(res: Ref, cond: Op.Cond, lhs: Ref, rhs: Ref) Inst {
         return .{ .op = .Cmp, .res = res, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .cond = cond } };
     }
 
@@ -721,7 +728,7 @@ pub const Inst = struct {
         on: Ref,
         iftrue: Ref,
         iffalse: Ref,
-        pub fn get(inst: Inst) Br {
+        pub inline fn get(inst: Inst) Br {
             return .{
                 .on = inst.extra.on,
                 .iftrue = inst.op1,
@@ -729,21 +736,21 @@ pub const Inst = struct {
             };
         }
 
-        pub fn toInst(inst: Br) Inst {
+        pub inline fn toInst(inst: Br) Inst {
             return Inst.br(inst.on, inst.iftrue, inst.iffalse);
         }
     };
     /// br i1 <cond>, label <iftrue>, label <iffalse>
-    pub fn br(cond: Ref, iftrue: Ref, iffalse: Ref) Inst {
+    pub inline fn br(cond: Ref, iftrue: Ref, iffalse: Ref) Inst {
         return .{ .op = .Br, .extra = .{ .on = cond }, .op1 = iftrue, .op2 = iffalse };
     }
 
     pub const Jmp = struct {
         dest: Ref,
-        pub fn get(inst: Inst) Jmp {
+        pub inline fn get(inst: Inst) Jmp {
             return .{ .dest = inst.op1 };
         }
-        pub fn toInst(inst: Jmp) Inst {
+        pub inline fn toInst(inst: Jmp) Inst {
             return Inst.jmp(inst.dest);
         }
     };
@@ -751,7 +758,7 @@ pub const Inst = struct {
     /// I know I know this isn't the actual name,
     /// but this is what it means and
     /// I dislike Mr. Lattner's design decision
-    pub fn jmp(dest: Ref) Inst {
+    pub inline fn jmp(dest: Ref) Inst {
         return .{ .op = .Jmp, .op1 = dest };
     }
 
@@ -759,14 +766,14 @@ pub const Inst = struct {
         res: Ref,
         ty: Type,
         ptr: Ref,
-        pub fn get(inst: Inst) Load {
+        pub inline fn get(inst: Inst) Load {
             return .{
                 .res = inst.res,
                 .ty = inst.ty1,
                 .ptr = inst.op1,
             };
         }
-        pub fn toInst(inst: Load) Inst {
+        pub inline fn toInst(inst: Load) Inst {
             return Inst.load(inst.res, inst.ty, inst.ptr);
         }
     };
@@ -774,7 +781,7 @@ pub const Inst = struct {
     /// `<result> = load <ty>* <pointer>`
     /// newer:
     /// `<result> = load <ty>, <ty>* <pointer>`
-    pub fn load(ty: Type, ptr: Ref) Inst {
+    pub inline fn load(ty: Type, ptr: Ref) Inst {
         return .{ .op = .Load, .ty1 = ty, .op1 = ptr };
     }
 
@@ -783,7 +790,7 @@ pub const Inst = struct {
         to: Ref,
         fromType: Type,
         from: Ref,
-        pub fn get(inst: Inst) Store {
+        pub inline fn get(inst: Inst) Store {
             return .{
                 .ty = inst.ty1,
                 .to = inst.op1,
@@ -792,12 +799,12 @@ pub const Inst = struct {
             };
         }
 
-        pub fn toInst(inst: Store) Inst {
+        pub inline fn toInst(inst: Store) Inst {
             return Inst.store(inst.ty, inst.to, inst.fromType, inst.from);
         }
     };
     /// `store <ty> value, <ty>* <pointer>`
-    pub fn store(ty: Type, to: Ref, fromType: Type, from: Ref) Inst {
+    pub inline fn store(ty: Type, to: Ref, fromType: Type, from: Ref) Inst {
         return .{ .op = .Store, .ty1 = ty, .op1 = to, .ty2 = fromType, .op2 = from };
     }
 
@@ -807,7 +814,7 @@ pub const Inst = struct {
         ptrTy: Type,
         ptrVal: Ref,
         index: Ref,
-        pub fn get(inst: Inst) Gep {
+        pub inline fn get(inst: Inst) Gep {
             return .{
                 .res = inst.res,
                 .resTy = inst.ty1,
@@ -817,14 +824,14 @@ pub const Inst = struct {
             };
         }
 
-        pub fn toInst(inst: Gep) Inst {
+        pub inline fn toInst(inst: Gep) Inst {
             return Inst.gep(inst.res, inst.resTy, inst.ptrTy, inst.ptrVal, inst.index);
         }
     };
     /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
     /// newer:
     /// `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
-    pub fn gep(res: Ref, resTy: Type, ptrTy: Type, ptrVal: Ref, index: Ref) Inst {
+    pub inline fn gep(res: Ref, resTy: Type, ptrTy: Type, ptrVal: Ref, index: Ref) Inst {
         return .{ .op = .Gep, .res = res, .ty1 = resTy, .ty2 = ptrTy, .op1 = ptrVal, .op2 = index };
     }
 
@@ -833,7 +840,7 @@ pub const Inst = struct {
         retTy: Type,
         fun: Ref,
         args: std.ArrayList(Ref),
-        pub fn get(inst: Inst) Call {
+        pub inline fn get(inst: Inst) Call {
             return .{
                 .res = inst.res,
                 .retTy = inst.ty1,
@@ -841,57 +848,57 @@ pub const Inst = struct {
                 .args = inst.extra.args,
             };
         }
-        pub fn toInst(inst: Call) Inst {
+        pub inline fn toInst(inst: Call) Inst {
             return Inst.call(inst.res, inst.retTy, inst.fun, inst.args);
         }
     };
     // Invocation
-    /// `<result> = call <ty> <fnptrval>(<args>)`
+    /// `<result> = call <ty> <inline fnptrval>(<args>)`
     /// newer:
-    /// `<result> = call <ty> <fnval>(<args>)`
-    pub fn call(res: Ref, retTy: Type, fun: Ref, args: std.ArrayList(Ref)) Inst {
+    /// `<result> = call <ty> <inline fnval>(<args>)`
+    pub inline fn call(res: Ref, retTy: Type, fun: Ref, args: std.ArrayList(Ref)) Inst {
         return .{ .op = .Jmp, .res = res, .ty1 = retTy, .op1 = fun, .extra = .{ .args = args } };
     }
 
     pub const Ret = struct {
         ty: Type,
         val: Ref,
-        pub fn get(inst: Inst) Ret {
+        pub inline fn get(inst: Inst) Ret {
             return .{
                 .ty = inst.ty1,
                 .val = inst.op1,
             };
         }
-        pub fn toInst(inst: Ret) Inst {
+        pub inline fn toInst(inst: Ret) Inst {
             return Inst.ret(inst.ty, inst.val);
         }
     };
     /// `ret void`
-    pub fn retVoid() Inst {
+    pub inline fn retVoid() Inst {
         return .{ .op = .Ret, .ty1 = .void };
     }
     /// `ret <ty> <value>`
-    pub fn ret(ty: Type, val: Ref) Inst {
+    pub inline fn ret(ty: Type, val: Ref) Inst {
         return .{ .op = .Ret, .op1 = val, .ty1 = ty };
     }
 
     pub const Alloc = struct {
         res: Ref,
         ty: Type,
-        pub fn get(inst: Inst) Alloc {
+        pub inline fn get(inst: Inst) Alloc {
             return .{
                 .res = inst.res,
                 .ty = inst.ty1,
             };
         }
-        pub fn toInst(inst: Alloc) Inst {
+        pub inline fn toInst(inst: Alloc) Inst {
             return Inst.alloc(inst.res, inst.ty);
         }
     };
     // Allocation
     /// `<result> = alloca <ty>`
     // Alloc,
-    pub fn alloca(ty: Type) Inst {
+    pub inline fn alloca(ty: Type) Inst {
         return .{ .op = .Alloc, .ty1 = ty };
     }
 
@@ -902,7 +909,7 @@ pub const Inst = struct {
         fromType: Type,
         from: Ref,
         toType: Type,
-        pub fn get(inst: Inst) Misc {
+        pub inline fn get(inst: Inst) Misc {
             const kind = switch (inst.op) {
                 .Bitcast => .bitcast,
                 .Trunc => .trunc,
@@ -917,7 +924,7 @@ pub const Inst = struct {
                 .toType = inst.ty2,
             };
         }
-        pub fn toInst(inst: Misc) Inst {
+        pub inline fn toInst(inst: Misc) Inst {
             switch (inst.kind) {
                 .bitcast => Inst.bitcast(inst.res, inst.fromType, inst.from, inst.toType),
                 .trunc => Inst.trunc(inst.res, inst.fromType, inst.from, inst.toType),
@@ -927,15 +934,15 @@ pub const Inst = struct {
     };
     // Miscellaneous
     /// `<result> = bitcast <ty> <value> to <ty2> ; cast type`
-    pub fn bitcast(res: Ref, fromType: Type, from: Ref, toType: Type) Inst {
+    pub inline fn bitcast(res: Ref, fromType: Type, from: Ref, toType: Type) Inst {
         return .{ .op = .Bitcast, .ty1 = fromType, .res = res, .op1 = from, .ty2 = toType };
     }
     /// `<result> = trunc <ty> <value> to <ty2> ; truncate to ty2`
-    pub fn trunc(res: Ref, ty: Type, from: Ref, to: Type) Inst {
+    pub inline fn trunc(res: Ref, ty: Type, from: Ref, to: Type) Inst {
         return .{ .op = .Trunc, .ty1 = ty, .res = res, .op1 = from, .ty2 = to };
     }
     /// `<result> = zext <ty> <value> to <ty2> ; zero-extend to ty2`
-    pub fn zext(res: Ref, ty: Type, from: Ref, to: Type) Inst {
+    pub inline fn zext(res: Ref, ty: Type, from: Ref, to: Type) Inst {
         return .{ .op = .Zext, .ty1 = ty, .res = res, .op1 = from, .ty2 = to };
     }
 
@@ -943,17 +950,17 @@ pub const Inst = struct {
         res: Ref,
         type: Type,
         entries: std.ArrayList(PhiEntry),
-        pub fn get(inst: Inst) Phi {
+        pub inline fn get(inst: Inst) Phi {
             return .{
                 .entries = inst.extra.phi,
             };
         }
-        pub fn toInst(inst: Phi) Inst {
+        pub inline fn toInst(inst: Phi) Inst {
             return Inst.phi(inst.res, inst.type, inst.entries);
         }
     };
     /// `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
-    pub fn phi(res: Ref, ty: Type, entries: std.ArrayList(PhiEntry)) Inst {
+    pub inline fn phi(res: Ref, ty: Type, entries: std.ArrayList(PhiEntry)) Inst {
         return .{ .op = .Phi, .res = res, .ty1 = ty, .extra = .{ .phi = entries } };
     }
 };

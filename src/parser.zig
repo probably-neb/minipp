@@ -926,27 +926,23 @@ pub const Parser = struct {
         // Init indexes
         const tok = try self.currentToken();
         var assignmentIndex = try self.reserve();
-        var lhsIndex: ?usize = null;
-        var rhsIndex: ?usize = null;
 
         // Expect LValue
-        lhsIndex = try self.parseLValue();
+        const lhsIndex = try self.parseLValue();
 
         // Expect =
         try self.expectToken(TokenKind.Eq);
 
         // Expect Expression | "read"
-        if ((try self.currentToken()).kind == TokenKind.KeywordRead) {
+        const rhsIndex = switch ((try self.currentToken()).kind) {
             // make read node
-            const readNode = Node{
+            .KeywordRead => try self.astAppendNode(Node{
                 .kind = NodeKind.Read,
                 .token = try self.consumeToken(),
-            };
-            rhsIndex = try self.astAppendNode(readNode);
-        } else {
+            }),
             // make expression node
-            rhsIndex = try self.parseExpression();
-        }
+            else => try self.parseExpression(),
+        };
 
         // Expect ;
         try self.expectToken(TokenKind.Semicolon);

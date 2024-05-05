@@ -316,14 +316,15 @@ pub fn typeCheckAssignment(ast: *Ast, assignmentn: Ast.Node, fName: []const u8, 
     const assignment = assignmentn.kind.Assignment;
     const left = assignment.lhs;
     const right = assignment.rhs;
-    if (left == null) {
-        utils.todo("Error on assignment type checking\n", .{});
-        return;
-    }
-    if (right == null) {
-        utils.todo("Error on assignment type checking\n", .{});
-        return;
-    }
+    // assignment can't be null silly!
+    // if (left == null) {
+    //     utils.todo("Error on assignment type checking\n", .{});
+    //     return;
+    // }
+    // if (right == null) {
+    //     utils.todo("Error on assignment type checking\n", .{});
+    //     return;
+    // }
     // check if right is type read
     const leftType = try LValuegetType(left, ast, fName);
     if (leftType == null) {

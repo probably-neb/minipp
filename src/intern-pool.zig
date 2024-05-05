@@ -16,8 +16,10 @@ pub const Error = error{ StringNotPresent, OutOfMemory };
 
 // 0 := number zero
 pub const ZERO = 0;
+pub const FALSE = ZERO;
 // 1 := number one
 pub const ONE = 1;
+pub const TRUE = 1;
 // that leaves:
 pub const NULL = 2;
 
