@@ -283,7 +283,7 @@ pub const Function = struct {
                 } else {
                     self.bb += 1;
                     if (self.bb == Function.exitBBID) {
-                        // skip the exit bb
+                        // skip the exit bb too
                         self.bb += 1;
                     }
                 }

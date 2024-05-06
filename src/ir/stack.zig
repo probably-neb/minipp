@@ -148,12 +148,7 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
     const entryBB = try fun.newBB();
     // Exit is like entryBB in that it is intentionally bare, containing only
     // the return instruction
-    // TODO: fun.addLocal(name, type) instead of the `Inst.alloca` below
-    // for consistency with exit and so we isolate how entry/exit blocks are stored
-    // / managed
     const exitBB = try fun.newBB();
-    // TODO: fun.addReturnReg(...regInfo);
-    // for easy
 
     const funBody = funNode.getBody(ast);
 
@@ -395,7 +390,7 @@ fn expectIRMatches(fun: IR.Function, expected: []const Inst) !void {
     for (expected, 0..) |expectedInst, i| {
         if (i >= got.len) {
             // bro what was copilot thinking with this one
-            // try ting.expectEqualStrings("expected more insts", "got fewer insts");
+            // `try ting.expectEqualStrings("expected more insts", "got fewer insts")`;
             log.err("expected more insts. Missing:\n{any}\n", .{expected[i..]});
             // TODO: if op == Binop check extra.op on both
             return error.NotEnoughInstructions;
@@ -437,53 +432,11 @@ fn expectResultsInIR(input: []const u8, expected: anytype) !void {
         expectedStr[end] = '\n';
         i = end + 1;
     }
+    // the stringify outputs an extra newline at the end.
+    // this is the easier fix sue me
     expectedStr[i] = '\n';
 
-    // if (expectedStr.len != gotIRstr.len) {
-    //     log.err("expected ir length: {d}, got: {d}\n", .{ expectedStr.len, gotIRstr.len });
-    //     log.err("EXPECTED:\n{s}\nGOT:\n{s}\n", .{ expectedStr, gotIRstr });
-    //     return error.InvalidInstruction;
-    // }
     try ting.expectEqualStrings(expectedStr, gotIRstr);
-
-    // var gotit = std.mem.splitScalar(u8, gotIRstr, '\n');
-    // inline for (expected, 0..) |expectedInst, i| {
-    //     // need the `if (!cond) {body}` instead `if (cond) {continue}`
-    //     // because zig complains about runtime control flow
-    //     // in comptime expression, and it has to be a comptime
-    //     // expression because the expected insts are a comptime
-    //     // tuple of slices, and the expected insts are a comptime
-    //     // tuple of slices because it's annoying as FUCK to create
-    //     // an array/slice of strings with different lengths, and we
-    //     // have to do all of that so that empty lines in the resulting
-    //     // ir get skipped in the test
-    //     // ...yeah ...zig
-    //     // (plus me being to lazy to just insert an empty string when the test fails but I'm
-    //     // still going to blame it on zig)
-    //     if (!std.mem.eql(u8, expectedInst, "")) {
-    //         var got = gotit.next();
-    //         while (got != null and std.mem.eql(u8, got.?, "")) : (got = gotit.next()) {}
-    //
-    //         if (got == null) {
-    //             log.err("\nexpected inst at line {d} but found none. Missing:\n{any}\n", .{ i, expectedInst });
-    //             log.err("EXPECTED insts:\n\n", .{});
-    //             inline for (expected) |eInst| {
-    //                 log.err("{s}\n", .{eInst});
-    //             }
-    //             log.err("GOT insts:\n\n{s}\n", .{gotIRstr});
-    //             return error.NotEnoughInstructions;
-    //         }
-    //         ting.expectEqualStrings(expectedInst, got.?) catch {
-    //             log.err("\nIncorrect inst at line {d}. EXPECTED:\n{s}\nGOT:\n{s}\n", .{ i, expectedInst, got.? });
-    //             log.err("EXPECTED insts:\n\n", .{});
-    //             inline for (expected) |eInst| {
-    //                 log.err("{s}\n", .{eInst});
-    //             }
-    //             log.err("\nGOT insts:\n\n{s}\n", .{gotIRstr});
-    //             return error.NotEnoughInstructions;
-    //         };
-    //     }
-    // }
 }
 
 test "stack.fun.empty" {
@@ -495,7 +448,12 @@ test "stack.fun.empty" {
 test "stack.str.fun.unary-ret" {
     errdefer log.print();
     try expectResultsInIR(
-        "fun main() bool { bool a; a = !false; return a; }",
+        \\fun main() bool {
+        \\  bool a;
+        \\  a = !false;
+        \\  return a;
+        \\}
+    ,
         .{
             "define i1 @main() {",
             "entry:",
@@ -516,4 +474,46 @@ test "stack.str.fun.unary-ret" {
             "}",
         },
     );
+}
+
+test "stack.str.do-math" {
+    errdefer log.print();
+    try expectResultsInIR(
+    // what the hell is this syntax. Lots of feelings
+        \\ fun main(int count, int base) int {
+        \\  int i;
+        \\  i = 0;
+        \\  while(i < count){
+        \\      i = i + 1;
+        \\      base = base + base;
+        \\  }
+        \\  return base;
+        \\ }
+    , .{
+        "define i32 @main(i64 %count, i64 %base) {",
+        "entry:",
+        "  %0 = alloca i64",
+        "  %i1 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  store i64 0, i64* %i1",
+        "  %4 = cmp slt i64 %i1, %count",
+        "  br i1 %5, label %3, label %4",
+        "3:",
+        "  %6 = load i64* %i1",
+        "  %7 = add i64 %6, 1",
+        "  store i64 %8, i64* %i1",
+        "  %9 = load i64* %base",
+        "  %10 = add i64 %9, %9",
+        "  store i64 %10, i64* %base",
+        "  %12 = load i64* %i1",
+        "  %13 = cmp slt i64 %12, %count",
+        "  br i1 %14, label %3, label %4",
+        "4:",
+        "  br label %exit",
+        "exit:",
+        "  %16 = load i64* %base",
+        "  ret i64 %16",
+        "}",
+    });
 }
