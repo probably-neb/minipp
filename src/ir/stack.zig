@@ -154,10 +154,22 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
     const exitBB = try fun.newBB();
     // TODO: fun.addReturnReg(...regInfo);
     // for easy
-    _ = exitBB;
 
     const funBody = funNode.getBody(ast);
 
+    // (should) only used if the function returns a value
+    var retReg: IR.Register = undefined;
+
+    // generate alloca for the return value if the function returns a value
+    // this makes it so ret reg is always `%0`
+    if (funReturnType != .void) {
+        // allocate a stack slot for the return value in the entry
+        retReg = try fun.addInst(entryBB, Inst.alloca(funReturnType), funReturnType);
+        // save it in the function for easy access later
+        fun.setReturnReg(retReg.id);
+    }
+
+    // add allocas for all local variables
     var declsIter = funBody.iterLocalDecls(ast);
     while (declsIter.next()) |declNode| {
         const decl = declNode.kind.TypedIdentifier;
@@ -168,31 +180,93 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
         _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
     }
 
-    var statementsIter = funBody.iterStatements(ast);
-    while (statementsIter.next()) |stmtNode| {
-        // FIXME: check for control flow
-        try gen_statement(ir, ast, &fun, entryBB, stmtNode);
+    const bodyBB = try fun.newBBWithParent(entryBB);
+    try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(bodyBB)));
+
+    // generate IR for the function body
+    const lastBB = try gen_block(ir, ast, &fun, bodyBB, ast.get(funNode.body).*);
+    try fun.bbs.get(lastBB).addOutgoer(exitBB);
+
+    // generate return instruction in exit block
+    if (funReturnType != .void) {
+        // load it in the exit block
+        const retValReg = try fun.addInst(exitBB, Inst.load(funReturnType, IR.Ref.local(retReg.id, retReg.name)), funReturnType);
+        // return the loaded return value
+        // using addAnonInst so ctrl flow cfg construction is skipped
+        // as we'll hook everything up manually as we go
+        try fun.addAnonInst(exitBB, Inst.ret(funReturnType, IR.Ref.local(retValReg.id, retValReg.name)));
+    } else {
+        // void return
+        _ = try fun.addInst(exitBB, Inst.retVoid(), .void);
     }
 
     return fun;
 }
 
+// generates the IR for a block of statements, i.e. a function body or Block node
+// returns the ID of the final basic block it generated instructions for
+fn gen_block(ir: *IR, ast: *const Ast, fun: *IR.Function, initialBB: IR.BasicBlock.ID, node: Ast.Node) !IR.BasicBlock.ID {
+    var curBB = initialBB;
+
+    var statementsIter = switch (node.kind) {
+        .FunctionBody => |funBody| funBody.iterStatements(ast),
+        .Block => |block| block.iterStatements(ast),
+        else => unreachable,
+    };
+
+    while (statementsIter.next()) |stmtNode| {
+        const innerNode = ast.get(stmtNode.kind.Statement.statement);
+        const kind = innerNode.kind;
+        // FIXME: check for control flow
+        switch (kind) {
+            .ConditionalIf, .ConditionalIfElse, .While => utils.todo("gen_function.controlFlow {any}\n", .{stmtNode.kind}),
+            .Return => |ret| {
+                if (ret.expr) |retExpr| {
+                    const retExprReg = try gen_expression(ir, ast, fun, curBB, ast.get(retExpr).*);
+                    const returnRegID = fun.returnReg.?;
+                    const inst = Inst.store(
+                        fun.returnType,
+                        IR.Ref.local(returnRegID, null),
+                        retExprReg.type,
+                        IR.Ref.local(retExprReg.id, retExprReg.name),
+                    );
+                    try fun.addAnonInst(curBB, inst);
+                } else {
+                    utils.todo("gen_block.return.void\n", .{});
+                }
+                try fun.addCtrlFlowInst(curBB, Inst.jmp(IR.Ref.label(IR.Function.exitBBID)));
+                return curBB;
+            },
+            else => try gen_statement(ir, ast, fun, curBB, stmtNode),
+        }
+    }
+
+    return curBB;
+}
+
 /// Generates the IR for a statement. NOTE: not supposed to handle control flow
 fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, statementNode: Ast.Node) !void {
-    const kind = statementNode.kind;
+    const node = ast.get(statementNode.kind.Statement.statement);
+    const kind = node.kind;
 
     switch (kind) {
         .Assignment => |assign| {
             const to = ast.get(assign.lhs).kind.LValue;
             const toName = ir.internIdentNodeAt(ast, to.ident);
+            log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             // FIXME: handle selector chain
             const allocReg = try fun.getNamedAllocaReg(toName);
-            _ = allocReg;
 
             // FIXME: rhs could also be a `read` handle!
-            const exprNode = ast.get(assign.rhs).kind.Expression;
+            const exprNode = ast.get(assign.rhs).*;
             const exprReg = try gen_expression(ir, ast, fun, bb, exprNode);
-            _ = exprReg;
+            const inst = Inst.store(
+                allocReg.type,
+                IR.Ref.local(allocReg.id, allocReg.name),
+                exprReg.type,
+                IR.Ref.local(exprReg.id, exprReg.name),
+            );
+            try fun.addAnonInst(bb, inst);
         },
         .ConditionalIf => unreachable,
         .ConditionalIfElse => unreachable,
@@ -201,15 +275,16 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
     }
 }
 
-fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node.Kind.ExpressionType) !IR.Register {
-    const expr = ast.get(exprNode.expr);
-    const kind = expr.kind;
-    switch (kind) {
+fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node) !IR.Register {
+    switch (exprNode.kind) {
+        .Expression => |expr| {
+            return gen_expression(ir, ast, fun, bb, ast.get(expr.expr).*);
+        },
         .UnaryOperation => |unary| {
-            const tok = expr.token;
+            const tok = exprNode.token;
             switch (tok.kind) {
                 .Not => {
-                    const onExpr = ast.get(unary.on).*.kind.Expression;
+                    const onExpr = ast.get(unary.on).*;
                     const exprReg = try gen_expression(ir, ast, fun, bb, onExpr);
                     utils.assert(exprReg.type == IR.Type.bool, "Unary `!` on non-bool type {any}\n", .{exprReg.type});
                     const inst = Inst.not(IR.Ref.local(exprReg.id, exprReg.name));
@@ -217,7 +292,7 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
                     return res;
                 },
                 .Minus => {
-                    const onExpr = ast.get(unary.on).*.kind.Expression;
+                    const onExpr = ast.get(unary.on).*;
                     const exprReg = try gen_expression(ir, ast, fun, bb, onExpr);
                     utils.assert(exprReg.type == IR.Type.int, "Unary `-` on non-int type {any}\n", .{exprReg.type});
                     const inst = Inst.neg(IR.Ref.local(exprReg.id, exprReg.name));
@@ -233,19 +308,23 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
             const atomIndex = factor.factor;
             const atom = ast.get(atomIndex);
             switch (atom.kind) {
-                .Identifier => |ident| {
-                    _ = ident;
+                .Identifier => {
                     const identID = ir.internToken(ast, atom.token);
                     const reg = try fun.getNamedAllocaReg(identID);
                     const inst = Inst.load(reg.type, IR.Ref.local(reg.id, reg.name));
                     return try fun.addNamedInst(bb, inst, reg.name, reg.type);
+                },
+                .False => {
+                    const inst = Inst.load(IR.Type.bool, IR.Ref.immediate(IR.InternPool.FALSE));
+                    const reg = try fun.addInst(bb, inst, IR.Type.bool);
+                    return reg;
                 },
                 else => utils.todo("gen_expression.selector.factor: {any}\n", .{atom.kind}),
             }
 
             // TODO: gen gep if chain not null
         },
-        else => utils.todo("gen_expression: {any}\n", .{kind}),
+        else => utils.todo("gen_expression: {any}\n", .{exprNode.kind}),
     }
     unreachable;
 }
@@ -312,19 +391,73 @@ const ExpectedInst = struct {
 // that takes an array of insts and creates the function with them
 // then we can compare in much more detail
 fn expectIRMatches(fun: IR.Function, expected: []const Inst) !void {
-    const got = fun.insts.array();
+    const got = try fun.getOrderedInsts(ting.allocator);
+    defer ting.allocator.free(got);
     for (expected, 0..) |expectedInst, i| {
         if (i >= got.len) {
             // bro what was copilot thinking with this one
             // try ting.expectEqualStrings("expected more insts", "got fewer insts");
             log.err("expected more insts. Missing:\n{any}\n", .{expected[i..]});
+            // TODO: if op == Binop check extra.op on both
             return error.NotEnoughInstructions;
         }
         var gotInst = got[i];
         // NOTE: when expanding, must make sure the `res` field on the
         // expected insts are set as they won't be by the helper creator
         // functions
-        try ting.expectEqual(@intFromEnum(expectedInst.op), @intFromEnum(gotInst.op));
+        ting.expectEqual(expectedInst.op, gotInst.op) catch {
+            log.err("expected op: {s}, got: {s}\n", .{ @tagName(expectedInst.op), @tagName(gotInst.op) });
+            log.err("expected insts:\n\n{any}\n", .{expected});
+            log.err("got insts:\n\n{any}\n", .{got});
+            return error.InvalidInstruction;
+        };
+    }
+}
+
+fn expectResultsInIR(input: []const u8, expected: anytype) !void {
+    var arena = std.heap.ArenaAllocator.init(ting.allocator);
+    defer arena.deinit();
+    var alloc = arena.allocator();
+
+    const ir = try testMe(input);
+    const gotIRstr = try ir.stringify(alloc);
+    var gotit = std.mem.splitScalar(u8, gotIRstr, '\n');
+    inline for (expected, 0..) |expectedInst, i| {
+        // need the `if (!cond) {body}` instead `if (cond) {continue}`
+        // because zig complains about runtime control flow
+        // in comptime expression, and it has to be a comptime
+        // expression because the expected insts are a comptime
+        // tuple of slices, and the expected insts are a comptime
+        // tuple of slices because it's annoying as FUCK to create
+        // an array/slice of strings with different lengths, and we
+        // have to do all of that so that empty lines in the resulting
+        // ir get skipped in the test
+        // ...yeah ...zig
+        // (plus me being to lazy to just insert an empty string when the test fails but I'm
+        // still going to blame it on zig)
+        if (!std.mem.eql(u8, expectedInst, "")) {
+            var got = gotit.next();
+            while (got != null and std.mem.eql(u8, got.?, "")) : (got = gotit.next()) {}
+
+            if (got == null) {
+                log.err("\nexpected inst at line {d} but found none. Missing:\n{any}\n", .{ i, expectedInst });
+                log.err("EXPECTED insts:\n\n", .{});
+                inline for (expected) |eInst| {
+                    log.err("{s}\n", .{eInst});
+                }
+                log.err("GOT insts:\n\n{s}\n", .{gotIRstr});
+                return error.NotEnoughInstructions;
+            }
+            ting.expectEqualStrings(expectedInst, got.?) catch {
+                log.err("\nIncorrect inst at line {d}. EXPECTED:\n{s}\nGOT:\n{s}\n", .{ i, expectedInst, got.? });
+                log.err("EXPECTED insts:\n\n", .{});
+                inline for (expected) |eInst| {
+                    log.err("{s}\n", .{eInst});
+                }
+                log.err("\nGOT insts:\n\n{s}\n", .{gotIRstr});
+                return error.NotEnoughInstructions;
+            };
+        }
     }
 }
 
@@ -334,17 +467,29 @@ test "stack.fun.empty" {
     try ting.expectEqual(@as(usize, 1), ir.funcs.items.len);
 }
 
-test "stack.fun.unary-ret" {
+test "stack.str.fun.unary-ret" {
     errdefer log.print();
-    const ir = try testMe("fun main() bool { bool a; a = !false; return a; }");
-    const mainName = try ir.getIdentID("main");
-    const main = try ir.getFun(mainName);
-    const a = try ir.getIdentID("a");
-    const expected = [_]Inst{
-        Inst.alloca(IR.Type.bool),
-        Inst.not(IR.Ref.immediate(IR.InternPool.FALSE)),
-        Inst.load(IR.Type.bool, IR.Ref.local(0, a)),
-        Inst.ret(IR.Type.bool, IR.Ref.local(1, a)),
-    };
-    try expectIRMatches(main, &expected);
+    try expectResultsInIR(
+        "fun main() bool { bool a; a = !false; return a; }",
+        .{
+            "define i1 @main() {",
+            "entry:",
+            "  %0 = alloca i1",
+            "  %a1 = alloca i1",
+            "  br label %2",
+            // FIXME: need way to say hey callee, this should be an immediate, I
+            // didn't make a register for it, glhf!
+            "2:",
+            "  %3 = load i1* 0",
+            "  %4 = xor i1 %3, 1",
+            "  store i1 %4, i1* %a1",
+            "  %a6 = load i1* %a1",
+            "  store i1 %a6, i1* %0",
+            "  br label %exit",
+            "exit:",
+            "  %9 = load i1* %0",
+            "  ret i1 %9",
+            "}",
+        },
+    );
 }

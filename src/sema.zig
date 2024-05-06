@@ -331,7 +331,7 @@ pub fn typeCheckAssignment(ast: *Ast, assignmentn: Ast.Node, fName: []const u8, 
         utils.todo("Error on assignment type checking\n", .{});
         return;
     }
-    const rightNode = ast.get(right.?).kind;
+    const rightNode = ast.get(right).kind;
     if (rightNode == .Read) {
         const readType = Ast.Type.Int;
         // expect lhs to be of type int
@@ -343,7 +343,7 @@ pub fn typeCheckAssignment(ast: *Ast, assignmentn: Ast.Node, fName: []const u8, 
     }
 
     // right hand side is an expression
-    const rightExpr = ast.get(right.?).*;
+    const rightExpr = ast.get(right).*;
     const rightType = try getAndCheckTypeExpression(ast, rightExpr, fName, returnType);
     if (rightType.isStruct()) {
         log.trace("rightType: {s}\n", .{rightType.Struct});

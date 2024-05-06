@@ -12,7 +12,7 @@ pub const StrID = u32;
 
 pub const InternPool = @This();
 
-pub const Error = error{ StringNotPresent, OutOfMemory };
+pub const Error = error{ StringNotPresent, OutOfMemory, NullInternPoolID };
 
 // 0 := number zero
 pub const ZERO = 0;
@@ -66,6 +66,13 @@ pub fn intern(self: *InternPool, str: []const u8) std.mem.Allocator.Error!StrID 
 
 /// Returns the string
 pub fn get(self: *const InternPool, id: StrID) Error![]const u8 {
+    if (id == ZERO or id == FALSE) {
+        return "0";
+    } else if (id == ONE or id == TRUE) {
+        return "1";
+    } else if (id == NULL) {
+        return error.NullInternPoolID;
+    }
     var i: u32 = id;
     const pool = self.pool.items;
     while (i < pool.len and pool[i] != 0) : ({

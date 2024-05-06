@@ -407,13 +407,28 @@ pub const Node = struct {
         BinaryOperation: struct {
             // lhs, rhs actually make sense!
             // token points to operator go look there
-            lhs: ?Ref(.Expression) = null,
-            rhs: ?Ref(.Expression) = null,
+            lhs: ?RefOneOf(.{
+                .BinaryOperation,
+                .UnaryOperation,
+                .Selector,
+                .Expression,
+            }) = null,
+            rhs: ?RefOneOf(.{
+                .BinaryOperation,
+                .UnaryOperation,
+                .Selector,
+                .Expression,
+            }) = null,
         },
         UnaryOperation: struct {
             // token says what unary it is
             // go look there
-            on: Ref(.Expression),
+            on: RefOneOf(.{
+                .BinaryOperation,
+                .UnaryOperation,
+                .Selector,
+                .Expression,
+            }),
         },
         Selector: struct {
             /// Pointer to `Factor`
@@ -771,6 +786,18 @@ pub const Node = struct {
                 }
                 return null;
             }
+
+            pub fn iterStatements(self: Self, ast: *const Ast) NodeIter(.Statement) {
+                if (self.statements) |statementsIndex| {
+                    const statements = ast.get(statementsIndex).kind.StatementList;
+                    return NodeIter(.Statement).init(
+                        ast,
+                        statements.firstStatement,
+                        statements.lastStatement,
+                    );
+                }
+                return NodeIter(.Statement).initEmpty();
+            }
         };
     };
 };
@@ -1038,6 +1065,14 @@ pub fn NodeIter(comptime tag: NodeKindTag) type {
                 // do nothing
             }
             return length;
+        }
+
+        /// Helper mainly for the statement iterations, where there are nested statements
+        /// and we have to iterate. Instead of overcomplicating the logic in this struct,
+        /// leaves handling skips to the callee. E.x.:
+        /// `switch (kind) {.Block => |block| {iter.skipTo(block.lastIndex); ...handle}, ...}`
+        pub fn skipTo(self: *Self, i: usize) void {
+            self.i = i;
         }
     };
 }

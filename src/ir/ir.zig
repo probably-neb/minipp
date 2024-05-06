@@ -30,6 +30,13 @@ pub fn init(alloc: std.mem.Allocator) IR {
     };
 }
 
+/// Stringify the IR
+/// NOTE: highly recommended to pass a std.heap.ArenaAllocator.allocator
+pub fn stringify(self: *const IR, alloc: std.mem.Allocator) ![]const u8 {
+    const stringifyInner = @import("./stringify.zig");
+    return stringifyInner.stringify(self, alloc);
+}
+
 pub fn internIdent(self: *IR, ident: []const u8) StrID {
     return self.intern_pool.intern(ident) catch |err| {
         // The only way this can fail is if the intern pool is out of memory
@@ -54,7 +61,7 @@ pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
         .Int => .int,
         .Bool => .bool,
         .Void => .void,
-        .Null => .null,
+        .Null => std.debug.panic("FUCK WE HAVE TO HANDLE NULL TYPE\n", .{}),
         .Struct => |name| blk: {
             const structID = self.internIdent(name);
             break :blk .{ .strct = structID };
@@ -137,6 +144,7 @@ pub const Function = struct {
     bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
     insts: OrderedList(Inst),
+    returnReg: ?Register.ID = null,
 
     // index into the insts array
     pub const InstID = u32;
@@ -165,6 +173,14 @@ pub const Function = struct {
         return id;
     }
 
+    pub fn newBBWithParent(self: *Function, parent: BasicBlock.ID) !BasicBlock.ID {
+        var bb = BasicBlock.init(self.alloc);
+        try bb.addIncomer(parent);
+        const id = try self.bbs.add(bb);
+        try self.bbs.get(parent).addOutgoer(id);
+        return id;
+    }
+
     pub fn addNamedInst(self: *Function, bb: BasicBlock.ID, basicInst: Inst, name: StrID, ty: Type) !Register {
         // reserve
         const regID = try self.regs.add(undefined);
@@ -178,7 +194,51 @@ pub const Function = struct {
         // save
         self.regs.set(regID, reg);
         self.insts.set(instID, inst);
+        try self.bbs.get(bb).insts.append(instID);
         return reg;
+    }
+
+    pub fn addInst(self: *Function, bb: BasicBlock.ID, inst: Inst, ty: Type) !Register {
+        return self.addNamedInst(bb, inst, InternPool.NULL, ty);
+    }
+
+    // a helper for the stack ir gen because this is a very common pattern
+    pub fn addLoadAndStoreTo(self: *Function, bb: BasicBlock.ID, from: Register, to: Register.ID) !void {
+        const load = Inst.load(from.type, Ref.local(from.id, from.name));
+        const loadReg = try self.addInst(bb, load, from.type);
+        const store = Inst.store(loadReg.type, Ref.local(to, loadReg.name), loadReg.type, Ref.local(loadReg.id, loadReg.name));
+        try self.addAnonInst(bb, store);
+    }
+
+    pub fn addCtrlFlowInst(self: *Function, bb: BasicBlock.ID, inst: Inst) !void {
+        const instID = try self.insts.add(inst);
+        switch (inst.op) {
+            .Jmp => {
+                const jmp = Inst.Jmp.get(inst);
+                try self.bbs.get(bb).addOutgoer(jmp.dest);
+                try self.bbs.get(jmp.dest).addIncomer(bb);
+            },
+            .Br => {
+                const br = Inst.Br.get(inst);
+                try self.bbs.get(bb).addOutgoer(br.iftrue);
+                try self.bbs.get(bb).addOutgoer(br.iffalse);
+                try self.bbs.get(br.iftrue).addIncomer(bb);
+                try self.bbs.get(br.iffalse).addIncomer(bb);
+            },
+            else => {
+                std.debug.panic("addLoadAndStoreTo: Invalid control flow instruction: {any}\n", .{@tagName(inst.op)});
+            },
+        }
+        try self.bbs.get(bb).insts.append(instID);
+    }
+
+    /// Only realy useful for store - i.e. the only(?) instruction that does not have
+    /// a result register and is also noth control flow
+    /// This is functionally identical to addCtrlFlowInst but with a different name
+    /// for semantic clarity
+    pub fn addAnonInst(self: *Function, bb: BasicBlock.ID, inst: Inst) !void {
+        const instID = try self.insts.add(inst);
+        try self.bbs.get(bb).insts.append(instID);
     }
 
     pub const NotFoundError = error{IdentifierNotFound};
@@ -189,14 +249,66 @@ pub const Function = struct {
     /// IN PHI NODES WE SHOULD SEARCH UP THE CFG
     pub fn getNamedAllocaReg(self: *Function, name: StrID) NotFoundError!Register {
         //       1   2            4          5     6   :(
-        for (self.bbs.get(Function.entryBBID).insts.items) |instID| {
+        for (self.bbs.get(Function.entryBBID).insts.items()) |instID| {
             const inst = self.insts.get(instID);
             const res = inst.res;
+            log.trace("Checking for register with name: {d}\n", .{name});
             if (res.name == name) {
                 return self.regs.get(res.i);
             }
         }
         return error.IdentifierNotFound;
+    }
+
+    pub fn setReturnReg(self: *Function, reg: Register.ID) void {
+        self.returnReg = reg;
+    }
+
+    pub const InstIter = struct {
+        func: *const Function,
+        bb: BasicBlock.ID,
+        instIndex: u32,
+
+        pub fn init(func: *const Function) InstIter {
+            return .{ .func = func, .bb = Function.entryBBID, .instIndex = 0 };
+        }
+
+        pub fn next(self: *InstIter) ?Inst {
+            var bb = self.func.bbs.get(self.bb);
+            if (self.instIndex >= bb.insts.len) {
+                if (self.bb == Function.exitBBID) {
+                    return null;
+                }
+                if (self.bb >= self.func.bbs.len - 1) {
+                    self.bb = Function.exitBBID;
+                } else {
+                    self.bb += 1;
+                    if (self.bb == Function.exitBBID) {
+                        // skip the exit bb
+                        self.bb += 1;
+                    }
+                }
+                bb = self.func.bbs.get(self.bb);
+                self.instIndex = 0;
+            }
+            const instID = bb.insts.get(self.instIndex).*;
+            self.instIndex += 1;
+            return self.func.insts.get(instID).*;
+        }
+    };
+
+    pub fn instIter(self: *const Function) InstIter {
+        return InstIter.init(self);
+    }
+
+    pub fn getOrderedInsts(self: *const Function, alloc: std.mem.Allocator) ![]Inst {
+        var insts = try alloc.alloc(Inst, self.insts.len);
+        var iter = self.instIter();
+        var i: usize = 0;
+        while (iter.next()) |inst| : (i += 1) {
+            insts[i] = inst;
+        }
+        return insts;
     }
 };
 
@@ -218,7 +330,7 @@ pub const BasicBlock = struct {
     incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
     // and ORDERED list of the instruction ids of the instructions in this block
-    insts: std.ArrayList(Function.InstID),
+    insts: List,
 
     /// The ID of a basic block is it's index within the arraylist of
     /// basic blocks in the `Function` type
@@ -226,12 +338,39 @@ pub const BasicBlock = struct {
     /// everthing else in the IR because the order of the basic blocks
     pub const ID = u32;
 
+    pub const List = OrderedList(Function.InstID);
+
     pub fn init(alloc: std.mem.Allocator) BasicBlock {
         return .{
             .incomers = std.ArrayList(Label).init(alloc),
             .outgoers = [2]?Label{ null, null },
-            .insts = std.ArrayList(Function.InstID).init(alloc),
+            .insts = List.init(alloc),
         };
+    }
+
+    pub fn addIncomer(self: *BasicBlock, incomer: Label) !void {
+        // see the comment in `addOutgoer` for why this is done
+        // alternative is to just ignore duplicates while actually
+        // using the cfg, but that seems kinda annoying ngl
+        for (self.incomers.items) |existing| {
+            if (existing == incomer) {
+                return;
+            }
+        }
+        try self.incomers.append(incomer);
+    }
+
+    pub fn addOutgoer(self: *BasicBlock, outgoer: Label) !void {
+        // note the `or _ == outgoer` to allow adding the same outgoer twice
+        // without reprecussions. This just makes me less worried about adding
+        // outgoers in `Function` helper methods
+        if (self.outgoers[0] == null or self.outgoers[0] == outgoer) {
+            self.outgoers[0] = outgoer;
+        } else if (self.outgoers[1] == null or self.outgoers[1] == outgoer) {
+            self.outgoers[1] = outgoer;
+        } else {
+            return error.TooManyOutgoers;
+        }
     }
 };
 
@@ -363,14 +502,18 @@ pub fn OrderedList(comptime T: type) type {
         }
 
         /// A helper for iterating instead of `field.list.items`
-        pub fn array(self: Self) []T {
+        pub inline fn items(self: Self) []T {
             return self.list.items;
         }
 
-        pub fn get(self: Self, idx: u32) T {
-            return self.list.items[idx];
+        // TODO: consider refactoring to return just `T`
+        // and create another `getPtr` for when you need a pointer
+        // the `.*` everywhere is kinda annoying ngl
+        pub inline fn get(self: Self, idx: u32) *T {
+            return &self.list.items[idx];
         }
 
+        /// Appends an item and returns the index
         pub fn add(self: *Self, item: T) !u32 {
             const id = self.len;
             try self.list.append(item);
@@ -378,8 +521,15 @@ pub fn OrderedList(comptime T: type) type {
             return id;
         }
 
-        pub fn set(self: *Self, idx: u32, item: T) void {
+        pub inline fn set(self: *Self, idx: u32, item: T) void {
             self.list.items[idx] = item;
+        }
+
+        /// same as add, but does not return the index
+        /// for when you just don't care yk?
+        pub fn append(self: *Self, item: T) !void {
+            try self.list.append(item);
+            self.len += 1;
         }
     };
 }
@@ -557,7 +707,6 @@ pub const Type = union(enum) {
     void,
     int,
     bool,
-    null,
     // sawy dylan
     strct: StructID,
     /// The type used instead of optionals
@@ -569,12 +718,20 @@ pub const Ref = struct {
     /// ID
     i: Register.ID,
     name: StrID,
-    kind: enum { local, global, label, immediate },
+    kind: Kind,
     /// Ref used when no ref needed
-    pub const default = Ref.local(0, InternPool.NULL);
+    pub const default = Ref.local(69420, InternPool.NULL);
+
+    pub const Kind = enum {
+        local,
+        global,
+        label,
+        immediate,
+    };
 
     /// Helper function to create a ref to eine local
-    pub inline fn local(i: u32, name: StrID) Ref {
+    pub inline fn local(i: u32, maybeName: ?StrID) Ref {
+        const name = maybeName orelse InternPool.NULL;
         return Ref{ .i = i, .kind = .local, .name = name };
     }
 
@@ -590,6 +747,22 @@ pub const Ref = struct {
 
     pub inline fn immediate(name: StrID) Ref {
         return Ref{ .i = 0, .kind = .immediate, .name = name };
+    }
+
+    pub inline fn immFalse() Ref {
+        return Ref.immediate(InternPool.FALSE);
+    }
+
+    pub inline fn immTrue() Ref {
+        return Ref.immediate(InternPool.TRUE);
+    }
+
+    pub inline fn immZero() Ref {
+        return Ref.immediate(InternPool.ZERO);
+    }
+
+    pub inline fn immOne() Ref {
+        return Ref.immediate(InternPool.ONE);
     }
 };
 
@@ -681,7 +854,7 @@ pub const Inst = struct {
         return .{ .op = .Binop, .ty1 = .int, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Sub } };
     }
     pub inline fn neg(val: Ref) Inst {
-        return Inst.sub(Ref.immediate(InternPool.ZERO), val);
+        return Inst.sub(Ref.immZero(), val);
     }
     // Boolean
     /// `<result> = and <ty> <op1>, <op2>`
@@ -697,7 +870,7 @@ pub const Inst = struct {
         return .{ .op = .Binop, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Xor } };
     }
     pub inline fn not(val: Ref) Inst {
-        return Inst.xor(val, Ref.immediate(InternPool.ONE));
+        return Inst.xor(val, Ref.immOne());
     }
 
     pub const Cmp = struct {
@@ -726,18 +899,18 @@ pub const Inst = struct {
 
     pub const Br = struct {
         on: Ref,
-        iftrue: Ref,
-        iffalse: Ref,
+        iftrue: BasicBlock.ID,
+        iffalse: BasicBlock.ID,
         pub inline fn get(inst: Inst) Br {
             return .{
                 .on = inst.extra.on,
-                .iftrue = inst.op1,
-                .iffalse = inst.op2,
+                .iftrue = inst.op1.i,
+                .iffalse = inst.op2.i,
             };
         }
 
         pub inline fn toInst(inst: Br) Inst {
-            return Inst.br(inst.on, inst.iftrue, inst.iffalse);
+            return Inst.br(inst.on, Ref.label(inst.iftrue), Ref.label(inst.iffalse));
         }
     };
     /// br i1 <cond>, label <iftrue>, label <iffalse>
@@ -746,12 +919,12 @@ pub const Inst = struct {
     }
 
     pub const Jmp = struct {
-        dest: Ref,
+        dest: BasicBlock.ID,
         pub inline fn get(inst: Inst) Jmp {
-            return .{ .dest = inst.op1 };
+            return .{ .dest = inst.op1.i };
         }
         pub inline fn toInst(inst: Jmp) Inst {
-            return Inst.jmp(inst.dest);
+            return Inst.jmp(Ref.label(inst.dest));
         }
     };
     /// `br label <dest>`
@@ -904,20 +1077,22 @@ pub const Inst = struct {
 
     pub const Misc = struct {
         // combined into one because they are so rarely used comparitively
-        kind: enum { bitcast, trunc, zext },
+        kind: Kind,
         res: Ref,
         fromType: Type,
         from: Ref,
         toType: Type,
+
+        pub const Kind = enum { bitcast, trunc, zext };
+
         pub inline fn get(inst: Inst) Misc {
-            const kind = switch (inst.op) {
-                .Bitcast => .bitcast,
-                .Trunc => .trunc,
-                .Zext => .zext,
-                else => unreachable,
-            };
             return .{
-                .kind = kind,
+                .kind = switch (inst.op) {
+                    .Bitcast => .bitcast,
+                    .Trunc => .trunc,
+                    .Zext => .zext,
+                    else => unreachable,
+                },
                 .res = inst.res,
                 .fromType = inst.ty1,
                 .from = inst.op1,
@@ -952,7 +1127,9 @@ pub const Inst = struct {
         entries: std.ArrayList(PhiEntry),
         pub inline fn get(inst: Inst) Phi {
             return .{
+                .res = inst.res,
                 .entries = inst.extra.phi,
+                .type = inst.ty1,
             };
         }
         pub inline fn toInst(inst: Phi) Inst {
@@ -962,6 +1139,60 @@ pub const Inst = struct {
     /// `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
     pub inline fn phi(res: Ref, ty: Type, entries: std.ArrayList(PhiEntry)) Inst {
         return .{ .op = .Phi, .res = res, .ty1 = ty, .extra = .{ .phi = entries } };
+    }
+
+    // NOTE: comment out this function to get ugly but complete printing again
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (self.op) {
+            .Binop => {
+                const _binop = Inst.Binop.get(self);
+                return writer.print("{any}\n", .{_binop});
+            },
+            .Cmp => {
+                const _cmp = Inst.Cmp.get(self);
+                return writer.print("{any}\n", .{_cmp});
+            },
+            .Br => {
+                const _br = Inst.Br.get(self);
+                return writer.print("{any}\n", .{_br});
+            },
+            .Jmp => {
+                const _jmp = Inst.Jmp.get(self);
+                return writer.print("{any}\n", .{_jmp});
+            },
+            .Load => {
+                const _load = Inst.Load.get(self);
+                return writer.print("{any}\n", .{_load});
+            },
+            .Store => {
+                const _store = Inst.Store.get(self);
+                return writer.print("{any}\n", .{_store});
+            },
+            .Gep => {
+                const _gep = Inst.Gep.get(self);
+                return writer.print("{any}\n", .{_gep});
+            },
+            .Call => {
+                const _call = Inst.Call.get(self);
+                return writer.print("{any}\n", .{_call});
+            },
+            .Ret => {
+                const _ret = Inst.Ret.get(self);
+                return writer.print("{any}\n", .{_ret});
+            },
+            .Alloc => {
+                const _alloc = Inst.Alloc.get(self);
+                return writer.print("{any}\n", .{_alloc});
+            },
+            .Bitcast, .Trunc, .Zext => {
+                var _misc = Inst.Misc.get(self);
+                return writer.print("{any}\n", .{_misc});
+            },
+            .Phi => {
+                const _phi = Inst.Phi.get(self);
+                return writer.print("{any}\n", .{_phi});
+            },
+        }
     }
 };
 
