@@ -189,7 +189,7 @@ pub const Function = struct {
         // construct
         const reg = Register{ .id = regID, .inst = instID, .name = name, .bb = bb, .type = ty };
         var inst = basicInst;
-        inst.res = Ref.local(regID, name);
+        inst.res = Ref.local(regID, name, ty);
 
         // save
         self.regs.set(regID, reg);
@@ -204,9 +204,9 @@ pub const Function = struct {
 
     // a helper for the stack ir gen because this is a very common pattern
     pub fn addLoadAndStoreTo(self: *Function, bb: BasicBlock.ID, from: Register, to: Register.ID) !void {
-        const load = Inst.load(from.type, Ref.local(from.id, from.name));
+        const load = Inst.load(from.type, Ref.local(from.id, from.name, from.type));
         const loadReg = try self.addInst(bb, load, from.type);
-        const store = Inst.store(loadReg.type, Ref.local(to, loadReg.name), loadReg.type, Ref.local(loadReg.id, loadReg.name));
+        const store = Inst.store(loadReg.type, Ref.local(to, loadReg.name, loadReg.type), loadReg.type, Ref.local(loadReg.id, loadReg.name, loadReg.type));
         try self.addAnonInst(bb, store);
     }
 
@@ -252,7 +252,6 @@ pub const Function = struct {
         for (self.bbs.get(Function.entryBBID).insts.items()) |instID| {
             const inst = self.insts.get(instID);
             const res = inst.res;
-            log.trace("Checking for register with name: {d}\n", .{name});
             if (res.name == name) {
                 return self.regs.get(res.i);
             }
@@ -320,6 +319,14 @@ pub const Register = struct {
     type: Type,
 
     pub const ID = u32;
+
+    pub const default: Register = .{
+        .id = 0xdeadbeef,
+        .inst = 0xdeadbeef,
+        .name = InternPool.NULL,
+        .bb = 0xdeadbeef,
+        .type = .void,
+    };
 
     pub fn getID(self: Register) ID {
         return self.id;
@@ -719,8 +726,9 @@ pub const Ref = struct {
     i: Register.ID,
     name: StrID,
     kind: Kind,
+    type: Type,
     /// Ref used when no ref needed
-    pub const default = Ref.local(69420, InternPool.NULL);
+    pub const default = Ref.local(69420, InternPool.NULL, .void);
 
     pub const Kind = enum {
         local,
@@ -729,40 +737,46 @@ pub const Ref = struct {
         immediate,
     };
 
+    pub inline fn fromReg(reg: Register) Ref {
+        return Ref{ .i = reg.id, .kind = .local, .name = reg.name, .type = reg.type };
+    }
     /// Helper function to create a ref to eine local
-    pub inline fn local(i: u32, maybeName: ?StrID) Ref {
+    pub inline fn local(i: u32, maybeName: ?StrID, ty: Type) Ref {
         const name = maybeName orelse InternPool.NULL;
-        return Ref{ .i = i, .kind = .local, .name = name };
+        return Ref{ .i = i, .kind = .local, .name = name, .type = ty };
     }
 
     /// Helper function to create a ref to eine global
-    pub inline fn global(i: u32, name: StrID) Ref {
-        return Ref{ .i = i, .kind = .global, .name = name };
+    pub inline fn global(i: u32, name: StrID, ty: Type) Ref {
+        return Ref{ .i = i, .kind = .global, .name = name, .type = ty };
     }
 
     /// Helper function to create a ref to eine label
     pub inline fn label(i: u32) Ref {
-        return Ref{ .i = i, .kind = .label, .name = i };
+        return Ref{ .i = i, .kind = .label, .name = i, .type = .void };
     }
 
-    pub inline fn immediate(name: StrID) Ref {
-        return Ref{ .i = 0, .kind = .immediate, .name = name };
+    pub inline fn immediate(id: StrID, ty: Type) Ref {
+        // storing the internPoolID in the id field
+        // because otherwise propogating names throughout new
+        // ir refs results in local registers having immediates as their name
+        return Ref{ .i = id, .kind = .immediate, .name = InternPool.NULL, .type = ty };
     }
 
     pub inline fn immFalse() Ref {
-        return Ref.immediate(InternPool.FALSE);
+        return Ref.immediate(InternPool.FALSE, .bool);
     }
 
     pub inline fn immTrue() Ref {
-        return Ref.immediate(InternPool.TRUE);
+        return Ref.immediate(InternPool.TRUE, .bool);
     }
 
     pub inline fn immZero() Ref {
-        return Ref.immediate(InternPool.ZERO);
+        return Ref.immediate(InternPool.ZERO, .int);
     }
 
     pub inline fn immOne() Ref {
-        return Ref.immediate(InternPool.ONE);
+        return Ref.immediate(InternPool.ONE, .int);
     }
 };
 
@@ -977,6 +991,7 @@ pub const Inst = struct {
         }
     };
     /// `store <ty> value, <ty>* <pointer>`
+    // TODO: remove type params and take them from ref
     pub inline fn store(ty: Type, to: Ref, fromType: Type, from: Ref) Inst {
         return .{ .op = .Store, .ty1 = ty, .op1 = to, .ty2 = fromType, .op2 = from };
     }

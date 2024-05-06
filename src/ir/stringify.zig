@@ -267,7 +267,7 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Pair {
         .label => return stringify_label_ref(ref.i),
         // FIXME: i don't like that it's getIdent semantically
         // really it's just that everything is interned
-        .immediate => return pair("", ir.getIdent(ref.name)),
+        .immediate => return pair("", ir.getIdent(ref.i)),
     }
 }
 

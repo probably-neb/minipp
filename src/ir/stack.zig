@@ -158,7 +158,7 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
     const funBody = funNode.getBody(ast);
 
     // (should) only used if the function returns a value
-    var retReg: IR.Register = undefined;
+    var retReg = IR.Register.default;
 
     // generate alloca for the return value if the function returns a value
     // this makes it so ret reg is always `%0`
@@ -190,11 +190,11 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
     // generate return instruction in exit block
     if (funReturnType != .void) {
         // load it in the exit block
-        const retValReg = try fun.addInst(exitBB, Inst.load(funReturnType, IR.Ref.local(retReg.id, retReg.name)), funReturnType);
+        const retValReg = try fun.addInst(exitBB, Inst.load(funReturnType, IR.Ref.fromReg(retReg)), funReturnType);
         // return the loaded return value
         // using addAnonInst so ctrl flow cfg construction is skipped
         // as we'll hook everything up manually as we go
-        try fun.addAnonInst(exitBB, Inst.ret(funReturnType, IR.Ref.local(retValReg.id, retValReg.name)));
+        try fun.addAnonInst(exitBB, Inst.ret(funReturnType, IR.Ref.fromReg(retValReg)));
     } else {
         // void return
         _ = try fun.addInst(exitBB, Inst.retVoid(), .void);
@@ -226,9 +226,9 @@ fn gen_block(ir: *IR, ast: *const Ast, fun: *IR.Function, initialBB: IR.BasicBlo
                     const returnRegID = fun.returnReg.?;
                     const inst = Inst.store(
                         fun.returnType,
-                        IR.Ref.local(returnRegID, null),
+                        IR.Ref.fromReg(fun.regs.get(returnRegID)),
                         retExprReg.type,
-                        IR.Ref.local(retExprReg.id, retExprReg.name),
+                        retExprReg,
                     );
                     try fun.addAnonInst(curBB, inst);
                 } else {
@@ -259,12 +259,12 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
 
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).*;
-            const exprReg = try gen_expression(ir, ast, fun, bb, exprNode);
+            const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
             const inst = Inst.store(
                 allocReg.type,
-                IR.Ref.local(allocReg.id, allocReg.name),
-                exprReg.type,
-                IR.Ref.local(exprReg.id, exprReg.name),
+                IR.Ref.fromReg(allocReg),
+                exprRef.type,
+                exprRef,
             );
             try fun.addAnonInst(bb, inst);
         },
@@ -275,7 +275,7 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
     }
 }
 
-fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node) !IR.Register {
+fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node) !IR.Ref {
     switch (exprNode.kind) {
         .Expression => |expr| {
             return gen_expression(ir, ast, fun, bb, ast.get(expr.expr).*);
@@ -286,18 +286,18 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
                 .Not => {
                     const onExpr = ast.get(unary.on).*;
                     const exprReg = try gen_expression(ir, ast, fun, bb, onExpr);
-                    utils.assert(exprReg.type == IR.Type.bool, "Unary `!` on non-bool type {any}\n", .{exprReg.type});
-                    const inst = Inst.not(IR.Ref.local(exprReg.id, exprReg.name));
-                    const res = try fun.addNamedInst(bb, inst, exprReg.name, IR.Type.bool);
-                    return res;
+                    // utils.assert(exprReg.type == IR.Type.bool, "Unary `!` on non-bool type {any}\n", .{exprReg.type});
+                    const inst = Inst.not(exprReg);
+                    const res = try fun.addNamedInst(bb, inst, exprReg.name, .bool);
+                    return IR.Ref.fromReg(res);
                 },
                 .Minus => {
                     const onExpr = ast.get(unary.on).*;
                     const exprReg = try gen_expression(ir, ast, fun, bb, onExpr);
-                    utils.assert(exprReg.type == IR.Type.int, "Unary `-` on non-int type {any}\n", .{exprReg.type});
-                    const inst = Inst.neg(IR.Ref.local(exprReg.id, exprReg.name));
-                    const res = try fun.addNamedInst(bb, inst, exprReg.name, IR.Type.int);
-                    return res;
+                    // utils.assert(exprReg.type == IR.Type.int, "Unary `-` on non-int type {any}\n", .{exprReg.type});
+                    const inst = Inst.neg(exprReg);
+                    const res = try fun.addNamedInst(bb, inst, exprReg.name, .int);
+                    return IR.Ref.fromReg(res);
                 },
                 else => unreachable,
             }
@@ -311,13 +311,12 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
                 .Identifier => {
                     const identID = ir.internToken(ast, atom.token);
                     const reg = try fun.getNamedAllocaReg(identID);
-                    const inst = Inst.load(reg.type, IR.Ref.local(reg.id, reg.name));
-                    return try fun.addNamedInst(bb, inst, reg.name, reg.type);
+                    const inst = Inst.load(reg.type, IR.Ref.fromReg(reg));
+                    const res = try fun.addNamedInst(bb, inst, reg.name, reg.type);
+                    return IR.Ref.fromReg(res);
                 },
                 .False => {
-                    const inst = Inst.load(IR.Type.bool, IR.Ref.immediate(IR.InternPool.FALSE));
-                    const reg = try fun.addInst(bb, inst, IR.Type.bool);
-                    return reg;
+                    return IR.Ref.immFalse();
                 },
                 else => utils.todo("gen_expression.selector.factor: {any}\n", .{atom.kind}),
             }
@@ -421,44 +420,70 @@ fn expectResultsInIR(input: []const u8, expected: anytype) !void {
 
     const ir = try testMe(input);
     const gotIRstr = try ir.stringify(alloc);
-    var gotit = std.mem.splitScalar(u8, gotIRstr, '\n');
-    inline for (expected, 0..) |expectedInst, i| {
-        // need the `if (!cond) {body}` instead `if (cond) {continue}`
-        // because zig complains about runtime control flow
-        // in comptime expression, and it has to be a comptime
-        // expression because the expected insts are a comptime
-        // tuple of slices, and the expected insts are a comptime
-        // tuple of slices because it's annoying as FUCK to create
-        // an array/slice of strings with different lengths, and we
-        // have to do all of that so that empty lines in the resulting
-        // ir get skipped in the test
-        // ...yeah ...zig
-        // (plus me being to lazy to just insert an empty string when the test fails but I'm
-        // still going to blame it on zig)
-        if (!std.mem.eql(u8, expectedInst, "")) {
-            var got = gotit.next();
-            while (got != null and std.mem.eql(u8, got.?, "")) : (got = gotit.next()) {}
 
-            if (got == null) {
-                log.err("\nexpected inst at line {d} but found none. Missing:\n{any}\n", .{ i, expectedInst });
-                log.err("EXPECTED insts:\n\n", .{});
-                inline for (expected) |eInst| {
-                    log.err("{s}\n", .{eInst});
-                }
-                log.err("GOT insts:\n\n{s}\n", .{gotIRstr});
-                return error.NotEnoughInstructions;
-            }
-            ting.expectEqualStrings(expectedInst, got.?) catch {
-                log.err("\nIncorrect inst at line {d}. EXPECTED:\n{s}\nGOT:\n{s}\n", .{ i, expectedInst, got.? });
-                log.err("EXPECTED insts:\n\n", .{});
-                inline for (expected) |eInst| {
-                    log.err("{s}\n", .{eInst});
-                }
-                log.err("\nGOT insts:\n\n{s}\n", .{gotIRstr});
-                return error.NotEnoughInstructions;
-            };
-        }
+    // putting all lines in newline separated buf
+    // required because as far as I can tell, writing
+    // multiline strings in zig is a pain in the
+    // metaphorical ass
+    comptime var expectedLen: usize = 1;
+    inline for (expected) |e| {
+        expectedLen += e.len + 1;
     }
+    var expectedStr = try alloc.alloc(u8, expectedLen);
+    comptime var i: usize = 0;
+    inline for (expected) |e| {
+        const end = i + e.len;
+        @memcpy(expectedStr[i..end], e);
+        expectedStr[end] = '\n';
+        i = end + 1;
+    }
+    expectedStr[i] = '\n';
+
+    // if (expectedStr.len != gotIRstr.len) {
+    //     log.err("expected ir length: {d}, got: {d}\n", .{ expectedStr.len, gotIRstr.len });
+    //     log.err("EXPECTED:\n{s}\nGOT:\n{s}\n", .{ expectedStr, gotIRstr });
+    //     return error.InvalidInstruction;
+    // }
+    try ting.expectEqualStrings(expectedStr, gotIRstr);
+
+    // var gotit = std.mem.splitScalar(u8, gotIRstr, '\n');
+    // inline for (expected, 0..) |expectedInst, i| {
+    //     // need the `if (!cond) {body}` instead `if (cond) {continue}`
+    //     // because zig complains about runtime control flow
+    //     // in comptime expression, and it has to be a comptime
+    //     // expression because the expected insts are a comptime
+    //     // tuple of slices, and the expected insts are a comptime
+    //     // tuple of slices because it's annoying as FUCK to create
+    //     // an array/slice of strings with different lengths, and we
+    //     // have to do all of that so that empty lines in the resulting
+    //     // ir get skipped in the test
+    //     // ...yeah ...zig
+    //     // (plus me being to lazy to just insert an empty string when the test fails but I'm
+    //     // still going to blame it on zig)
+    //     if (!std.mem.eql(u8, expectedInst, "")) {
+    //         var got = gotit.next();
+    //         while (got != null and std.mem.eql(u8, got.?, "")) : (got = gotit.next()) {}
+    //
+    //         if (got == null) {
+    //             log.err("\nexpected inst at line {d} but found none. Missing:\n{any}\n", .{ i, expectedInst });
+    //             log.err("EXPECTED insts:\n\n", .{});
+    //             inline for (expected) |eInst| {
+    //                 log.err("{s}\n", .{eInst});
+    //             }
+    //             log.err("GOT insts:\n\n{s}\n", .{gotIRstr});
+    //             return error.NotEnoughInstructions;
+    //         }
+    //         ting.expectEqualStrings(expectedInst, got.?) catch {
+    //             log.err("\nIncorrect inst at line {d}. EXPECTED:\n{s}\nGOT:\n{s}\n", .{ i, expectedInst, got.? });
+    //             log.err("EXPECTED insts:\n\n", .{});
+    //             inline for (expected) |eInst| {
+    //                 log.err("{s}\n", .{eInst});
+    //             }
+    //             log.err("\nGOT insts:\n\n{s}\n", .{gotIRstr});
+    //             return error.NotEnoughInstructions;
+    //         };
+    //     }
+    // }
 }
 
 test "stack.fun.empty" {
@@ -480,15 +505,14 @@ test "stack.str.fun.unary-ret" {
             // FIXME: need way to say hey callee, this should be an immediate, I
             // didn't make a register for it, glhf!
             "2:",
-            "  %3 = load i1* 0",
-            "  %4 = xor i1 %3, 1",
-            "  store i1 %4, i1* %a1",
-            "  %a6 = load i1* %a1",
-            "  store i1 %a6, i1* %0",
+            "  %3 = xor i1 0, 1",
+            "  store i1 %3, i1* %a1",
+            "  %a5 = load i1* %a1",
+            "  store i1 %a5, i1* %0",
             "  br label %exit",
             "exit:",
-            "  %9 = load i1* %0",
-            "  ret i1 %9",
+            "  %8 = load i1* %0",
+            "  ret i1 %8",
             "}",
         },
     );
