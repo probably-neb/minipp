@@ -6,6 +6,27 @@ const Alloc = std.mem.Allocator;
 
 const INDENT = "  ";
 
+// TODO: add option to include decls or not
+// to make testing easier, or just filter them out
+// when testing
+// FIXME: determine if a user defined function named malloc, free, etc
+// should be allowed, I vote if llvm allows it we probably should too
+// (i.e. llvm allows defining the function and declaring it, possibly with different signatures)
+// it would be really annoying to check for the overide when lowering to ir, so I haven't done that
+// yet
+// in fact, that's worth a second fixme
+// FIXME: check for overides when accessing non-user-defined globals
+const DECLS =
+    \\ declare i8* @malloc(i32)
+    \\ declare void @free(i8*)
+    \\ declare i32 @printf(i8*, ...)
+    \\ declare i32 @scanf(i8*, ...)
+    \\ @.println = private unnamed_addr constant [5 x i8] c"%ld\0A\00", align 1
+    \\ @.print = private unnamed_addr constant [5 x i8] c"%ld \00", align 1
+    \\ @.read = private unnamed_addr constant [4 x i8] c"%ld\00", align 1
+    \\ @.read_scratch = common global i32 0, align 4
+;
+
 const Buf = struct {
     str: std.ArrayList(u8),
     alloc: Alloc,
@@ -70,7 +91,12 @@ pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
     // TODO: stringify types + globals
     for (ir.funcs.items.items) |*fun| {
         try buf.fmt("define {} @{s}(", .{ stringify_type(ir, fun.returnType), ir.getIdent(fun.name) });
-        // TODO: args
+        for (fun.params.items, 0..) |param, i| {
+            try buf.fmt("{any} %{s}", .{ stringify_type(ir, param.type), ir.getIdent(param.name) });
+            if (i + 1 != fun.params.items.len) {
+                try buf.write(", ");
+            }
+        }
         try buf.write(") {\n");
 
         var iter = fun.instIter();
@@ -126,19 +152,33 @@ pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
 
                 // Comparison and Branching
                 // <result> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
-                .Cmp => |cmp| {
-                    _ = cmp;
-
-                    // The condition of a cmp
-                    // Placed in `Op` struct for namespacing
-                    // pub const Cond = enum { Eq, Lt, Gt, GtEq, LtEq };
-                    utils.todo("cmp", .{});
+                .Cmp => {
+                    const cmp = IR.Inst.Cmp.get(inst);
+                    const cond = switch (cmp.cond) {
+                        .Eq => "eq",
+                        .NEq => "ne",
+                        .Gt => "gt",
+                        .GtEq => "ge",
+                        .Lt => "lt",
+                        .LtEq => "le",
+                    };
+                    try buf.fmt("{any} = icmp {s} {any} {any}, {any}", .{
+                        stringify_ref(ir, fun, cmp.res),
+                        cond,
+                        stringify_type(ir, cmp.opTypes),
+                        stringify_ref(ir, fun, cmp.lhs),
+                        stringify_ref(ir, fun, cmp.rhs),
+                    });
                 },
 
                 // br i1 <cond>, label <iftrue>, label <iffalse>
-                .Br => |br| {
-                    _ = br;
-                    utils.todo("br", .{});
+                .Br => {
+                    const br = IR.Inst.Br.get(inst);
+                    try buf.fmt("br i1 {any}, {any}, {any}", .{
+                        stringify_ref(ir, fun, br.on),
+                        stringify_label_ref(br.iftrue),
+                        stringify_label_ref(br.iffalse),
+                    });
                 },
                 // `br label <dest>`
                 // I know I know this isn't the actual name,
@@ -248,7 +288,10 @@ pub fn stringify_type(ir: *const IR, ty: IR.Type) Pair {
         .bool => return just("i1"),
         .int => return just("i64"),
         .void => return just("void"),
-        .strct => |nameID| return pair("struct ", ir.getIdent(nameID)),
+        .strct => |nameID| return pair("%struct.", ir.getIdent(nameID)),
+        // always a pointer
+        .i8 => return just("i8*"),
+        .i32 => return just("i32"),
         //     const name = ir.getIdent(nameID);
         //     const strct = "struct ";
         //     // catch unreachable here to make it cleaner to use in fmt args
@@ -263,6 +306,7 @@ pub fn stringify_type(ir: *const IR, ty: IR.Type) Pair {
 pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Pair {
     switch (ref.kind) {
         .local => return stringify_reg(ir, fun, ref.i),
+        .param => return pair("%", ir.getIdent(ref.name)),
         .global => return pair("@", ir.getIdent(ref.name)),
         .label => return stringify_label_ref(ref.i),
         // FIXME: i don't like that it's getIdent semantically

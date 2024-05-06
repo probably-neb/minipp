@@ -285,6 +285,14 @@ pub const Node = struct {
             /// When null, only one parameter
             /// Pointer to `TypedIdentifier`
             lastParam: ?Ref(.TypedIdentifier) = null,
+
+            pub fn iter(self: @This(), ast: *const Ast) NodeIter(.TypedIdentifier) {
+                return NodeIter(.TypedIdentifier).init(
+                    ast,
+                    self.firstParam,
+                    self.lastParam,
+                );
+            }
         },
         ReturnType: ReturnTypeType,
         FunctionBody: FunctionBodyType,
@@ -407,18 +415,18 @@ pub const Node = struct {
         BinaryOperation: struct {
             // lhs, rhs actually make sense!
             // token points to operator go look there
-            lhs: ?RefOneOf(.{
+            lhs: RefOneOf(.{
                 .BinaryOperation,
                 .UnaryOperation,
                 .Selector,
                 .Expression,
-            }) = null,
-            rhs: ?RefOneOf(.{
+            }),
+            rhs: RefOneOf(.{
                 .BinaryOperation,
                 .UnaryOperation,
                 .Selector,
                 .Expression,
-            }) = null,
+            }),
         },
         UnaryOperation: struct {
             // token says what unary it is
@@ -493,7 +501,7 @@ pub const Node = struct {
 
             pub const Self = @This();
 
-            fn getProto(self: *const Self, ast: *const Ast) FunctionProtoType {
+            pub fn getProto(self: *const Self, ast: *const Ast) FunctionProtoType {
                 return ast.get(self.proto).kind.FunctionProto;
             }
 
@@ -1027,9 +1035,12 @@ pub fn NodeIter(comptime tag: NodeKindTag) type {
 
         const Self = @This();
 
-        pub fn init(ast: *const Ast, first: usize, last: ?usize) Self {
-            const firstIndex = first;
-            const lastIndex = last orelse first;
+        pub fn init(ast: *const Ast, first: ?usize, last: ?usize) Self {
+            if (first == null) {
+                return Self.initEmpty();
+            }
+            const firstIndex = first.?;
+            const lastIndex = last orelse firstIndex;
             return Self{ .ast = ast, .first = firstIndex, .i = firstIndex, .last = lastIndex };
         }
 

@@ -18,6 +18,10 @@ types: TypeList,
 globals: GlobalsList,
 funcs: FunctionList,
 intern_pool: InternPool,
+// TODO: consider using an arena for everything
+// (except intern pool most likely it will live on)
+// I already tried but I was getting segfaults
+// so... idk
 alloc: std.mem.Allocator,
 
 pub fn init(alloc: std.mem.Allocator) IR {
@@ -145,6 +149,7 @@ pub const Function = struct {
     regs: LookupTable(Register.ID, Register, Register.getID),
     insts: OrderedList(Inst),
     returnReg: ?Register.ID = null,
+    params: ParamsList,
 
     // index into the insts array
     pub const InstID = u32;
@@ -152,13 +157,26 @@ pub const Function = struct {
     pub const entryBBID = 0;
     pub const exitBBID = 1;
 
-    pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type) Function {
+    pub const Param = struct {
+        name: StrID,
+        type: Type,
+
+        pub const ID = u32;
+        pub fn getKey(self: @This()) StrID {
+            return self.name;
+        }
+    };
+
+    pub const ParamsList = StaticSizeLookupTable(Param.ID, Param, Param.getKey);
+
+    pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type, params: []Param) Function {
         return .{
             .alloc = alloc,
             .bbs = OrderedList(BasicBlock).init(alloc),
             .name = name,
             .returnType = returnType,
             .regs = LookupTable(Register.ID, Register, Register.getID).init(alloc),
+            .params = ParamsList.init(params),
             .insts = OrderedList(Inst).init(alloc),
         };
     }
@@ -242,12 +260,27 @@ pub const Function = struct {
     }
 
     pub const NotFoundError = error{IdentifierNotFound};
+
+    pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID) NotFoundError!Ref {
+        if (self.getNamedAllocaReg(name)) |reg| {
+            return Ref.fromReg(reg);
+        } else |_| {}
+
+        if (self.params.safeLookup(name)) |paramID| {
+            const param = self.params.entry(paramID);
+            return Ref.param(paramID, param.name, param.type);
+        }
+
+        const globalID = ir.globals.items.lookup(name);
+        const global = ir.globals.items.entry(globalID);
+        return Ref.global(globalID, global.name, global.type);
+    }
     /// Gets the ID of a register created with an `alloca` in the entry
     /// based on the name of the identifier in question
     /// Returns `error.NotFound`
     /// WARN: ONLY SUPPOSED TO BE USED IN STACK IR GEN
     /// IN PHI NODES WE SHOULD SEARCH UP THE CFG
-    pub fn getNamedAllocaReg(self: *Function, name: StrID) NotFoundError!Register {
+    fn getNamedAllocaReg(self: *Function, name: StrID) NotFoundError!Register {
         //       1   2            4          5     6   :(
         for (self.bbs.get(Function.entryBBID).insts.items()) |instID| {
             const inst = self.insts.get(instID);
@@ -273,6 +306,9 @@ pub const Function = struct {
         }
 
         pub fn next(self: *InstIter) ?Inst {
+            if (self.bb >= self.func.bbs.len) {
+                return null;
+            }
             var bb = self.func.bbs.get(self.bb);
             if (self.instIndex >= bb.insts.len) {
                 if (self.bb == Function.exitBBID) {
@@ -289,6 +325,10 @@ pub const Function = struct {
                 }
                 bb = self.func.bbs.get(self.bb);
                 self.instIndex = 0;
+            }
+            // yeah... this one bit me
+            if (self.instIndex >= bb.insts.len) {
+                return null;
             }
             const instID = bb.insts.get(self.instIndex).*;
             self.instIndex += 1;
@@ -396,7 +436,7 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
             return .{ .items = items, .len = @intCast(items.len) };
         }
 
-        pub fn lookup(self: Self, key: Key) Key {
+        pub fn lookup(self: Self, key: Key) ID {
             const maybe_id = self.safeLookup(key);
             if (maybe_id) |id| {
                 return id;
@@ -408,7 +448,7 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
             for (self.items, 0..) |existing, i| {
                 const itemKey = getKey(existing);
                 if (itemKey == key) {
-                    return i;
+                    return @intCast(i);
                 }
             }
             return null;
@@ -544,11 +584,15 @@ pub fn OrderedList(comptime T: type) type {
 pub const StructType = struct {
     // NOTE: same as this structs ID
     name: StrID,
+    size: u32,
+    // the index of the size num in the intern-pool
+    sizeID: StrID,
     /// Lookup table for field names, where index of fields StrID
     /// is the index of the field i.e. its FieldID
     /// The slice is assumed to be allocated and freed if necessary by the TypeList
     fieldLookup: FieldList,
 
+    pub const ID = StrID;
     const FieldList = StaticSizeLookupTable(StrID, Field, Field.getKey);
 
     pub const Field = struct {
@@ -568,7 +612,7 @@ pub const StructType = struct {
 
     pub fn init(name: StrID, fields: []Field) StructType {
         const fieldLookup = FieldList.init(fields);
-        return .{ .name = name, .fieldLookup = fieldLookup };
+        return .{ .name = name, .fieldLookup = fieldLookup, .size = 0, .sizeID = InternPool.NULL };
     }
 
     pub fn getFieldWithName(self: StructType, name: StrID) Field {
@@ -582,6 +626,10 @@ pub const StructType = struct {
 
     pub fn getKey(self: StructType) StrID {
         return self.name;
+    }
+
+    pub fn getType(self: *const StructType) Type {
+        return .{ .strct = self.name };
     }
 };
 
@@ -610,8 +658,9 @@ pub const TypeList = struct {
         return @intCast(self.items.len);
     }
 
-    pub fn get(self: *const TypeList, id: StructID) ?Item {
-        return self.items.get(id);
+    pub fn get(self: *const TypeList, id: StructID) Item {
+        const idx = self.items.lookup(id);
+        return self.items.entry(idx);
     }
 
     /// WARN: I think I saw somewhere that the AutoArrayHashMap preserves
@@ -669,8 +718,8 @@ pub const Op = enum {
     /// `<result> = load <ty>, <ty>* <pointer>`
     Load,
     /// `store <ty> value, <ty>* <pointer>`
-    /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
     Store,
+    /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
     /// newer:
     /// `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
     Gep,
@@ -699,7 +748,7 @@ pub const Op = enum {
 
     /// The condition of a cmp
     /// Placed in `Op` struct for namespacing
-    pub const Cond = enum { Eq, Lt, Gt, GtEq, LtEq };
+    pub const Cond = enum { Eq, NEq, Lt, Gt, GtEq, LtEq };
 
     /// The binary operation of a Binop
     /// Placed in `Op` struct for namespacing
@@ -716,6 +765,14 @@ pub const Type = union(enum) {
     bool,
     // sawy dylan
     strct: StructID,
+    // only used for malloc, free, printf, read decls and args
+    // will always be a pointer to i8
+    i8,
+    // only used for args to malloc and gep as shown in the
+    // examples beard gave us
+    // could just use int but I think it being wierd helps
+    // make it stand out and thats probably good
+    i32,
     /// The type used instead of optionals
     pub const default = Type.void;
 };
@@ -735,6 +792,7 @@ pub const Ref = struct {
         global,
         label,
         immediate,
+        param,
     };
 
     pub inline fn fromReg(reg: Register) Ref {
@@ -753,7 +811,7 @@ pub const Ref = struct {
 
     /// Helper function to create a ref to eine label
     pub inline fn label(i: u32) Ref {
-        return Ref{ .i = i, .kind = .label, .name = i, .type = .void };
+        return Ref{ .i = i, .kind = .label, .name = InternPool.NULL, .type = .void };
     }
 
     pub inline fn immediate(id: StrID, ty: Type) Ref {
@@ -761,6 +819,10 @@ pub const Ref = struct {
         // because otherwise propogating names throughout new
         // ir refs results in local registers having immediates as their name
         return Ref{ .i = id, .kind = .immediate, .name = InternPool.NULL, .type = ty };
+    }
+
+    pub inline fn param(id: Function.Param.ID, name: StrID, ty: Type) Ref {
+        return Ref{ .i = id, .kind = .param, .name = name, .type = ty };
     }
 
     pub inline fn immFalse() Ref {
@@ -777,6 +839,13 @@ pub const Ref = struct {
 
     pub inline fn immOne() Ref {
         return Ref.immediate(InternPool.ONE, .int);
+    }
+
+    pub inline fn malloc(ir: *IR) Ref {
+        // TODO: move somewhere else? make constant in InternPool?
+        const mallocName = ir.internIdent("malloc");
+        // FIXME: make this make more sense somehow
+        return Ref{ .kind = .global, .i = 0xba110c, .type = .i8, .name = mallocName };
     }
 };
 
@@ -808,8 +877,8 @@ pub const Inst = struct {
         op: Op.Binop,
         /// Used in br as `op3`
         on: Ref,
-        /// Function arguments
-        args: std.ArrayList(Ref),
+        /// Function call arguments
+        args: []Ref,
         /// Helper to use `none_` more elegantly
         pub fn none() Extra {
             return .{ .none_ = undefined };
@@ -876,8 +945,8 @@ pub const Inst = struct {
         return .{ .op = .Binop, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .And } };
     }
     /// `<result> = or <ty> <opi>, <op2>`
-    pub inline fn or_(res: Ref, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Binop, .res = res, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Or } };
+    pub inline fn or_(lhs: Ref, rhs: Ref) Inst {
+        return .{ .op = .Binop, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .op = .Or } };
     }
     /// `<result> = xor <ty> <opl>, <op2>`
     pub inline fn xor(lhs: Ref, rhs: Ref) Inst {
@@ -888,12 +957,14 @@ pub const Inst = struct {
     }
 
     pub const Cmp = struct {
+        res: Ref,
         cond: Op.Cond,
         opTypes: Type,
         lhs: Ref,
         rhs: Ref,
         pub inline fn get(inst: Inst) Cmp {
             return .{
+                .res = inst.res,
                 .cond = inst.extra.cond,
                 .opTypes = inst.ty1,
                 .lhs = inst.op1,
@@ -907,8 +978,8 @@ pub const Inst = struct {
     };
     // Comparison and Branching
     /// <recmp> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
-    pub inline fn cmp(res: Ref, cond: Op.Cond, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Cmp, .res = res, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .cond = cond } };
+    pub inline fn cmp(cond: Op.Cond, lhs: Ref, rhs: Ref) Inst {
+        return .{ .op = .Cmp, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .cond = cond } };
     }
 
     pub const Br = struct {
@@ -1019,15 +1090,17 @@ pub const Inst = struct {
     /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
     /// newer:
     /// `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
-    pub inline fn gep(res: Ref, resTy: Type, ptrTy: Type, ptrVal: Ref, index: Ref) Inst {
-        return .{ .op = .Gep, .res = res, .ty1 = resTy, .ty2 = ptrTy, .op1 = ptrVal, .op2 = index };
+    /// but we are using:
+    /// `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
+    pub inline fn gep(basisTy: Type, ptrTy: Type, ptrVal: Ref, index: Ref) Inst {
+        return .{ .op = .Gep, .ty1 = basisTy, .ty2 = ptrTy, .op1 = ptrVal, .op2 = index };
     }
 
     pub const Call = struct {
         res: Ref,
         retTy: Type,
         fun: Ref,
-        args: std.ArrayList(Ref),
+        args: []Ref,
         pub inline fn get(inst: Inst) Call {
             return .{
                 .res = inst.res,
@@ -1044,8 +1117,8 @@ pub const Inst = struct {
     /// `<result> = call <ty> <inline fnptrval>(<args>)`
     /// newer:
     /// `<result> = call <ty> <inline fnval>(<args>)`
-    pub inline fn call(res: Ref, retTy: Type, fun: Ref, args: std.ArrayList(Ref)) Inst {
-        return .{ .op = .Jmp, .res = res, .ty1 = retTy, .op1 = fun, .extra = .{ .args = args } };
+    pub inline fn call(retTy: Type, fun: Ref, args: []Ref) Inst {
+        return .{ .op = .Jmp, .ty1 = retTy, .op1 = fun, .extra = .{ .args = args } };
     }
 
     pub const Ret = struct {
@@ -1124,8 +1197,8 @@ pub const Inst = struct {
     };
     // Miscellaneous
     /// `<result> = bitcast <ty> <value> to <ty2> ; cast type`
-    pub inline fn bitcast(res: Ref, fromType: Type, from: Ref, toType: Type) Inst {
-        return .{ .op = .Bitcast, .ty1 = fromType, .res = res, .op1 = from, .ty2 = toType };
+    pub inline fn bitcast(fromType: Type, from: Ref, toType: Type) Inst {
+        return .{ .op = .Bitcast, .ty1 = fromType, .op1 = from, .ty2 = toType };
     }
     /// `<result> = trunc <ty> <value> to <ty2> ; truncate to ty2`
     pub inline fn trunc(res: Ref, ty: Type, from: Ref, to: Type) Inst {
