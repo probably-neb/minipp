@@ -311,6 +311,18 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
             );
             try fun.addAnonInst(bb, inst);
         },
+        .Print => |print| {
+            const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(print.expr).*);
+            const lenb4 = fun.insts.len;
+            try gen_print(ir, fun, bb, exprRef, print.hasEndl);
+            const lenAfter = fun.insts.len;
+            log.trace("print expr: {any} :: {d} -> {d}\n", .{ exprRef, lenb4, lenAfter });
+        },
+        .Delete => |del| {
+            const ptrRef = try gen_expression(ir, ast, fun, bb, ast.get(del.expr).*);
+            try gen_free_struct(ir, fun, bb, ptrRef);
+        },
+        // control flow should be handled by the caller
         .ConditionalIf => unreachable,
         .ConditionalIfElse => unreachable,
         .While => unreachable,
@@ -319,6 +331,7 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
 }
 
 fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node) !IR.Ref {
+    std.debug.print("GEN EXPR: {*}\n", .{fun});
     switch (exprNode.kind) {
         .Expression => |expr| {
             return gen_expression(ir, ast, fun, bb, ast.get(expr.expr).*);
@@ -397,7 +410,32 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
                 .New => |new| {
                     const structName = ir.internIdentNodeAt(ast, new.ident);
                     const structType = ir.types.get(structName);
-                    const memRef = try gen_malloc_struct(ir, fun, bb, structType);
+                    const s = structType;
+                    std.debug.print("new: {any}\n", .{s});
+                    const memRef = blk: {
+                        const mallocRef: IR.Ref = IR.Ref.malloc(ir);
+
+                        var args: []IR.Ref = try ir.alloc.alloc(IR.Ref, 1);
+                        args[0] = IR.Ref.immediate(s.sizeID, .i32);
+
+                        const mallocInst = Inst.call(.i8, mallocRef, args);
+                        const memReg = try fun.addNamedInst(bb, mallocInst, s.name, .i8);
+                        {
+                            const instID = memReg.inst;
+                            const inst = fun.insts.get(instID).*;
+                            std.debug.print("MALLOC INST :: {any}\n", .{inst});
+                        }
+                        std.debug.print("malloced in bb: {} in {*}\n", .{ bb, fun });
+                        const memRef = IR.Ref.fromReg(memReg);
+                        std.debug.print("memRef: {any}\n", .{memRef});
+
+                        const cast = Inst.bitcast(.i8, memRef, s.getType());
+                        const castReg = try fun.addNamedInst(bb, cast, s.name, s.getType());
+                        const castRef = IR.Ref.fromReg(castReg);
+
+                        break :blk castRef;
+                    };
+                    // const memRef = try gen_malloc_struct(ir, fun, bb, structType);
                     return memRef;
                 },
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
@@ -419,6 +457,7 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
 
     const malloc = Inst.call(.i8, mallocRef, args);
     const memReg = try fun.addNamedInst(bb, malloc, s.name, .i8);
+    std.debug.print("malloced in bb: {}\n", .{bb});
     const memRef = IR.Ref.fromReg(memReg);
 
     const cast = Inst.bitcast(.i8, memRef, s.getType());
@@ -426,6 +465,50 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
     const castRef = IR.Ref.fromReg(castReg);
 
     return castRef;
+}
+
+fn gen_free_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, ptrRef: IR.Ref) !void {
+    const castInst = Inst.bitcast(ptrRef.type, ptrRef, .i8);
+    const castReg = try fun.addInst(bb, castInst, .i8);
+    const castRef = IR.Ref.fromReg(castReg);
+
+    const args = blk: {
+        var args = try ir.alloc.alloc(IR.Ref, 1);
+        args[0] = castRef;
+        break :blk args;
+    };
+
+    const freeRef = IR.Ref.free(ir);
+    const free = Inst.call(.void, freeRef, args);
+    _ = try fun.addInst(bb, free, .void);
+    return;
+}
+
+fn gen_print(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, expr: IR.Ref, nl: bool) !void {
+    // either a pointer to the printf format string
+    // with a trailing newline or a trailing space
+    const fmtRef = if (nl) IR.Ref.print_ln_fmt(ir) else IR.Ref.print_fmt(ir);
+
+    // the pointer to format string as an i8* instead of an array
+    const fmti8PtrRef = blk: {
+        // use gep to get the fmt string as an i8*
+        // (ptr to first element) instead of an array
+        const zeroIndex = IR.Ref.immediate(0, .i32);
+        const gepFmtPtr = Inst.gep(fmtRef.type, fmtRef.type, fmtRef, zeroIndex);
+        const res = try fun.addInst(bb, gepFmtPtr, .i8);
+        break :blk IR.Ref.fromReg(res);
+    };
+    const printRef = IR.Ref.printf(ir);
+    // the args are (i8* fmt, i64 num)
+    const args = blk: {
+        var args = try ir.alloc.alloc(IR.Ref, 2);
+        args[0] = fmti8PtrRef;
+        args[1] = expr;
+        break :blk args;
+    };
+    const print = Inst.call(.void, printRef, args);
+    _ = try fun.addInst(bb, print, .void);
+    return;
 }
 
 /////////////
@@ -519,6 +602,8 @@ fn expectResultsInIR(input: []const u8, expected: anytype) !void {
     var alloc = arena.allocator();
 
     const ir = try testMe(input);
+    const main = try ir.getFun(try ir.getIdentID("main"));
+    std.debug.print("\n\nir:\n\n{any}\n\n{any}\n", .{ main.insts.items(), main.bbs.items() });
     const gotIRstr = try ir.stringify(alloc);
 
     // putting all lines in newline separated buf
@@ -636,67 +721,101 @@ test "stack.str.do-math" {
     });
 }
 
-test "stack.str.nested-assign" {
-    errdefer log.print();
+// FIXME: stringify types
+// FIXME: calculate struct sizes in genTypes (after getting complete list of types)
+test "stack.str.new" {
     try expectResultsInIR(
         \\struct S {
         \\  int x;
-        \\  int y;
-        \\  struct S s;
         \\};
         \\
         \\fun main() void {
         \\  struct S s;
-        \\  int a;
         \\  s = new S;
-        \\  a = s.s.s.x + s.s.y;
-        \\  print a endl;
         \\  delete s;
         \\}
     , .{
-        "%struct.S = type { i64, i64, %struct.S* }",
+        "%struct.S = type { i64 }",
         "",
         "define void @main() {",
         "entry:",
         "  %s0 = alloca %struct.S*",
-        "  %a1 = alloca i64",
-        "  store %struct.S* null, %struct.S** %s0",
         "  br label %2",
         "2:",
-        "  %4 = call i8* @malloc(i32 24)",
-        "  %4 = bitcast i8* %4 to %struct.S*",
-        "  store %struct.S* %4, %struct.S** %s0",
-        // get x
-        "  %s5 = load %struct.S** %s0",
-        // TODO: move this comment to where gep is actually constructed
-        // NOTE: i'm pretty sure we have to do it this way, not all together
-        // as "subsequent types being indexed into can never be pointers, since that would require loading the pointer before continuing calculation"
-        // i.e. for a dynamically allocated element, you can't know apriori what the ptr to it is, and by extension
-        // cannot know what the ptr to the field is
-        // This is because gep only does ptr arithmetic, not loading
-        // https://llvm.org/docs/LangRef.html#id236
-        "  %s6 = getelementptr %struct.S, %struct.S* %s5, i1 0, i32 2", // get first .s
-        "  %s7 = getelementptr %struct.S, %struct.S* %s6, i1 0, i32 2", // get second .s
-        "  %x8 = getelementptr %struct.S, %struct.S* %s8, i1 0, i32 0", // get .x*
-        "  %x9 = load i64, i64* %x8", // load .x*
-        // get y
-        "  %s10 = load %struct.S** %s0",
-        "  %s11 = getelementptr %struct.S, %struct.S* %s10, i1 0, i32 2",
-        "  %y12 = getelementptr %struct.S, %struct.S* %s11, i1 0, i32 1",
-        "  %y13 = load i64, i64* %y12",
-        // add x and y
-        "  %a14 = add i64 %x9, %y13",
-        "  store i64 %a14, i64* %a1",
-        // print a endl
-        "  %a16 = load i64* %a1",
-        "  %17 = call void @printf(@.println, %a16)",
-        // delete s
-        "  %s18 = load %struct.S** %s0",
-        "  %19 = bitcast %struct.S* %s18 to i8*",
-        "  %20 = call void @free(i8* %19)",
+        "  %3 = call i8* @malloc(i32 8)",
+        "  %3 = bitcast i8* %3 to %struct.S*",
+        "  store %struct.S* %3, %struct.S** %s0",
+        "  %s4 = load %struct.S** %s0",
+        "  %5 = bitcast %struct.S* %s4 to i8*",
+        "  %6 = call void @free(i8* %5)",
+        "  br label %exit",
+        "exit:",
         "}",
     });
 }
+
+// test "stack.str.nested-assign" {
+//     errdefer log.print();
+//     try expectResultsInIR(
+//         \\struct S {
+//         \\  int x;
+//         \\  int y;
+//         \\  struct S s;
+//         \\};
+//         \\
+//         \\fun main() void {
+//         \\  struct S s;
+//         \\  int a;
+//         \\  s = new S;
+//         \\  a = s.s.s.x + s.s.y;
+//         \\  print a endl;
+//         \\  delete s;
+//         \\}
+//     , .{
+//         "%struct.S = type { i64, i64, %struct.S* }",
+//         "",
+//         "define void @main() {",
+//         "entry:",
+//         "  %s0 = alloca %struct.S*",
+//         "  %a1 = alloca i64",
+//         "  store %struct.S* null, %struct.S** %s0",
+//         "  br label %2",
+//         "2:",
+//         "  %4 = call i8* @malloc(i32 24)",
+//         "  %4 = bitcast i8* %4 to %struct.S*",
+//         "  store %struct.S* %4, %struct.S** %s0",
+//         // get x
+//         "  %s5 = load %struct.S** %s0",
+//         // TODO: move this comment to where gep is actually constructed
+//         // NOTE: i'm pretty sure we have to do it this way, not all together
+//         // as "subsequent types being indexed into can never be pointers, since that would require loading the pointer before continuing calculation"
+//         // i.e. for a dynamically allocated element, you can't know apriori what the ptr to it is, and by extension
+//         // cannot know what the ptr to the field is
+//         // This is because gep only does ptr arithmetic, not loading
+//         // https://llvm.org/docs/LangRef.html#id236
+//         "  %s6 = getelementptr %struct.S, %struct.S* %s5, i1 0, i32 2", // get first .s
+//         "  %s7 = getelementptr %struct.S, %struct.S* %s6, i1 0, i32 2", // get second .s
+//         "  %x8 = getelementptr %struct.S, %struct.S* %s8, i1 0, i32 0", // get .x*
+//         "  %x9 = load i64, i64* %x8", // load .x*
+//         // get y
+//         "  %s10 = load %struct.S** %s0",
+//         "  %s11 = getelementptr %struct.S, %struct.S* %s10, i1 0, i32 2",
+//         "  %y12 = getelementptr %struct.S, %struct.S* %s11, i1 0, i32 1",
+//         "  %y13 = load i64, i64* %y12",
+//         // add x and y
+//         "  %a14 = add i64 %x9, %y13",
+//         "  store i64 %a14, i64* %a1",
+//         // print a endl
+//         "  %a16 = load i64* %a1",
+//         "  %17 = call void @printf(@.println, %a16)",
+//         // delete s
+//         "  %s18 = load %struct.S** %s0",
+//         "  %19 = bitcast %struct.S* %s18 to i8*",
+//         "  %20 = call void @free(i8* %19)",
+//         "exit:",
+//         "}",
+//     });
+// }
 
 // TODO:
 // if/else

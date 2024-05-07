@@ -1392,11 +1392,8 @@ pub const Parser = struct {
                 self.readPos = expr.Atom.start + 1;
 
                 const atomIndex = try self.parseSelector();
-                log.trace("\n", .{});
-                prettyPrintTokens(self, self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
-                log.trace("\n", .{});
-                prettyPrintTokens(self, self.tokens[expr.Atom.start..self.pos]);
-                log.trace("\n", .{});
+                // prettyPrintTokens(self, self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
+                // prettyPrintTokens(self, self.tokens[expr.Atom.start..self.pos]);
                 // I really should have made this error shorter before the hundredth time I saw it
                 utils.assert(self.pos == (expr.Atom.start + expr.Atom.len), "either didn't skip enough tokens when extracting atom or didn't parse enough when reconstructing tree... either way shits borqed! glhf!!!\n Expected to parse: \n {any} \nBut Parsed: \n {any} \n", .{ self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)], self.tokens[expr.Atom.start..self.pos] });
 
@@ -1427,7 +1424,6 @@ pub const Parser = struct {
 
         const expr = try self.prattParseExpression(arena, 0);
         const last = self.ast.items.len;
-        log.info("\nEXTRACTED: {any}\n", .{expr});
         const treeIndex = try self.reconstructTree(expr);
 
         // NOTE: unessary?
@@ -1759,8 +1755,6 @@ pub fn main() !void {
     const source = "struct test{ int a; }; fun A() void{ int d;d=2+5;}";
     const tokens = try Lexer.tokenizeFromStr(source, std.heap.page_allocator);
     const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
-    log.err("Parsed successfully\n", .{});
-    log.trace("haha penis", .{});
     try parser.prettyPrintAst();
 }
 

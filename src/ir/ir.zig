@@ -200,9 +200,11 @@ pub const Function = struct {
     }
 
     pub fn addNamedInst(self: *Function, bb: BasicBlock.ID, basicInst: Inst, name: StrID, ty: Type) !Register {
+        std.debug.print("{d} :: ADD INST: {s}\n", .{ bb, @tagName(basicInst.op) });
         // reserve
         const regID = try self.regs.add(undefined);
         const instID = try self.insts.add(undefined);
+        std.debug.print("INSTID := {d}\n", .{instID});
 
         // construct
         const reg = Register{ .id = regID, .inst = instID, .name = name, .bb = bb, .type = ty };
@@ -527,10 +529,11 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
         }
 
         pub fn add(self: *Self, val: Value) !ID {
-            const id = self.len;
+            // const id = self.len;
             try self.items.append(val);
             self.len += 1;
-            return id;
+            return @intCast(self.items.items.len - 1);
+            // return id;
         }
     };
 }
@@ -771,8 +774,21 @@ pub const Type = union(enum) {
     // only used for args to malloc and gep as shown in the
     // examples beard gave us
     // could just use int but I think it being wierd helps
-    // make it stand out and thats probably good
+    // make it stand out and that is probably a good thing
     i32,
+    arr: struct {
+        type: enum {
+            i8,
+            // Same as Type.int, just has to be a separate thing
+            // for
+            // 1. semantics - we only have arrays of i8 (the printf inputs)
+            //    and soon int (the user arrays)
+            // 2. to avoid having the type be recursively defined
+            //    which zig likes to bitch and moan about (understandably)
+            int,
+        },
+        len: u32,
+    },
     /// The type used instead of optionals
     pub const default = Type.void;
 };
@@ -843,9 +859,40 @@ pub const Ref = struct {
 
     pub inline fn malloc(ir: *IR) Ref {
         // TODO: move somewhere else? make constant in InternPool?
-        const mallocName = ir.internIdent("malloc");
+        const name = ir.internIdent("malloc");
+        std.debug.print("MALLOC REF", .{});
         // FIXME: make this make more sense somehow
-        return Ref{ .kind = .global, .i = 0xba110c, .type = .i8, .name = mallocName };
+        return Ref{ .kind = .global, .i = 0xba110c, .type = .i8, .name = name };
+    }
+
+    pub inline fn free(ir: *IR) Ref {
+        // TODO: move somewhere else? make constant in InternPool?
+        const name = ir.internIdent("free");
+        // FIXME: make this make more sense somehow
+        return Ref{ .kind = .global, .i = 0xf433, .type = .void, .name = name };
+    }
+
+    pub inline fn printf(ir: *IR) Ref {
+        const name = ir.internIdent("printf");
+        return Ref{ .kind = .global, .i = 0xbf1A4f, .type = .i8, .name = name };
+    }
+
+    pub inline fn print_fmt(ir: *IR) Ref {
+        const name = ir.internIdent(".print");
+        const ty = Type{ .arr = .{
+            .type = .i8,
+            .len = 5,
+        } };
+        return Ref{ .kind = .global, .i = 0xfa420, .type = ty, .name = name };
+    }
+
+    pub inline fn print_ln_fmt(ir: *IR) Ref {
+        const name = ir.internIdent(".println");
+        const ty = Type{ .arr = .{
+            .type = .i8,
+            .len = 5,
+        } };
+        return Ref{ .kind = .global, .i = 0xfa421, .type = ty, .name = name };
     }
 };
 
@@ -1069,14 +1116,14 @@ pub const Inst = struct {
 
     pub const Gep = struct {
         res: Ref,
-        resTy: Type,
+        baseTy: Type,
         ptrTy: Type,
         ptrVal: Ref,
         index: Ref,
         pub inline fn get(inst: Inst) Gep {
             return .{
                 .res = inst.res,
-                .resTy = inst.ty1,
+                .baseTy = inst.ty1,
                 .ptrTy = inst.ty2,
                 .ptrVal = inst.op1,
                 .index = inst.op2,
@@ -1084,13 +1131,11 @@ pub const Inst = struct {
         }
 
         pub inline fn toInst(inst: Gep) Inst {
-            return Inst.gep(inst.res, inst.resTy, inst.ptrTy, inst.ptrVal, inst.index);
+            return Inst.gep(inst.res, inst.baseTy, inst.ptrTy, inst.ptrVal, inst.index);
         }
     };
     /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
     /// newer:
-    /// `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
-    /// but we are using:
     /// `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
     pub inline fn gep(basisTy: Type, ptrTy: Type, ptrVal: Ref, index: Ref) Inst {
         return .{ .op = .Gep, .ty1 = basisTy, .ty2 = ptrTy, .op1 = ptrVal, .op2 = index };
@@ -1117,8 +1162,9 @@ pub const Inst = struct {
     /// `<result> = call <ty> <inline fnptrval>(<args>)`
     /// newer:
     /// `<result> = call <ty> <inline fnval>(<args>)`
-    pub inline fn call(retTy: Type, fun: Ref, args: []Ref) Inst {
-        return .{ .op = .Jmp, .ty1 = retTy, .op1 = fun, .extra = .{ .args = args } };
+    pub fn call(retTy: Type, fun: Ref, args: []Ref) Inst {
+        std.debug.print("CALL {any}({any})\n", .{ fun, args });
+        return .{ .op = .Call, .ty1 = retTy, .op1 = fun, .extra = .{ .args = args } };
     }
 
     pub const Ret = struct {

@@ -569,8 +569,8 @@ pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const 
     const token = binaryOp.token;
     switch (token.kind) {
         .Lt, .Gt, .GtEq, .LtEq, .DoubleEq, .NotEq => {
-            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
-            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
+            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs).*;
+            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs).*;
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
             const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
             if (!lhsType.equals(rhsType)) {
@@ -582,8 +582,8 @@ pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const 
             return Ast.Type.Bool;
         },
         .Or, .And => {
-            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
-            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
+            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs).*;
+            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs).*;
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
             const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
 
@@ -601,8 +601,8 @@ pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const 
         .Div,
         => {
             ast.printAst();
-            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
-            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
+            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs).*;
+            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs).*;
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
             const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
             if (!lhsType.equals(rhsType)) {
