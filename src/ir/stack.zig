@@ -181,7 +181,7 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
 
     // generate IR for the function body
     const lastBB = try gen_block(ir, ast, &fun, bodyBB, ast.get(funNode.body).*);
-    try fun.bbs.get(lastBB).addOutgoer(exitBB);
+    try fun.addCtrlFlowInst(lastBB, IR.Inst.jmp(IR.Ref.label(exitBB)));
 
     // generate return instruction in exit block
     if (funReturnType != .void) {
@@ -331,7 +331,6 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
 }
 
 fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node) !IR.Ref {
-    std.debug.print("GEN EXPR: {*}\n", .{fun});
     switch (exprNode.kind) {
         .Expression => |expr| {
             return gen_expression(ir, ast, fun, bb, ast.get(expr.expr).*);
@@ -411,31 +410,8 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
                     const structName = ir.internIdentNodeAt(ast, new.ident);
                     const structType = ir.types.get(structName);
                     const s = structType;
-                    std.debug.print("new: {any}\n", .{s});
-                    const memRef = blk: {
-                        const mallocRef: IR.Ref = IR.Ref.malloc(ir);
 
-                        var args: []IR.Ref = try ir.alloc.alloc(IR.Ref, 1);
-                        args[0] = IR.Ref.immediate(s.sizeID, .i32);
-
-                        const mallocInst = Inst.call(.i8, mallocRef, args);
-                        const memReg = try fun.addNamedInst(bb, mallocInst, s.name, .i8);
-                        {
-                            const instID = memReg.inst;
-                            const inst = fun.insts.get(instID).*;
-                            std.debug.print("MALLOC INST :: {any}\n", .{inst});
-                        }
-                        std.debug.print("malloced in bb: {} in {*}\n", .{ bb, fun });
-                        const memRef = IR.Ref.fromReg(memReg);
-                        std.debug.print("memRef: {any}\n", .{memRef});
-
-                        const cast = Inst.bitcast(.i8, memRef, s.getType());
-                        const castReg = try fun.addNamedInst(bb, cast, s.name, s.getType());
-                        const castRef = IR.Ref.fromReg(castReg);
-
-                        break :blk castRef;
-                    };
-                    // const memRef = try gen_malloc_struct(ir, fun, bb, structType);
+                    const memRef = try gen_malloc_struct(ir, fun, bb, s);
                     return memRef;
                 },
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
@@ -450,14 +426,13 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
 
 // FIXME: allow redefinition of globals
 fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.StructType) !IR.Ref {
-    const mallocRef = IR.Ref.malloc(ir);
+    const mallocRef: IR.Ref = IR.Ref.malloc(ir);
 
     var args: []IR.Ref = try ir.alloc.alloc(IR.Ref, 1);
-    args[0] = IR.Ref.immediate(s.sizeID, .i32);
+    args[0] = IR.Ref.immu32(s.size, .i32);
 
-    const malloc = Inst.call(.i8, mallocRef, args);
-    const memReg = try fun.addNamedInst(bb, malloc, s.name, .i8);
-    std.debug.print("malloced in bb: {}\n", .{bb});
+    const mallocInst = Inst.call(.i8, mallocRef, args);
+    const memReg = try fun.addNamedInst(bb, mallocInst, s.name, .i8);
     const memRef = IR.Ref.fromReg(memReg);
 
     const cast = Inst.bitcast(.i8, memRef, s.getType());
@@ -602,8 +577,6 @@ fn expectResultsInIR(input: []const u8, expected: anytype) !void {
     var alloc = arena.allocator();
 
     const ir = try testMe(input);
-    const main = try ir.getFun(try ir.getIdentID("main"));
-    std.debug.print("\n\nir:\n\n{any}\n\n{any}\n", .{ main.insts.items(), main.bbs.items() });
     const gotIRstr = try ir.stringify(alloc);
 
     // putting all lines in newline separated buf
@@ -742,8 +715,8 @@ test "stack.str.new" {
         "  %s0 = alloca %struct.S*",
         "  br label %2",
         "2:",
-        "  %3 = call i8* @malloc(i32 8)",
-        "  %3 = bitcast i8* %3 to %struct.S*",
+        "  %S2 = call i8* @malloc(i32 8)",
+        "  %S3 = bitcast i8* %3 to %struct.S*",
         "  store %struct.S* %3, %struct.S** %s0",
         "  %s4 = load %struct.S** %s0",
         "  %5 = bitcast %struct.S* %s4 to i8*",

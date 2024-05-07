@@ -200,11 +200,9 @@ pub const Function = struct {
     }
 
     pub fn addNamedInst(self: *Function, bb: BasicBlock.ID, basicInst: Inst, name: StrID, ty: Type) !Register {
-        std.debug.print("{d} :: ADD INST: {s}\n", .{ bb, @tagName(basicInst.op) });
         // reserve
         const regID = try self.regs.add(undefined);
         const instID = try self.insts.add(undefined);
-        std.debug.print("INSTID := {d}\n", .{instID});
 
         // construct
         const reg = Register{ .id = regID, .inst = instID, .name = name, .bb = bb, .type = ty };
@@ -231,7 +229,31 @@ pub const Function = struct {
     }
 
     pub fn addCtrlFlowInst(self: *Function, bb: BasicBlock.ID, inst: Inst) !void {
+        utils.assert(inst.isCtrlFlow(), "tried to add non control flow instruction:\n{any}\n", .{inst});
+        const maybeLastBBInstID = self.bbs.get(bb).getLastInstID();
+        if (maybeLastBBInstID) |lastBBInstID| {
+            const lastInst = self.insts.get(lastBBInstID).*;
+            if (lastInst.isCtrlFlow()) {
+                if (ctrlFlowInstsEqual(lastInst, inst)) {
+                    log.err("tried to add control flow instruction to block that already had different control flow instruction.\nexisting = {any}\nnew = {any}\n", .{ lastInst, inst });
+                    return error.ConflictingControlFlowInstructions;
+                }
+                // last inst is already correct, add edges if they dont exist already
+                try self.connectInstBBs(bb, inst);
+                return;
+            }
+            // otherwise we continue with the add
+        }
         const instID = try self.insts.add(inst);
+        try self.connectInstBBs(bb, inst);
+        try self.bbs.get(bb).insts.append(instID);
+    }
+
+    /// adds edges between basic blocks based on the given control flow instruction
+    /// within the given basic block
+    /// NOTE: should not mess things up if the blocks are already connected,
+    /// the addOutgoer|Incomer functions check if the edge is already defined
+    pub fn connectInstBBs(self: *Function, bb: BasicBlock.ID, inst: Inst) !void {
         switch (inst.op) {
             .Jmp => {
                 const jmp = Inst.Jmp.get(inst);
@@ -249,7 +271,6 @@ pub const Function = struct {
                 std.debug.panic("addLoadAndStoreTo: Invalid control flow instruction: {any}\n", .{@tagName(inst.op)});
             },
         }
-        try self.bbs.get(bb).insts.append(instID);
     }
 
     /// Only realy useful for store - i.e. the only(?) instruction that does not have
@@ -353,6 +374,29 @@ pub const Function = struct {
     }
 };
 
+fn ctrlFlowInstsEqual(a: Inst, b: Inst) bool {
+    utils.assert(a.isCtrlFlow(), "tried to compare non ctrl flow instruction:\n{any}\n", .{a});
+    utils.assert(b.isCtrlFlow(), "tried to compare non ctrl flow instruction:\n{any}\n", .{b});
+
+    if (a.op == .Br and b.op == .Br) {
+        const aBr = Inst.Br.get(a);
+        const bBr = Inst.Br.get(b);
+        return aBr.eq(bBr);
+    }
+    if (a.op == .Jmp and b.op == .Jmp) {
+        const aJmp = Inst.Jmp.get(a);
+        const bJmp = Inst.Jmp.get(b);
+        return aJmp.eq(bJmp);
+    }
+    if (a.op == .Ret and b.op == .Ret) {
+        const aRet = Inst.Ret.get(a);
+        const bRet = Inst.Ret.get(b);
+        return aRet.eq(bRet);
+    }
+    log.err("ctrl flow instructions are of different kinds: {s} != {s}\n", .{ @tagName(a.op), @tagName(b.op) });
+    return false;
+}
+
 pub const Register = struct {
     id: ID,
     inst: Function.InstID,
@@ -420,6 +464,13 @@ pub const BasicBlock = struct {
         } else {
             return error.TooManyOutgoers;
         }
+    }
+
+    pub fn getLastInstID(self: *const BasicBlock) ?Function.InstID {
+        if (self.insts.len == 0) {
+            return null;
+        }
+        return self.insts.items()[self.insts.len - 1];
     }
 };
 
@@ -588,8 +639,6 @@ pub const StructType = struct {
     // NOTE: same as this structs ID
     name: StrID,
     size: u32,
-    // the index of the size num in the intern-pool
-    sizeID: StrID,
     /// Lookup table for field names, where index of fields StrID
     /// is the index of the field i.e. its FieldID
     /// The slice is assumed to be allocated and freed if necessary by the TypeList
@@ -615,7 +664,7 @@ pub const StructType = struct {
 
     pub fn init(name: StrID, fields: []Field) StructType {
         const fieldLookup = FieldList.init(fields);
-        return .{ .name = name, .fieldLookup = fieldLookup, .size = 0, .sizeID = InternPool.NULL };
+        return .{ .name = name, .fieldLookup = fieldLookup, .size = 0 };
     }
 
     pub fn getFieldWithName(self: StructType, name: StrID) Field {
@@ -791,6 +840,20 @@ pub const Type = union(enum) {
     },
     /// The type used instead of optionals
     pub const default = Type.void;
+
+    pub fn eq(self: Type, other: Type) bool {
+        return switch (self) {
+            .strct => |selfStructID| switch (other) {
+                .strct => |otherStructID| selfStructID == otherStructID,
+                else => false,
+            },
+            .arr => |selfArr| switch (other) {
+                .arr => |otherArr| selfArr.type == otherArr.type and selfArr.len == otherArr.len,
+                else => false,
+            },
+            else => @intFromEnum(self) == @intFromEnum(other),
+        };
+    }
 };
 
 /// Ref to a register
@@ -808,6 +871,12 @@ pub const Ref = struct {
         global,
         label,
         immediate,
+        // a special variant of immediate for when we know the integer
+        // the immediate is (such as struct size)
+        // and we put the u32 value in the i field instead of
+        // interning it
+        // this makes things simpler trust me bro
+        immediate_u32,
         param,
     };
 
@@ -837,6 +906,10 @@ pub const Ref = struct {
         return Ref{ .i = id, .kind = .immediate, .name = InternPool.NULL, .type = ty };
     }
 
+    pub inline fn immu32(val: u32, ty: Type) Ref {
+        return Ref{ .i = val, .kind = .immediate_u32, .name = InternPool.NULL, .type = ty };
+    }
+
     pub inline fn param(id: Function.Param.ID, name: StrID, ty: Type) Ref {
         return Ref{ .i = id, .kind = .param, .name = name, .type = ty };
     }
@@ -860,7 +933,6 @@ pub const Ref = struct {
     pub inline fn malloc(ir: *IR) Ref {
         // TODO: move somewhere else? make constant in InternPool?
         const name = ir.internIdent("malloc");
-        std.debug.print("MALLOC REF", .{});
         // FIXME: make this make more sense somehow
         return Ref{ .kind = .global, .i = 0xba110c, .type = .i8, .name = name };
     }
@@ -893,6 +965,10 @@ pub const Ref = struct {
             .len = 5,
         } };
         return Ref{ .kind = .global, .i = 0xfa421, .type = ty, .name = name };
+    }
+
+    pub fn eq(self: Ref, other: Ref) bool {
+        return self.kind == other.kind and self.i == other.i and self.name == other.name and self.type.eq(other.type);
     }
 };
 
@@ -931,6 +1007,13 @@ pub const Inst = struct {
             return .{ .none_ = undefined };
         }
     };
+
+    pub fn isCtrlFlow(self: *const Inst) bool {
+        return switch (self.op) {
+            .Jmp, .Br, .Ret => true,
+            else => false,
+        };
+    }
 
     /// Arithmetic struct
     pub const Binop = struct {
@@ -1044,6 +1127,10 @@ pub const Inst = struct {
         pub inline fn toInst(inst: Br) Inst {
             return Inst.br(inst.on, Ref.label(inst.iftrue), Ref.label(inst.iffalse));
         }
+
+        pub fn eq(self: Br, other: Br) bool {
+            return self.on.eq(other.on) and self.iftrue == other.iftrue and self.iffalse == other.iffalse;
+        }
     };
     /// br i1 <cond>, label <iftrue>, label <iffalse>
     pub inline fn br(cond: Ref, iftrue: Ref, iffalse: Ref) Inst {
@@ -1057,6 +1144,10 @@ pub const Inst = struct {
         }
         pub inline fn toInst(inst: Jmp) Inst {
             return Inst.jmp(Ref.label(inst.dest));
+        }
+
+        pub fn eq(self: Jmp, other: Jmp) bool {
+            return self.dest == other.dest;
         }
     };
     /// `br label <dest>`
@@ -1163,7 +1254,6 @@ pub const Inst = struct {
     /// newer:
     /// `<result> = call <ty> <inline fnval>(<args>)`
     pub fn call(retTy: Type, fun: Ref, args: []Ref) Inst {
-        std.debug.print("CALL {any}({any})\n", .{ fun, args });
         return .{ .op = .Call, .ty1 = retTy, .op1 = fun, .extra = .{ .args = args } };
     }
 
@@ -1178,6 +1268,10 @@ pub const Inst = struct {
         }
         pub inline fn toInst(inst: Ret) Inst {
             return Inst.ret(inst.ty, inst.val);
+        }
+
+        pub fn eq(self: Ret, other: Ret) bool {
+            return self.ty.eq(other.ty) and self.val.eq(other.val);
         }
     };
     /// `ret void`

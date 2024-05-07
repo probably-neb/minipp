@@ -318,11 +318,11 @@ pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
                 // `<result> = bitcast <ty> <value> to <ty2> ; cast type`
                 .Bitcast => {
                     const bitcast = IR.Inst.Misc.get(inst);
-                    try buf.fmt("{} = bitcast {}* {} to {}", .{
+                    try buf.fmt("{} = bitcast {} {} to {}", .{
                         stringify_ref(ir, fun, bitcast.res),
-                        stringify_type(ir, bitcast.fromType),
+                        stringify_type(ir, bitcast.fromType).ptr(),
                         stringify_ref(ir, fun, bitcast.from),
-                        stringify_type(ir, bitcast.toType),
+                        stringify_type(ir, bitcast.toType).ptr(),
                     });
                 },
                 // `<result> = trunc <ty> <value> to <ty2> ; truncate to ty2`
@@ -356,7 +356,7 @@ pub fn stringify_type(ir: *const IR, ty: IR.Type) Rope {
         .void => return Rope.just("void"),
         .strct => |nameID| return Rope.pair("%struct.", ir.getIdent(nameID)).ptr(),
         // always a pointer
-        .i8 => return Rope.just("i8*"),
+        .i8 => return Rope.just("i8").ptr(),
         .i32 => return Rope.just("i32"),
         .arr => |arr| {
             const prefix = "[ ";
@@ -386,6 +386,7 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
         // FIXME: i don't like that it's getIdent semantically
         // really it's just that everything is interned
         .immediate => return Rope.pair("", if (ref.i == IR.InternPool.NULL) "null" else ir.getIdent(ref.i)),
+        .immediate_u32 => return Rope.just_num(ref.i),
     }
 }
 
@@ -414,6 +415,5 @@ pub fn stringify_label_ref(label: IR.BasicBlock.ID) Rope {
     } else if (label == IR.Function.exitBBID) {
         return Rope.just("label %exit");
     }
-    std.debug.print("label %{d}\n", .{label});
     return Rope.str_num("label %", label);
 }
