@@ -649,10 +649,10 @@ pub const StructType = struct {
 
     pub const Field = struct {
         name: StrID,
-        ty: Type,
+        type: Type,
 
         pub fn init(name: StrID, ty: Type) Field {
-            return .{ .name = name, .ty = ty };
+            return .{ .name = name, .type = ty };
         }
 
         pub fn getKey(self: Field) StrID {
@@ -662,14 +662,18 @@ pub const StructType = struct {
 
     pub const FieldID = u32;
 
-    pub fn init(name: StrID, fields: []Field) StructType {
-        const fieldLookup = FieldList.init(fields);
+    pub fn init(name: StrID, fieldList: []Field) StructType {
+        const fieldLookup = FieldList.init(fieldList);
         return .{ .name = name, .fieldLookup = fieldLookup, .size = 0 };
     }
 
     pub fn getFieldWithName(self: StructType, name: StrID) Field {
         const idx = self.fieldLookup.lookup(name);
         return self.fieldLookup.get(idx);
+    }
+
+    pub fn fields(self: *const StructType) []Field {
+        return self.fieldLookup.items;
     }
 
     pub fn numFields(self: StructType) usize {

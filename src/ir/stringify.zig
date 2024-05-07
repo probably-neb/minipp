@@ -55,6 +55,11 @@ const Buf = struct {
     }
 };
 
+/// A struct to help with printing/formatting the IR
+/// Basically ultra specific rope data structure (hence the name)
+/// that accounts only for the cases we encounter when printing IR
+/// Mainly for avoiding having to do manual string concatenation/allocation
+/// by allowing variable parts to be variable and constant parts to be constant
 const Rope = struct {
     a: []const u8,
     b: []const u8,
@@ -127,7 +132,24 @@ const Rope = struct {
 pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
     var buf = Buf.init(alloc);
 
-    // TODO: stringify types + globals
+    const types = ir.types.items.items;
+    // TODO: stringify globals
+    for (types) |ty| {
+        try buf.fmt("{} = type {{ ", .{
+            stringify_type(ir, IR.Type{ .strct = ty.name }).not_ptr(),
+        });
+        const fields = ty.fields();
+        for (fields, 0..) |field, i| {
+            try buf.fmt("{any}", .{stringify_type(ir, field.type)});
+            if (i + 1 != fields.len) {
+                try buf.write(", ");
+            }
+        }
+        try buf.write(" }\n");
+    }
+    if (types.len > 0) {
+        try buf.write("\n");
+    }
     for (ir.funcs.items.items) |*fun| {
         try buf.fmt("define {} @{s}(", .{ stringify_type(ir, fun.returnType), ir.getIdent(fun.name) });
         for (fun.params.items, 0..) |param, i| {
