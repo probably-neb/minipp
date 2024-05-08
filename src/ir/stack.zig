@@ -895,6 +895,11 @@ fn expectResultsInIR(input: []const u8, expected: anytype) !void {
     const ir = try testMe(input);
     const gotIRstr = try ir.stringify(alloc);
 
+    // NOTE: could use multiline strings for the
+    // expected value but, that makes it so you can't put
+    // comments inbetween the lines
+    // idk rough tradeoff
+
     // putting all lines in newline separated buf
     // required because as far as I can tell, writing
     // multiline strings in zig is a pain in the
