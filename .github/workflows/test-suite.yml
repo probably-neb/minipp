@@ -1,0 +1,16 @@
+name: Test Suite
+on:
+  push:
+    branches:
+      - '*'
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  Fibonacci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test Fibonacci
+        shell: bash

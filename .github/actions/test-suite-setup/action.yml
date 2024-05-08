@@ -1,0 +1,19 @@
+name: Setup Test Suite
+description: Reusable setup for test suite
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: 'recursive'
+    - name: Install LLVM 7.0.1
+      uses: KyleMayes/install-llvm-action@v1
+      with:
+        version: '7.0.1'
+    - uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: 0.11.0 # or any other Zig version you want to use
+    - uses: taiki-e/install-action@just
+    - run: |
+        just build
+      shell: bash
