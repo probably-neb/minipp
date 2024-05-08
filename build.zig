@@ -19,16 +19,16 @@ pub fn build(b: *std.Build) void {
     const build_mode = b.standardOptimizeOption(.{});
 
     // TODO: uncommment for when there is actually a main.zig file
-    // const exe = b.addExecutable(.{
-    //     .name = "minipp",
-    //     .root_source_file = .{ .path = "src/main.zig" },
-    //     .target = target,
-    //     .optimize = build_mode,
-    // });
-    // b.installArtifact(exe);
-    // const run_exe = b.addRunArtifact(exe);
-    // const run_step = b.step("run", "Run minipp");
-    // run_step.dependOn(&run_exe.step);
+    const exe = b.addExecutable(.{
+        .name = "minipp",
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = build_mode,
+    });
+    b.installArtifact(exe);
+    const run_exe = b.addRunArtifact(exe);
+    const run_step = b.step("run", "Run minipp");
+    run_step.dependOn(&run_exe.step);
 
     // create tests for all files and a test step that runs them all
     const test_step = b.step("test", "Run Tests");

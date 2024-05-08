@@ -6,21 +6,24 @@ const Flag = struct {
     long: []const u8,
 };
 
-const FLAGS_MAP = std.ComptimeStringMap(Args.Mode, .{
-    .{ "-stack", Args.Mode.stack },
-    .{ "-ssa", Args.Mode.ssa },
-    .{ "-opt", Args.Mode.opt },
-    .{ "-dot", Args.Mode.dot },
-    .{ "-o", Args.Mode.outfile },
-    .{ "-out", Args.Mode.outfile },
+const FLAGS_MAP = std.ComptimeStringMap(ArgKind, .{
+    .{ "-stack", .{ .mode = .stack } },
+    .{ "-ssa", .{ .mode = .ssa } },
+    .{ "-opt", .{ .mode = .opt } },
+    .{ "-dot", .{ .mode = .dot } },
+    .{ "-o", .outfile },
+    .{ "-out", .outfile },
+    .{ "-i", .infile },
+    .{ "-in", .infile },
+    .{ "-input", .infile },
 });
 
-const MAX_FILE_SIZE: usize = 10 << 30; // 10 GB
+const MAX_FILE_SIZE: usize = 2 << 30; // 2 GB
 
 const ArgKind = union(enum) {
     mode: Args.Mode,
-    outfile: []const u8,
-    infile: []const u8,
+    outfile,
+    infile,
 };
 
 const Args = struct {
@@ -38,13 +41,15 @@ const Args = struct {
 
 const DEFAULT_ARGS = Args{
     .mode = Args.Mode.stack,
-    .outfile = "out.ll",
+    .outfile = "",
     .infile = "",
 };
 
 fn parse_args() !Args {
-    var args: Args = undefined;
-    const argsIter = std.process.args();
+    var args: Args = DEFAULT_ARGS;
+    var argsIter = std.process.args();
+    // skip program name
+    _ = argsIter.skip();
     while (argsIter.next()) |arg| {
         const argDef = blk: {
             const argDef = FLAGS_MAP.get(arg);
@@ -61,29 +66,37 @@ fn parse_args() !Args {
                 // previous ones
                 args.mode = mode;
             },
-            .outfile => |outfile| {
+            .outfile => {
+                const outfile = argsIter.next() orelse {
+                    log.err("Expected an argument after {s}\n", .{arg});
+                    return error.ExpectedArg;
+                };
                 args.outfile = outfile;
             },
-            .infile => |infile| {
+            .infile => {
+                const infile = argsIter.next() orelse {
+                    log.err("Expected an argument after {s}\n", .{arg});
+                    return error.ExpectedArg;
+                };
                 args.infile = infile;
             },
         }
     }
     if (args.infile.len == 0) {
-        log.err("No input file provided\n");
+        log.err("No input file provided\n", .{});
         return error.NoInputFile;
     }
     return args;
 }
 
 pub fn main() !void {
+    errdefer log.print();
     const args = try parse_args();
-    _ = args;
+    log.trace("{s} {s} -> {s}\n", .{ @tagName(args.mode), args.infile, args.outfile });
+    try run(args.mode, args.infile, args.outfile);
 }
 
 pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !void {
-    errdefer log.print();
-
     const alloc = std.heap.page_allocator;
 
     var backendArena = std.heap.ArenaAllocator.init(alloc);
@@ -101,8 +114,8 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
 
             const tokens = try @import("lexer.zig").Lexer.tokenizeFromStr(input, frontendAlloc);
             const parser = try @import("parser.zig").Parser.parseTokens(tokens, input, frontendAlloc);
-            const ast = @import("ast.zig").initFromParser(parser);
-            try @import("sema.zig").typeCheck(ast);
+            const ast = try @import("ast.zig").initFromParser(parser);
+            try @import("sema.zig").typeCheck(&ast);
 
             break :ast ast;
         };
@@ -120,7 +133,11 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
         }
     };
 
-    try std.fs.cwd().writeFile(outfilePath, ir);
-
-    // TODO: run clang if user asks for it
+    if (outfilePath.len == 0) {
+        var writer = std.io.getStdOut().writer();
+        _ = try writer.write(ir);
+    } else {
+        try std.fs.cwd().writeFile(outfilePath, ir);
+        // TODO: run clang if user asks for it
+    }
 }
