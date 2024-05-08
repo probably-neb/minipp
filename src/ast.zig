@@ -34,7 +34,7 @@ pub fn mapStructs(ast: *Ast) !void {
     }
 }
 
-pub fn printAst(self: *Ast) void {
+pub fn printAst(self: *const Ast) void {
     var i: usize = 0;
     const nodes = self.nodes.items;
     for (nodes) |node| {
@@ -72,7 +72,7 @@ pub fn mapFunctions(ast: *Ast) !void {
     }
 }
 
-pub fn getFunctionFromName(ast: *Ast, name: []const u8) ?*const Node {
+pub fn getFunctionFromName(ast: *const Ast, name: []const u8) ?*const Node {
     const index = ast.functionMap.get(name);
     if (index) |i| {
         return ast.get(i);
@@ -80,7 +80,7 @@ pub fn getFunctionFromName(ast: *Ast, name: []const u8) ?*const Node {
     return null;
 }
 
-pub fn getFunctionReturnTypeFromName(ast: *Ast, name: []const u8) ?Type {
+pub fn getFunctionReturnTypeFromName(ast: *const Ast, name: []const u8) ?Type {
     const funcNode = ast.getFunctionFromName(name);
     if (funcNode == null) {
         return null;
@@ -89,7 +89,7 @@ pub fn getFunctionReturnTypeFromName(ast: *Ast, name: []const u8) ?Type {
     return func.getReturnType(ast);
 }
 
-pub fn getFunctionDeclarationTypeFromName(ast: *Ast, name: []const u8, memberName: []const u8) ?Type {
+pub fn getFunctionDeclarationTypeFromName(ast: *const Ast, name: []const u8, memberName: []const u8) ?Type {
     const funcNode = ast.getFunctionFromName(name);
     if (funcNode == null) {
         return null;
@@ -102,7 +102,7 @@ pub fn getFunctionDeclarationTypeFromName(ast: *Ast, name: []const u8, memberNam
     return declarations.kind.LocalDeclarations.getMemberType(ast, memberName);
 }
 
-pub fn getStructNodeFromName(ast: *Ast, name: []const u8) ?*const Node {
+pub fn getStructNodeFromName(ast: *const Ast, name: []const u8) ?*const Node {
     const index = ast.structMap.get(name);
     if (index) |i| {
         return ast.get(i);
@@ -110,7 +110,7 @@ pub fn getStructNodeFromName(ast: *Ast, name: []const u8) ?*const Node {
     return null;
 }
 
-pub fn getStructFieldType(ast: *Ast, structName: []const u8, fieldName: []const u8) ?Type {
+pub fn getStructFieldType(ast: *const Ast, structName: []const u8, fieldName: []const u8) ?Type {
     const structNode = ast.getStructNodeFromName(structName);
     if (structNode == null) {
         return null;
@@ -119,7 +119,7 @@ pub fn getStructFieldType(ast: *Ast, structName: []const u8, fieldName: []const 
     return decls.kind.StructFieldDeclarations.getMemberType(ast, fieldName);
 }
 
-pub fn getDeclarationGlobalFromName(ast: *Ast, name: []const u8) ?Type {
+pub fn getDeclarationGlobalFromName(ast: *const Ast, name: []const u8) ?Type {
     const nodes = ast.nodes.items;
     for (nodes) |node| {
         if (node.kind == .ProgramDeclarations) {
@@ -231,7 +231,7 @@ pub const Node = struct {
 
             //Ben you will hate this :D
             //You are correct my friend. I do in fact hate this
-            fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
+            fn getMemberType(self: Self, ast: *const Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
                 var iterator: ?usize = self.firstDecl;
                 while (iterator) |it| : (iterator = ast.findIndexWithin(.TypedIdentifier, it + 1, last + 1)) {
@@ -310,7 +310,7 @@ pub const Node = struct {
                 return self.firstDecl == null and self.lastDecl == null;
             }
 
-            fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
+            fn getMemberType(self: Self, ast: *const Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
                 var iterator: ?usize = self.firstDecl;
                 while (iterator != null) {

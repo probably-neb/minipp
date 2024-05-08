@@ -193,7 +193,7 @@ fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaEr
     }
 }
 
-pub fn typeCheck(ast: *Ast) !void {
+pub fn typeCheck(ast: *const Ast) !void {
     // get all functions out of map
     var funcsKeys = ast.functionMap.keyIterator();
     while (funcsKeys.next()) |key| {
@@ -202,7 +202,7 @@ pub fn typeCheck(ast: *Ast) !void {
     }
 }
 // Done
-pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
+pub fn typeCheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
     var fc = func.kind.Function;
     const functionName = fc.getName(ast);
     const returnType = fc.getReturnType(ast).?;
@@ -243,7 +243,7 @@ pub fn typeCheckFunction(ast: *Ast, func: Ast.Node) TypeError!void {
 }
 
 // Done
-pub fn typeCheckStatementList(ast: *Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckStatementList(ast: *const Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
     ast.printAst();
     log.trace("statementListn: {d}\n", .{statementListn.?});
     const list = try StatemenListgetList(statementListn, ast);
@@ -257,7 +257,7 @@ pub fn typeCheckStatementList(ast: *Ast, statementListn: ?usize, fName: []const 
     }
 }
 
-pub fn typeCheckStatement(ast: *Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckStatement(ast: *const Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     const kind = statement.kind;
     _ = switch (kind) {
         .Block => {
@@ -301,7 +301,7 @@ pub fn typeCheckStatement(ast: *Ast, statement: Ast.Node, fName: []const u8, ret
 }
 
 // Done
-pub fn typeCheckBlock(ast: *Ast, blockn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckBlock(ast: *const Ast, blockn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // Block to statement list
     const block = blockn.kind.Block;
     const statementIndex = block.statements;
@@ -312,7 +312,7 @@ pub fn typeCheckBlock(ast: *Ast, blockn: Ast.Node, fName: []const u8, returnType
 }
 
 // Done
-pub fn typeCheckAssignment(ast: *Ast, assignmentn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     const assignment = assignmentn.kind.Assignment;
     const left = assignment.lhs;
     const right = assignment.rhs;
@@ -356,7 +356,7 @@ pub fn typeCheckAssignment(ast: *Ast, assignmentn: Ast.Node, fName: []const u8, 
 }
 
 // Done
-pub fn typeCheckPrint(ast: *Ast, printn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckPrint(ast: *const Ast, printn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     const print = printn.kind.Print;
     const expr = print.expr;
     const exprNode = ast.get(expr).*;
@@ -368,7 +368,7 @@ pub fn typeCheckPrint(ast: *Ast, printn: Ast.Node, fName: []const u8, returnType
 }
 
 // Done
-pub fn typeCheckConditional(ast: *Ast, conditionaln: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckConditional(ast: *const Ast, conditionaln: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // first check if conditional is bool
     const conditional = conditionaln.kind.ConditionalIf;
     const cond = conditional.cond;
@@ -394,7 +394,7 @@ pub fn typeCheckConditional(ast: *Ast, conditionaln: Ast.Node, fName: []const u8
 }
 
 // Done
-pub fn typeCheckWhile(ast: *Ast, while_nN: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckWhile(ast: *const Ast, while_nN: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // first check if conditional is bool
     const while_n = while_nN.kind.While;
     const cond = while_n.cond;
@@ -410,7 +410,7 @@ pub fn typeCheckWhile(ast: *Ast, while_nN: Ast.Node, fName: []const u8, returnTy
 }
 
 // Done
-pub fn typeCheckDelete(ast: *Ast, deleten: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckDelete(ast: *const Ast, deleten: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     const delete = deleten.kind.Delete;
     const expr = delete.expr;
     const exprNode = ast.get(expr).*;
@@ -422,7 +422,7 @@ pub fn typeCheckDelete(ast: *Ast, deleten: Ast.Node, fName: []const u8, returnTy
 }
 
 // Done
-pub fn typeCheckReturn(ast: *Ast, retn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typeCheckReturn(ast: *const Ast, retn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     const ret = retn.kind.Return;
     const expr = ret.expr;
     if (expr == null) {
@@ -440,7 +440,7 @@ pub fn typeCheckReturn(ast: *Ast, retn: Ast.Node, fName: []const u8, returnType:
 }
 
 // Done
-pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+pub fn getAndCheckInvocation(ast: *const Ast, invocationn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
     const invocation = invocationn.kind.Invocation;
     const funcName = ast.get(invocation.funcName).token._range.getSubStrFromStr(ast.input);
     const func = ast.getFunctionFromName(funcName);
@@ -523,7 +523,7 @@ pub fn getAndCheckInvocation(ast: *Ast, invocationn: Ast.Node, fName: []const u8
 }
 
 // Done
-pub fn getAndCheckTypeExpression(ast: *Ast, exprn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+pub fn getAndCheckTypeExpression(ast: *const Ast, exprn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
     switch (exprn.kind) {
         .BinaryOperation => {
             return try getAndCheckBinaryOperation(ast, exprn, fName, returnType);
@@ -565,7 +565,7 @@ pub fn getAndCheckTypeExpression(ast: *Ast, exprn: Ast.Node, fName: []const u8, 
 }
 
 // TODO: fix the errors
-pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
     const token = binaryOp.token;
     switch (token.kind) {
         .Lt, .Gt, .GtEq, .LtEq, .DoubleEq, .NotEq => {
@@ -624,7 +624,7 @@ pub fn getAndCheckBinaryOperation(ast: *Ast, binaryOp: Ast.Node, fName: []const 
     unreachable;
 }
 
-pub fn getAndCheckUnaryOperation(ast: *Ast, unaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+pub fn getAndCheckUnaryOperation(ast: *const Ast, unaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
     const token = unaryOp.token;
     switch (token.kind) {
         .Not => {
@@ -651,7 +651,7 @@ pub fn getAndCheckUnaryOperation(ast: *Ast, unaryOp: Ast.Node, fName: []const u8
     unreachable;
 }
 
-pub fn getAndCheckSelector(ast: *Ast, selectorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+pub fn getAndCheckSelector(ast: *const Ast, selectorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
     const selector = selectorn.kind.Selector;
     const factorNode = ast.get(selector.factor).*;
     const factorType = try getAndCheckFactor(ast, factorNode, fName, returnType);
@@ -662,7 +662,7 @@ pub fn getAndCheckSelector(ast: *Ast, selectorn: Ast.Node, fName: []const u8, re
     return chainType.?;
 }
 
-pub fn getAndCheckFactor(ast: *Ast, factorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+pub fn getAndCheckFactor(ast: *const Ast, factorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
     const factor = factorn.kind.Factor;
     const kind = factor.factor;
     const node = ast.get(kind).*;
@@ -682,7 +682,7 @@ pub fn getAndCheckFactor(ast: *Ast, factorn: Ast.Node, fName: []const u8, return
     unreachable;
 }
 
-pub fn getAndCheckNew(ast: *Ast, newn: Ast.Node) TypeError!Ast.Type {
+pub fn getAndCheckNew(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
     const new = newn.kind.New;
     const name = ast.get(new.ident).token._range.getSubStrFromStr(ast.input);
     const structType = ast.getStructNodeFromName(name);
@@ -693,7 +693,7 @@ pub fn getAndCheckNew(ast: *Ast, newn: Ast.Node) TypeError!Ast.Type {
     return Ast.Type{ .Struct = name };
 }
 
-pub fn getAndCheckLocalIdentifier(ast: *Ast, localId: Ast.Node, fName: []const u8) TypeError!Ast.Type {
+pub fn getAndCheckLocalIdentifier(ast: *const Ast, localId: Ast.Node, fName: []const u8) TypeError!Ast.Type {
     const token = localId.token;
     const name = token._range.getSubStrFromStr(ast.input);
     const func = ast.getFunctionFromName(fName).?.kind.Function.proto;
@@ -710,7 +710,7 @@ pub fn getAndCheckLocalIdentifier(ast: *Ast, localId: Ast.Node, fName: []const u
     return localDecl.?;
 }
 
-pub fn SelectorChaingetType(this: ?usize, ast: *Ast, ty: Ast.Type) !?Ast.Type {
+pub fn SelectorChaingetType(this: ?usize, ast: *const Ast, ty: Ast.Type) !?Ast.Type {
     if (this == null) {
         return null;
     }
@@ -752,7 +752,7 @@ pub fn SelectorChaingetType(this: ?usize, ast: *Ast, ty: Ast.Type) !?Ast.Type {
         }
     }
 }
-pub fn ParametergetParamTypes(this: ?usize, ast: *Ast) !?[]Ast.Type {
+pub fn ParametergetParamTypes(this: ?usize, ast: *const Ast) !?[]Ast.Type {
     if (this == null) {
         return null;
     }
@@ -778,7 +778,7 @@ pub fn ParametergetParamTypes(this: ?usize, ast: *Ast) !?[]Ast.Type {
     return res;
 }
 
-pub fn ParamatergetParamTypeFromName(this: ?usize, ast: *Ast, name: []const u8) !?Ast.Type {
+pub fn ParamatergetParamTypeFromName(this: ?usize, ast: *const Ast, name: []const u8) !?Ast.Type {
     if (this == null) {
         return null;
     }
@@ -804,7 +804,7 @@ pub fn ParamatergetParamTypeFromName(this: ?usize, ast: *Ast, name: []const u8) 
     return null;
 }
 
-pub fn TypedIdentifergetType(tid: Ast.Node, ast: *Ast) !Ast.Type {
+pub fn TypedIdentifergetType(tid: Ast.Node, ast: *const Ast) !Ast.Type {
     const ty = ast.get(tid.kind.TypedIdentifier.type).*.kind.Type;
     const ff = ast.get(ty.kind).*.kind;
     _ = switch (ff) {
@@ -823,7 +823,7 @@ pub fn TypedIdentifergetType(tid: Ast.Node, ast: *Ast) !Ast.Type {
     };
     return error.InvalidType;
 }
-pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *Ast, fName: []const u8, returnType: Ast.Type) !?[]Ast.Type {
+pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *const Ast, fName: []const u8, returnType: Ast.Type) !?[]Ast.Type {
     if (this == null) {
         return null;
     }
@@ -871,7 +871,7 @@ pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *Ast, fName: []const u8, ret
     list.deinit();
     return res;
 }
-pub fn LValuegetType(this: ?usize, ast: *Ast, fName: []const u8) !?Ast.Type {
+pub fn LValuegetType(this: ?usize, ast: *const Ast, fName: []const u8) !?Ast.Type {
     if (this == null) {
         // TODO add error
         return null;
@@ -918,7 +918,7 @@ pub fn LValuegetType(this: ?usize, ast: *Ast, fName: []const u8) !?Ast.Type {
     }
 }
 
-pub fn StatemenListgetList(this: ?usize, ast: *Ast) TypeError!?[]usize {
+pub fn StatemenListgetList(this: ?usize, ast: *const Ast) TypeError!?[]usize {
     if (this == null) {
         return null;
     }
