@@ -1063,7 +1063,7 @@ pub const Ref = struct {
 
     pub inline fn printf(ir: *IR) Ref {
         const name = ir.internIdent("printf");
-        return Ref{ .kind = .global, .i = 0xbf1A4f, .type = .i8, .name = name };
+        return Ref{ .kind = .global, .i = 0xbf1A4f, .type = .i32, .name = name };
     }
 
     pub inline fn print_fmt(ir: *IR) Ref {
@@ -1254,7 +1254,8 @@ pub const Inst = struct {
     // Comparison and Branching
     /// <recmp> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
     pub inline fn cmp(cond: Op.Cond, lhs: Ref, rhs: Ref) Inst {
-        return .{ .op = .Cmp, .ty1 = .bool, .op1 = lhs, .op2 = rhs, .extra = .{ .cond = cond } };
+        utils.assert(lhs.type.eq(rhs.type), "comparison operands must have the same type\n", .{});
+        return .{ .op = .Cmp, .ty1 = lhs.type, .op1 = lhs, .op2 = rhs, .extra = .{ .cond = cond } };
     }
 
     pub const Br = struct {

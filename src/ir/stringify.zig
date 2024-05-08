@@ -35,6 +35,19 @@ const DECLS =
     \\@.read_scratch = common global i32 0, align 4
 ;
 
+/// The c std functions won't be in the IR, so we need a way to get their
+/// argument signatures. This is a map from the function name
+/// to the their arg types (without the parens)
+/// i.e. `malloc` -> `i8*, ...`
+/// we don't need the return type because we do encode that in the reference
+/// in the IR
+const C_STD_FN_ARG_SIGNATURES = std.ComptimeStringMap([]const u8, .{
+    .{ "malloc", "i32" },
+    .{ "free", "i8*" },
+    .{ "printf", "i8*, ..." },
+    .{ "scanf", "i8*, ..." },
+});
+
 const Buf = struct {
     str: std.ArrayList(u8),
     alloc: Alloc,
@@ -300,10 +313,10 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                     const cond = switch (cmp.cond) {
                         .Eq => "eq",
                         .NEq => "ne",
-                        .Gt => "gt",
-                        .GtEq => "ge",
-                        .Lt => "lt",
-                        .LtEq => "le",
+                        .Gt => "sgt",
+                        .GtEq => "sge",
+                        .Lt => "slt",
+                        .LtEq => "sle",
                     };
                     try buf.fmt("{any} = icmp {s} {any} {any}, {any}", .{
                         stringify_ref(ir, fun, cmp.res),
@@ -340,8 +353,9 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                     const load = IR.Inst.Load.get(inst);
                     // using the old one because it's shorter
                     // and idk what the second type is for
-                    try buf.fmt("{} = load {}* {}", .{
+                    try buf.fmt("{} = load {}, {}* {}", .{
                         stringify_ref(ir, fun, load.res),
+                        stringify_type(ir, load.ty).not_ptr(),
                         stringify_type(ir, load.ty),
                         stringify_ref(ir, fun, load.ptr),
                     });
@@ -379,9 +393,27 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                 // `<result> = call <ty> <fnval>(<args>)`
                 .Call => {
                     const call = IR.Inst.Call.get(inst);
-                    try buf.fmt("{} = call {} {}(", .{
+                    try buf.fmt("{} = call {} (", .{
                         stringify_ref(ir, fun, call.res),
                         stringify_type(ir, call.retTy),
+                    });
+
+                    if (C_STD_FN_ARG_SIGNATURES.get(ir.getIdent(call.fun.name))) |argSig| {
+                        try buf.write(argSig);
+                    } else {
+                        // assume arg signatures match the
+                        // function signature instead of fetching
+                        // the function and doing it properly
+                        for (call.args, 0..) |arg, i| {
+                            try buf.fmt("{}", .{
+                                stringify_type(ir, arg.type).ensure_ptr_if(arg.kind == .global),
+                            });
+                            if (i + 1 < call.args.len) {
+                                try buf.write(", ");
+                            }
+                        }
+                    }
+                    try buf.fmt(") {}(", .{
                         stringify_ref(ir, fun, call.fun),
                     });
                     for (call.args, 0..) |arg, i| {
@@ -507,7 +539,7 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
 pub fn stringify_reg(ir: *const IR, fun: *const IR.Function, regID: IR.Register.ID) Rope {
     const reg = fun.regs.get(regID);
     switch (reg.name) {
-        IR.InternPool.NULL => return Rope.str_num("%", reg.inst),
+        IR.InternPool.NULL => return Rope.str_num("%_", reg.inst),
         // IR.InternPool.TRUE, IR.InternPool.ONE => return pair_num("%", 1),
         // IR.InternPool.FALSE, IR.InternPool.ZERO => return pair_num("%", 0),
         else => return Rope.str_str_num("%", ir.getIdent(reg.name), reg.inst),
@@ -520,7 +552,7 @@ pub fn stringify_label(label: IR.BasicBlock.ID) Rope {
     } else if (label == IR.Function.exitBBID) {
         return Rope.just("exit");
     }
-    return Rope.just_num(label - 1);
+    return Rope.str_num("_", label - 1);
 }
 
 pub fn stringify_label_ref(label: IR.BasicBlock.ID) Rope {
@@ -529,5 +561,5 @@ pub fn stringify_label_ref(label: IR.BasicBlock.ID) Rope {
     } else if (label == IR.Function.exitBBID) {
         return Rope.just("label %exit");
     }
-    return Rope.str_num("label %", label);
+    return Rope.str_num("label %_", label - 1);
 }

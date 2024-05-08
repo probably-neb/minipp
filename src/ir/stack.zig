@@ -506,11 +506,12 @@ fn gen_expression(
                 .GtEq => Inst.cmp(.GtEq, lhsRef, rhsRef),
                 else => std.debug.panic("gen_expression.binary_operation: {s}\n", .{@tagName(tok.kind)}),
             };
-            const ty: IR.Type = switch (tok.kind) {
-                .Plus, .Minus, .Mul, .Div => .int,
-                .DoubleEq, .NotEq, .Lt, .LtEq, .Gt, .GtEq, .And, .Or => .bool,
-                else => unreachable,
-            };
+            // const ty: IR.Type = switch (tok.kind) {
+            //     .Plus, .Minus, .Mul, .Div => .int,
+            //     .DoubleEq, .NotEq, .Lt, .LtEq, .Gt, .GtEq, .And, .Or => .,
+            //     else => unreachable,
+            // };
+            const ty: IR.Type = .int;
             const name = join_names(lhsRef.name, rhsRef.name);
             const res = try fun.addNamedInst(bb, inst, name, ty);
             return IR.Ref.fromReg(res);
@@ -524,6 +525,9 @@ fn gen_expression(
                 .Identifier => ident: {
                     const identID = ir.internToken(ast, atom.token);
                     const ref = try fun.getNamedRef(ir, identID);
+                    if (ref.kind == .param) {
+                        break :ident ref;
+                    }
                     const inst = Inst.load(ref.type, ref);
                     const res = try fun.addNamedInst(bb, inst, ref.name, ref.type);
                     break :ident IR.Ref.fromReg(res);
@@ -728,8 +732,8 @@ fn gen_print(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, expr: IR.Ref, nl:
         args[1] = expr;
         break :blk args;
     };
-    const print = Inst.call(.void, printRef, args);
-    _ = try fun.addInst(bb, print, .void);
+    const print = Inst.call(printRef.type, printRef, args);
+    _ = try fun.addInst(bb, print, printRef.type);
     return;
 }
 
