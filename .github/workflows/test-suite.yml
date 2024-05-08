@@ -11,6 +11,7 @@ jobs:
   Fibonacci:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
       - run: just run-suite-test Fibonacci
         shell: bash

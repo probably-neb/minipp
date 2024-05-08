@@ -15,5 +15,6 @@ runs:
         version: 0.11.0 # or any other Zig version you want to use
     - uses: taiki-e/install-action@just
     - run: |
+        sudo apt install libtinfo5
         just build
       shell: bash
