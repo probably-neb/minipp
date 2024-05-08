@@ -122,8 +122,13 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
 
     // NOTE: not using the `iterFuncs` method because we wan't to use the
     // `calculateLen` helper and I'm too lazy rn to port it
-    var funcProtoIter = Ast.NodeIter(.Function).init(ast, 0, ast.nodes.items.len);
-    var funcIter = funcProtoIter;
+    var funcIter = Ast.NodeIter(.Function).init(ast, 0, ast.nodes.items.len);
+    // create a copy of funcIter we will use to generate proto definitions
+    // of the functions before generating the ir for each function body
+    // this ensures when generating the function body ir, that when
+    // we encounter a function call it will be able to find the
+    // name + return type to reference
+    var funcProtoIter = funcIter;
     const numFuncs = funcIter.calculateLen();
     // log.trace("num funcs := {}\n", .{numFuncs});
     var funcs: []Fun = try ir.alloc.alloc(Fun, numFuncs);
@@ -133,6 +138,11 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
         const funNode = node.kind.Function;
         const funName = ir.internIdent(funNode.getName(ast));
         const funReturnType = ir.astTypeToIRType(funNode.getReturnType(ast).?);
+        // we don't neeeeed to generate the params before the function bodies
+        // are generated, as we assume all that jazz has been checked by sema
+        // but I wrote the Function.init to take them, and they are
+        // logically part of the function proto definition so I've
+        // kept them here
         const params = try gen_function_params(ir, ast, funNode);
         var fun = IR.Function.init(ir.alloc, funName, funReturnType, params);
         funcs[fi] = fun;
@@ -150,7 +160,12 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
 
 /// @param fun: takes a function that has already been initialized
 /// with the bare minimum name + params + return type information (proto)
-pub fn gen_function(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode: Ast.Node.Kind.FunctionType) !*const IR.Function {
+pub fn gen_function(
+    ir: *IR,
+    ast: *const Ast,
+    fun: *IR.Function,
+    funNode: Ast.Node.Kind.FunctionType,
+) !*const IR.Function {
     // TODO: exit/entry blocks should probably be stored separately
     // i.e. entry = bb[0], exit = bb[1], rest = bb[2..exit)
     // possibly as fields in `struct Function` with a helper on `Function`
@@ -212,7 +227,11 @@ pub fn gen_function(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode: Ast.No
     return fun;
 }
 
-fn gen_function_params(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionType) ![]IR.Function.Param {
+fn gen_function_params(
+    ir: *IR,
+    ast: *const Ast,
+    funNode: Ast.Node.Kind.FunctionType,
+) ![]IR.Function.Param {
     var params: []IR.Function.Param = undefined;
     const parametersIndex = funNode.getProto(ast).parameters;
     if (parametersIndex == null) {
@@ -252,7 +271,13 @@ fn gen_function_params(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.Function
 ///                             parent statement iter to the child block as
 ///                             needed and step it for every statement in
 ///                             the child block
-fn gen_block(ir: *IR, ast: *const Ast, fun: *IR.Function, initialBB: IR.BasicBlock.ID, node: Ast.Node) !IR.BasicBlock.ID {
+fn gen_block(
+    ir: *IR,
+    ast: *const Ast,
+    fun: *IR.Function,
+    initialBB: IR.BasicBlock.ID,
+    node: Ast.Node,
+) !IR.BasicBlock.ID {
     var curBB = initialBB;
 
     var statementsIter = switch (node.kind) {
@@ -382,7 +407,13 @@ fn gen_block(ir: *IR, ast: *const Ast, fun: *IR.Function, initialBB: IR.BasicBlo
 }
 
 /// Generates the IR for a statement. NOTE: not supposed to handle control flow
-fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, statementNode: Ast.Node) !void {
+fn gen_statement(
+    ir: *IR,
+    ast: *const Ast,
+    fun: *IR.Function,
+    bb: IR.BasicBlock.ID,
+    statementNode: Ast.Node,
+) !void {
     const node = ast.get(statementNode.kind.Statement.statement);
     const kind = node.kind;
 
@@ -426,7 +457,13 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
     }
 }
 
-fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node) anyerror!IR.Ref {
+fn gen_expression(
+    ir: *IR,
+    ast: *const Ast,
+    fun: *IR.Function,
+    bb: IR.BasicBlock.ID,
+    exprNode: Ast.Node,
+) anyerror!IR.Ref {
     switch (exprNode.kind) {
         .Expression => |expr| {
             return gen_expression(ir, ast, fun, bb, ast.get(expr.expr).*);
@@ -613,27 +650,43 @@ fn gen_invocation(ir: *IR, fun: *IR.Function, ast: *const Ast, bb: IR.BasicBlock
 
 // FIXME: allow redefinition of globals
 fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.StructType) !IR.Ref {
-    const mallocRef: IR.Ref = IR.Ref.malloc(ir);
+    // the args to malloc are just (i32 sizeof({struct type}))
+    const args = blk: {
+        var args: []IR.Ref = try ir.alloc.alloc(IR.Ref, 1);
+        args[0] = IR.Ref.immu32(s.size, .i32);
+        break :blk args;
+    };
 
-    var args: []IR.Ref = try ir.alloc.alloc(IR.Ref, 1);
-    args[0] = IR.Ref.immu32(s.size, .i32);
+    // the pointer returned by malloc as an i8*
+    const retRef = blk: {
+        const mallocRef: IR.Ref = IR.Ref.malloc(ir);
+        const mallocInst = Inst.call(.i8, mallocRef, args);
+        const memReg = try fun.addNamedInst(bb, mallocInst, s.name, .i8);
+        const memRef = IR.Ref.fromReg(memReg);
+        break :blk memRef;
+    };
 
-    const mallocInst = Inst.call(.i8, mallocRef, args);
-    const memReg = try fun.addNamedInst(bb, mallocInst, s.name, .i8);
-    const memRef = IR.Ref.fromReg(memReg);
-
-    const cast = Inst.bitcast(memRef, s.getType());
-    const castReg = try fun.addNamedInst(bb, cast, s.name, s.getType());
-    const castRef = IR.Ref.fromReg(castReg);
-
-    return castRef;
+    // the malloced pointer casted from an i8* to a {struct type}*
+    const resRef = blk: {
+        const cast = Inst.bitcast(retRef, s.getType());
+        const castReg = try fun.addNamedInst(bb, cast, s.name, s.getType());
+        const castRef = IR.Ref.fromReg(castReg);
+        break :blk castRef;
+    };
+    // return the {struct type}* reference
+    return resRef;
 }
 
 fn gen_free_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, ptrRef: IR.Ref) !void {
-    const castInst = Inst.bitcast(ptrRef, .i8);
-    const castReg = try fun.addInst(bb, castInst, .i8);
-    const castRef = IR.Ref.fromReg(castReg);
+    // the {struct type}* pointer casted to an i8*
+    const castRef = blk: {
+        const castInst = Inst.bitcast(ptrRef, .i8);
+        const castReg = try fun.addInst(bb, castInst, .i8);
+        const castRef = IR.Ref.fromReg(castReg);
+        break :blk castRef;
+    };
 
+    // the args to free are just (i8* {casted ptr})
     const args = blk: {
         var args = try ir.alloc.alloc(IR.Ref, 1);
         args[0] = castRef;
@@ -642,6 +695,8 @@ fn gen_free_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, ptrRef: IR.
 
     const freeRef = IR.Ref.free(ir);
     const free = Inst.call(.void, freeRef, args);
+    // call free, we don't care about return types as
+    // the grammar does not specify a return value from delete
     _ = try fun.addInst(bb, free, .void);
     return;
 }
