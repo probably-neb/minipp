@@ -534,7 +534,57 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
             }
             return resultRef;
         },
-        else => utils.todo("gen_expression: {any}\n", .{exprNode.kind}),
+        .Read => {
+            const scanfRef = IR.Ref.scanf(ir);
+
+            const fmtRef = blk: {
+                // the format as an array of i8
+                const fmtRef = IR.Ref.read_fmt(ir);
+                // use gep to get the fmt string as an i8*
+                // (ptr to first element) instead of an array
+                // i.e. `i8* ptr = &fmt[0];`
+                const zeroIndex = IR.Ref.immediate(0, .i32);
+                const gepFmtPtr = Inst.gep(fmtRef.type, fmtRef, zeroIndex);
+                const res = try fun.addInst(bb, gepFmtPtr, .i8);
+                break :blk IR.Ref.fromReg(res);
+            };
+
+            // the reference to the scratch global whose pointer
+            // we pass to scanf to read into
+            // it is of type i32, which we will sign extend to i64
+            // after reading
+            const readScratchRef = IR.Ref.read_scratch(ir);
+
+            const args = blk: {
+                var args = try ir.alloc.alloc(IR.Ref, 2);
+                args[0] = fmtRef;
+                args[1] = readScratchRef;
+                break :blk args;
+            };
+            // we don't care about the return value of scanf
+            // because who needs error handling
+            _ = try fun.addInst(bb, Inst.call(.i32, scanfRef, args), .void);
+
+            // load @.read_scratch into a register before sign extending
+            const resReg = blk: {
+                const loadResInst = Inst.load(.i32, readScratchRef);
+                const resReg = try fun.addInst(bb, loadResInst, .i32);
+                break :blk resReg;
+            };
+
+            const i64ResReg = blk: {
+                // sign extend the i32 put into the @.read_scratch
+                // global to an i64
+                const resRef = IR.Ref.fromReg(resReg);
+                const sextInst = Inst.sext(resRef, .int);
+                const sextResReg = try fun.addInst(bb, sextInst, .int);
+                break :blk sextResReg;
+            };
+
+            // return reference to the sign extended i64 value we read
+            return IR.Ref.fromReg(i64ResReg);
+        },
+        else => utils.todo("gen_expression: {s}\n", .{@tagName(exprNode.kind)}),
     }
     unreachable;
 }
@@ -572,7 +622,7 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
     const memReg = try fun.addNamedInst(bb, mallocInst, s.name, .i8);
     const memRef = IR.Ref.fromReg(memReg);
 
-    const cast = Inst.bitcast(.i8, memRef, s.getType());
+    const cast = Inst.bitcast(memRef, s.getType());
     const castReg = try fun.addNamedInst(bb, cast, s.name, s.getType());
     const castRef = IR.Ref.fromReg(castReg);
 
@@ -580,7 +630,7 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
 }
 
 fn gen_free_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, ptrRef: IR.Ref) !void {
-    const castInst = Inst.bitcast(ptrRef.type, ptrRef, .i8);
+    const castInst = Inst.bitcast(ptrRef, .i8);
     const castReg = try fun.addInst(bb, castInst, .i8);
     const castRef = IR.Ref.fromReg(castReg);
 
@@ -1363,6 +1413,29 @@ test "stack.fun-call.args+ret" {
     });
 }
 
+test "stack.str.read" {
+    try expectResultsInIR(
+        \\fun main() void {
+        \\  int a;
+        \\  a = read;
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  %a0 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  %2 = getelementptr [ 4 x i8 ], [ 4 x i8 ]* @.read, i1 0, i32 0",
+        "  %3 = call i32 @scanf(i8* %2, i32* @.read_scratch)",
+        "  %4 = load i32* @.read_scratch",
+        "  %5 = sext i32 %4 to i64",
+        "  store i64 %5, i64* %a0",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
 // TODO:
-// more statement kinds I think?
-// read
+// more statement kinds I think? maybe? possibly?

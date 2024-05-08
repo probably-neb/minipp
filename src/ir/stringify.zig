@@ -174,6 +174,18 @@ const Rope = struct {
         r.is_ptr = cond;
         return r;
     }
+
+    /// like ptr_if except only sets is_ptr to true if cond is true
+    /// i.e. does nothing if cond is false. Used to ensure a value is a pointer
+    /// if some condition is true without changing its pointereyness
+    /// if the condition doesn't hold
+    fn ensure_ptr_if(s: Rope, cond: bool) Rope {
+        var r = s;
+        if (cond) {
+            r.is_ptr = true;
+        }
+        return r;
+    }
 };
 
 pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
@@ -348,7 +360,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
                     });
                     for (call.args, 0..) |arg, i| {
                         try buf.fmt("{} {}", .{
-                            stringify_type(ir, arg.type),
+                            stringify_type(ir, arg.type).ensure_ptr_if(arg.kind == .global),
                             stringify_ref(ir, fun, arg),
                         });
                         if (i + 1 < call.args.len) {
@@ -400,6 +412,16 @@ pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
                 .Zext => |zext| {
                     _ = zext;
                     utils.todo("zext", .{});
+                },
+                // `<result> = sext <ty> <value> to <ty2> ; sign-extend to ty2`
+                .Sext => {
+                    const sext = IR.Inst.Misc.get(inst);
+                    try buf.fmt("{} = sext {} {} to {}", .{
+                        stringify_ref(ir, fun, sext.res),
+                        stringify_type(ir, sext.fromType),
+                        stringify_ref(ir, fun, sext.from),
+                        stringify_type(ir, sext.toType),
+                    });
                 },
                 // `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
                 .Phi => |phi| {

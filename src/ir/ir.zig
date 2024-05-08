@@ -865,6 +865,8 @@ pub const Op = enum {
     Trunc,
     /// `<result> = zext <ty> <value> to <ty2> ; zero-extend to ty2`
     Zext,
+    /// `<result> = sext <ty> <value> to <ty2> ; sign-extend to ty2`
+    Sext,
     /// `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
     Phi,
 
@@ -1073,6 +1075,29 @@ pub const Ref = struct {
             .len = 5,
         } };
         return Ref{ .kind = .global, .i = 0xfa421, .type = ty, .name = name };
+    }
+
+    pub inline fn scanf(ir: *IR) Ref {
+        const name = ir.internIdent("scanf");
+        const ty = .i32;
+        return Ref{ .kind = .global, .i = 0xdeadbeef, .type = ty, .name = name };
+    }
+
+    pub inline fn read_fmt(ir: *IR) Ref {
+        const name = ir.internIdent(".read");
+        const ty = Type{ .arr = .{
+            .type = .i8,
+            .len = 4,
+        } };
+        return Ref{ .kind = .global, .i = 0xdeadbeef, .type = ty, .name = name };
+    }
+
+    /// The scratch variable to store the `%ld` scanned in using
+    /// scanf before it is stored somewhere else
+    pub inline fn read_scratch(ir: *IR) Ref {
+        const name = ir.internIdent(".read_scratch");
+        const ty = .i32;
+        return Ref{ .kind = .global, .i = 0xdeadbeef, .type = ty, .name = name };
     }
 
     /// @param ty: the type of the null pointer
@@ -1424,7 +1449,7 @@ pub const Inst = struct {
         from: Ref,
         toType: Type,
 
-        pub const Kind = enum { bitcast, trunc, zext };
+        pub const Kind = enum { bitcast, trunc, zext, sext };
 
         pub inline fn get(inst: Inst) Misc {
             return .{
@@ -1432,6 +1457,7 @@ pub const Inst = struct {
                     .Bitcast => .bitcast,
                     .Trunc => .trunc,
                     .Zext => .zext,
+                    .Sext => .sext,
                     else => unreachable,
                 },
                 .res = inst.res,
@@ -1442,24 +1468,30 @@ pub const Inst = struct {
         }
         pub inline fn toInst(inst: Misc) Inst {
             switch (inst.kind) {
-                .bitcast => Inst.bitcast(inst.res, inst.fromType, inst.from, inst.toType),
-                .trunc => Inst.trunc(inst.res, inst.fromType, inst.from, inst.toType),
-                .zext => Inst.zext(inst.res, inst.fromType, inst.from, inst.toType),
+                .bitcast => Inst.bitcast(inst.from, inst.toType),
+                .trunc => Inst.trunc(inst.from, inst.toType),
+                .zext => Inst.zext(inst.from, inst.toType),
+                .sext => Inst.zext(inst.from, inst.toType),
             }
         }
     };
     // Miscellaneous
     /// `<result> = bitcast <ty> <value> to <ty2> ; cast type`
-    pub inline fn bitcast(fromType: Type, from: Ref, toType: Type) Inst {
-        return .{ .op = .Bitcast, .ty1 = fromType, .op1 = from, .ty2 = toType };
+    pub inline fn bitcast(from: Ref, toType: Type) Inst {
+        return .{ .op = .Bitcast, .ty1 = from.type, .op1 = from, .ty2 = toType };
     }
     /// `<result> = trunc <ty> <value> to <ty2> ; truncate to ty2`
-    pub inline fn trunc(res: Ref, ty: Type, from: Ref, to: Type) Inst {
-        return .{ .op = .Trunc, .ty1 = ty, .res = res, .op1 = from, .ty2 = to };
+    pub inline fn trunc(from: Ref, to: Type) Inst {
+        return .{ .op = .Trunc, .ty1 = from.type, .op1 = from, .ty2 = to };
     }
     /// `<result> = zext <ty> <value> to <ty2> ; zero-extend to ty2`
-    pub inline fn zext(res: Ref, ty: Type, from: Ref, to: Type) Inst {
-        return .{ .op = .Zext, .ty1 = ty, .res = res, .op1 = from, .ty2 = to };
+    pub inline fn zext(from: Ref, to: Type) Inst {
+        return .{ .op = .Zext, .ty1 = from.type, .op1 = from, .ty2 = to };
+    }
+
+    /// `<result> = sext <ty> <value> to <ty2> ; sign-extend to ty2`
+    pub inline fn sext(from: Ref, to: Type) Inst {
+        return .{ .op = .Sext, .ty1 = from.type, .op1 = from, .ty2 = to };
     }
 
     pub const Phi = struct {
@@ -1525,7 +1557,7 @@ pub const Inst = struct {
                 const _alloc = Inst.Alloc.get(self);
                 return writer.print("{any}\n", .{_alloc});
             },
-            .Bitcast, .Trunc, .Zext => {
+            .Bitcast, .Trunc, .Zext, .Sext => {
                 var _misc = Inst.Misc.get(self);
                 return writer.print("{any}\n", .{_misc});
             },
@@ -1538,14 +1570,3 @@ pub const Inst = struct {
 };
 
 const ting = std.testing;
-
-// feelin too lazy to fix this rn. It was just supposed to make sure evertyhing compiles
-// test "binop helpers" {
-//     _ = Inst.add(Ref.local(0), Ref.local(1), Ref.local(2));
-//     _ = Inst.mul(Ref.local(0), Ref.local(1), Ref.local(2));
-//     _ = Inst.div(Ref.local(0), Ref.local(1), Ref.local(2));
-//     _ = Inst.sub(Ref.local(0), Ref.local(1), Ref.local(2));
-//     _ = Inst.and_(Ref.local(0), Ref.local(1), Ref.local(2));
-//     _ = Inst.or_(Ref.local(0), Ref.local(1), Ref.local(2));
-//     _ = Inst.xor(Ref.local(0), Ref.local(1), Ref.local(2));
-// }
