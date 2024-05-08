@@ -209,6 +209,19 @@ pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
     if (types.len > 0) {
         try buf.write("\n");
     }
+
+    const globals = ir.globals.items.items;
+    for (globals, 0..) |global, i| {
+        try buf.fmt("{} = global {}, align {d}\n", .{
+            stringify_ref(ir, undefined, IR.Ref.global(@truncate(i), global.name, global.type)),
+            stringify_type(ir, global.type).not_ptr(),
+            IR.ALIGN,
+        });
+    }
+    if (globals.len > 0) {
+        try buf.write("\n");
+    }
+
     for (ir.funcs.items.items) |*fun| {
         try buf.fmt("define {} @{s}(", .{ stringify_type(ir, fun.returnType), ir.getIdent(fun.name) });
         for (fun.params.items, 0..) |param, i| {

@@ -1360,6 +1360,8 @@ test "stack.global-access" {
         \\  a = 1;
         \\}
     , .{
+        "@a = global i64, align 4",
+        "",
         "define void @main() {",
         "entry:",
         "  br label %2",
