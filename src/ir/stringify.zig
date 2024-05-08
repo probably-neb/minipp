@@ -520,7 +520,7 @@ pub fn stringify_label(label: IR.BasicBlock.ID) Rope {
     } else if (label == IR.Function.exitBBID) {
         return Rope.just("exit");
     }
-    return Rope.just_num(label);
+    return Rope.just_num(label - 1);
 }
 
 pub fn stringify_label_ref(label: IR.BasicBlock.ID) Rope {
