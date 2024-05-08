@@ -3,3 +3,10 @@ test path="_" filter="":
 
 watch path="_" filter="":
     watchexec -e zig -- just test {{path}} {{filter}}
+
+build:
+    zig build
+
+make path exe="a.out": build
+    ./zig-out/bin/minipp -i {{path}} -o ./out.ll
+    clang ./out.ll -o ./{{exe}}
