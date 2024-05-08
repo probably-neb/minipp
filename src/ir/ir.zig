@@ -282,7 +282,7 @@ pub const Function = struct {
         try self.bbs.get(bb).insts.append(instID);
     }
 
-    pub const NotFoundError = error{IdentifierNotFound};
+    pub const NotFoundError = error{UnboundIdentifier};
 
     pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID) NotFoundError!Ref {
         if (self.getNamedAllocaReg(name)) |reg| {
@@ -294,9 +294,25 @@ pub const Function = struct {
             return Ref.param(paramID, param.name, param.type);
         }
 
-        const globalID = ir.globals.items.indexOf(name);
-        const global = ir.globals.items.entry(globalID);
-        return Ref.global(globalID, global.name, global.type);
+        if (ir.funcs.items.safeIndexOf(name)) |funcID| {
+            const func = ir.funcs.items.entry(funcID);
+            return Ref.global(funcID, func.name, func.returnType);
+        }
+
+        log.trace("fun.name not found := {s}\n", .{
+            ir.getIdent(name),
+        });
+
+        for (ir.funcs.items.items) |func| {
+            log.trace("func := {s}\n", .{ir.getIdent(func.name)});
+        }
+
+        if (ir.globals.items.safeIndexOf(name)) |globalID| {
+            const global = ir.globals.items.entry(globalID);
+            return Ref.global(globalID, global.name, global.type);
+        }
+
+        return error.UnboundIdentifier;
     }
     /// Gets the ID of a register created with an `alloca` in the entry
     /// based on the name of the identifier in question
@@ -312,7 +328,7 @@ pub const Function = struct {
                 return self.regs.get(res.i);
             }
         }
-        return error.IdentifierNotFound;
+        return error.UnboundIdentifier;
     }
 
     pub fn setReturnReg(self: *Function, reg: Register.ID) void {
@@ -625,6 +641,22 @@ pub fn OrderedList(comptime T: type) type {
     return struct {
         list: std.ArrayList(T),
         len: u32,
+
+        // TODO: the initial idea for this was to have an `order`
+        // array that just keeps the indexes of the items in `list`
+        // in order and can be updated however.
+        // so far I have not encountered a time I couldn't just make
+        // the basic blocks in order, and the instructions order is
+        // maintained by keeping the list of instructions
+        // added to the `insts` field in the basic block in order
+        // We might still need it though, I just haven't seen the reason
+        // to add the additional complexity it would introduce/
+        // refactors it would possibly require
+        // the field would look like:
+        // order: std.ArrayList(u32),
+        // and we'd just add some helper functions to ensure something
+        // comes after something else, do manipulations, etc.
+
         pub const Self = @This();
 
         pub fn init(alloc: std.mem.Allocator) Self {
@@ -658,8 +690,7 @@ pub fn OrderedList(comptime T: type) type {
         /// same as add, but does not return the index
         /// for when you just don't care yk?
         pub fn append(self: *Self, item: T) !void {
-            try self.list.append(item);
-            self.len += 1;
+            _ = try self.add(item);
         }
     };
 }

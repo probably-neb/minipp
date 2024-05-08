@@ -474,6 +474,14 @@ pub const Node = struct {
             /// Pointer to `Expression`
             /// null if only one argument
             lastArg: ?Ref(.Expression) = null,
+
+            pub fn iter(self: @This(), ast: *const Ast) NodeIter(.Expression) {
+                return NodeIter(.Expression).init(
+                    ast,
+                    self.firstArg,
+                    self.lastArg,
+                );
+            }
         },
         /// A number literal, token points to value
         Number,

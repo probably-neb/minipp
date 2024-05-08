@@ -122,24 +122,35 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
 
     // NOTE: not using the `iterFuncs` method because we wan't to use the
     // `calculateLen` helper and I'm too lazy rn to port it
-    var funcIter = Ast.NodeIter(.Function).init(ast, 0, ast.nodes.items.len);
+    var funcProtoIter = Ast.NodeIter(.Function).init(ast, 0, ast.nodes.items.len);
+    var funcIter = funcProtoIter;
     const numFuncs = funcIter.calculateLen();
     // log.trace("num funcs := {}\n", .{numFuncs});
     var funcs: []Fun = try ir.alloc.alloc(Fun, numFuncs);
     var fi: usize = 0;
 
+    while (funcProtoIter.next()) |node| : (fi += 1) {
+        const funNode = node.kind.Function;
+        const funName = ir.internIdent(funNode.getName(ast));
+        const funReturnType = ir.astTypeToIRType(funNode.getReturnType(ast).?);
+        const params = try gen_function_params(ir, ast, funNode);
+        var fun = IR.Function.init(ir.alloc, funName, funReturnType, params);
+        funcs[fi] = fun;
+    }
+
+    ir.funcs.fill(funcs);
+    fi = 0;
+
     while (funcIter.next()) |funcNode| : (fi += 1) {
-        funcs[fi] = try gen_function(ir, ast, funcNode.kind.Function);
+        var fun = &funcs[fi];
+        fun.* = (try gen_function(ir, ast, fun, funcNode.kind.Function)).*;
     }
     return funcs;
 }
 
-pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionType) !IR.Function {
-    const funName = ir.internIdent(funNode.getName(ast));
-    const funReturnType = ir.astTypeToIRType(funNode.getReturnType(ast).?);
-    const params = try gen_function_params(ir, ast, funNode);
-
-    var fun = IR.Function.init(ir.alloc, funName, funReturnType, params);
+/// @param fun: takes a function that has already been initialized
+/// with the bare minimum name + params + return type information (proto)
+pub fn gen_function(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode: Ast.Node.Kind.FunctionType) !*const IR.Function {
     // TODO: exit/entry blocks should probably be stored separately
     // i.e. entry = bb[0], exit = bb[1], rest = bb[2..exit)
     // possibly as fields in `struct Function` with a helper on `Function`
@@ -160,9 +171,9 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
 
     // generate alloca for the return value if the function returns a value
     // this makes it so ret reg is always `%0`
-    if (funReturnType != .void) {
+    if (fun.returnType != .void) {
         // allocate a stack slot for the return value in the entry
-        retReg = try fun.addInst(entryBB, Inst.alloca(funReturnType), funReturnType);
+        retReg = try fun.addInst(entryBB, Inst.alloca(fun.returnType), fun.returnType);
         // save it in the function for easy access later
         fun.setReturnReg(retReg.id);
     }
@@ -182,17 +193,17 @@ pub fn gen_function(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.FunctionTyp
     try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(bodyBB)));
 
     // generate IR for the function body
-    const lastBB = try gen_block(ir, ast, &fun, bodyBB, ast.get(funNode.body).*);
+    const lastBB = try gen_block(ir, ast, fun, bodyBB, ast.get(funNode.body).*);
     try fun.addCtrlFlowInst(lastBB, IR.Inst.jmp(IR.Ref.label(exitBB)));
 
     // generate return instruction in exit block
-    if (funReturnType != .void) {
+    if (fun.returnType != .void) {
         // load it in the exit block
-        const retValReg = try fun.addInst(exitBB, Inst.load(funReturnType, IR.Ref.fromReg(retReg)), funReturnType);
+        const retValReg = try fun.addInst(exitBB, Inst.load(fun.returnType, IR.Ref.fromReg(retReg)), fun.returnType);
         // return the loaded return value
         // using addAnonInst so ctrl flow cfg construction is skipped
         // as we'll hook everything up manually as we go
-        try fun.addAnonInst(exitBB, Inst.ret(funReturnType, IR.Ref.fromReg(retValReg)));
+        try fun.addAnonInst(exitBB, Inst.ret(fun.returnType, IR.Ref.fromReg(retValReg)));
     } else {
         // void return
         _ = try fun.addInst(exitBB, Inst.retVoid(), .void);
@@ -229,8 +240,18 @@ fn gen_function_params(ir: *IR, ast: *const Ast, funNode: Ast.Node.Kind.Function
     return params;
 }
 
-// generates the IR for a block of statements, i.e. a function body or Block node
-// returns the ID of the final basic block it generated instructions for
+/// generates the IR for a block of statements, i.e. a function body or Block node
+/// returns the ID of the final basic block it generated instructions for
+/// @param initialBB: the ID of the basic block to begin generating instructions in
+/// @param node: either a FunctionBody or Block node
+/// @param parentStatementIter: the statement iterator of the parent node
+///                             this is a wierd hacky way to get around the
+///                             fact the `iterStatements` method is primitive
+///                             minded and does not skip nested statements
+///                             the simplest solution was just to pass the
+///                             parent statement iter to the child block as
+///                             needed and step it for every statement in
+///                             the child block
 fn gen_block(ir: *IR, ast: *const Ast, fun: *IR.Function, initialBB: IR.BasicBlock.ID, node: Ast.Node) !IR.BasicBlock.ID {
     var curBB = initialBB;
 
@@ -241,18 +262,88 @@ fn gen_block(ir: *IR, ast: *const Ast, fun: *IR.Function, initialBB: IR.BasicBlo
     };
 
     while (statementsIter.next()) |stmtNode| {
-        const innerNode = ast.get(stmtNode.kind.Statement.statement);
+        const statementIndex = stmtNode.kind.Statement.statement;
+        const innerNode = ast.get(statementIndex);
         const kind = innerNode.kind;
         // FIXME: check for control flow
         switch (kind) {
-            .ConditionalIf, .ConditionalIfElse => utils.todo("gen_function.controlFlow {any}\n", .{@tagName(kind)}),
+            .ConditionalIf => |_if| {
+                const condBB = curBB;
+                const condRef = try gen_expression(ir, ast, fun, condBB, ast.get(_if.cond).*);
+
+                const isIfElse = _if.isIfElse(ast);
+                var ifBlockNode = ast.get(_if.block).*;
+                var elseBlockNode: ?Ast.Node = null;
+
+                if (isIfElse) {
+                    const condIfElse = ifBlockNode.kind.ConditionalIfElse;
+                    elseBlockNode = ast.get(condIfElse.elseBlock).*;
+                    ifBlockNode = ast.get(condIfElse.ifBlock).*;
+                }
+
+                const ifBB = try fun.newBBWithParent(condBB);
+                const ifEndBB = try gen_block(ir, ast, fun, ifBB, ifBlockNode);
+                if (ifBlockNode.kind.Block.range(ast)) |range| {
+                    statementsIter.skipTo(range[1]);
+                }
+
+                var elseBB: IR.BasicBlock.ID = undefined;
+                var endBB: IR.BasicBlock.ID = undefined;
+
+                if (elseBlockNode) |elseBlock| {
+                    elseBB = try fun.newBBWithParent(condBB);
+                    const elseEndBB = try gen_block(ir, ast, fun, elseBB, elseBlock);
+                    if (elseBlock.kind.Block.range(ast)) |range| {
+                        statementsIter.skipTo(range[1]);
+                    }
+                    // now that we've created elseBB we can create
+                    // endBB while maintaining order
+                    endBB = try fun.newBB();
+                    // need to handle this inside here because
+                    // this scope is the only one that knows the else
+                    // block exists and where it ended
+                    const jmpEndInst = Inst.jmp(IR.Ref.label(endBB));
+                    try fun.addCtrlFlowInst(elseEndBB, jmpEndInst);
+                } else {
+                    endBB = try fun.newBBWithParent(condBB);
+                    // this makes it so we can make the branch outside
+                    // of this (zig not mini) if/else block
+                    // and point it to ifBB and elseBB
+                    // and have it pointing to the endBB if
+                    // there was no else
+                    // pretty nifty if you ask me
+                    elseBB = endBB;
+                }
+                // there will always be a jmp from the end of the
+                // if to the end
+                const ifJmpEndInst = Inst.jmp(IR.Ref.label(endBB));
+                fun.addCtrlFlowInst(ifEndBB, ifJmpEndInst) catch |err| {
+                    if (err != error.ConflictingControlFlowInstructions) {
+                        return err;
+                    }
+                    // switch (err) {
+                    //     error.ConflictingControlFlowInstructions => {},
+                    //     else => return err,
+                    // }
+                    // assume it was a jump to exit block and we're ok!
+                };
+
+                const brInst = Inst.br(condRef, IR.Ref.label(ifBB), IR.Ref.label(elseBB));
+                try fun.addCtrlFlowInst(condBB, brInst);
+                curBB = endBB;
+            },
+            .ConditionalIfElse => unreachable,
             .While => |whil| {
                 const startBB = curBB;
                 const condExpr = ast.get(whil.cond).*;
                 const initialCondRef = try gen_expression(ir, ast, fun, curBB, condExpr);
 
                 const bodyBB = try fun.newBBWithParent(curBB);
-                const endBodyBB = try gen_block(ir, ast, fun, bodyBB, ast.get(whil.block).*);
+                const whileBlockNode = ast.get(whil.block).*;
+                const endBodyBB = try gen_block(ir, ast, fun, bodyBB, whileBlockNode);
+                if (whileBlockNode.kind.Block.range(ast)) |range| {
+                    statementsIter.skipTo(range[1]);
+                }
                 const endCondRef = try gen_expression(ir, ast, fun, bodyBB, condExpr);
 
                 const endBB = try fun.newBB();
@@ -326,15 +417,16 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
             const ptrRef = try gen_expression(ir, ast, fun, bb, ast.get(del.expr).*);
             try gen_free_struct(ir, fun, bb, ptrRef);
         },
+        .Invocation => {
+            _ = try gen_invocation(ir, fun, ast, bb, node);
+        },
         // control flow should be handled by the caller
-        .ConditionalIf => unreachable,
-        .ConditionalIfElse => unreachable,
-        .While => unreachable,
+        .ConditionalIf, .ConditionalIfElse, .While => unreachable,
         else => utils.todo("gen_statement {any}\n", .{kind}),
     }
 }
 
-fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node) !IR.Ref {
+fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.ID, exprNode: Ast.Node) anyerror!IR.Ref {
     switch (exprNode.kind) {
         .Expression => |expr| {
             return gen_expression(ir, ast, fun, bb, ast.get(expr.expr).*);
@@ -423,6 +515,7 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
                     // the only valid place to have null)
                     break :null IR.Ref.immnull(.i8);
                 },
+                .Invocation => IR.Ref.fromReg(try gen_invocation(ir, fun, ast, bb, atom)),
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
             };
             if (sel.chain) |chain| {
@@ -444,6 +537,28 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
         else => utils.todo("gen_expression: {any}\n", .{exprNode.kind}),
     }
     unreachable;
+}
+
+fn gen_invocation(ir: *IR, fun: *IR.Function, ast: *const Ast, bb: IR.BasicBlock.ID, node: *const Ast.Node) !IR.Register {
+    const invoc = node.*.kind.Invocation;
+    const funNameID = ir.internIdentNodeAt(ast, invoc.funcName);
+    const funRef = try fun.getNamedRef(ir, funNameID);
+
+    var args: []IR.Ref = undefined;
+    if (invoc.args) |argsIndex| {
+        var argsIter = ast.get(argsIndex).*.kind.Arguments.iter(ast);
+        args = try ir.alloc.alloc(IR.Ref, argsIter.calculateLen());
+        var ai: usize = 0;
+        while (argsIter.next()) |arg| : (ai += 1) {
+            const argRef = try gen_expression(ir, ast, fun, bb, arg);
+            args[ai] = argRef;
+        }
+    } else {
+        args = &[_]IR.Ref{};
+    }
+
+    const callInst = Inst.call(funRef.type, funRef, args);
+    return try fun.addNamedInst(bb, callInst, funRef.name, funRef.type);
 }
 
 // FIXME: allow redefinition of globals
@@ -769,19 +884,12 @@ test "stack.str.do-math" {
         "  %16 = icmp lt i1 %i14, %count15",
         "  br i1 %16, label %3, label %4",
         "4:",
-        "  %i19 = load i64* %i1",
-        "  %i20 = add i64 %i19, 1",
-        "  store i64 %i20, i64* %i1",
-        "  %base22 = load i64* %base",
-        "  %base23 = load i64* %base",
-        "  %24 = add i64 %base22, %base23",
-        "  store i64 %24, i64* %base",
-        "  %base26 = load i64* %base",
-        "  store i64 %base26, i64* %0",
+        "  %base19 = load i64* %base",
+        "  store i64 %base19, i64* %0",
         "  br label %exit",
         "exit:",
-        "  %29 = load i64* %0",
-        "  ret i64 %29",
+        "  %22 = load i64* %0",
+        "  ret i64 %22",
         "}",
     });
 }
@@ -987,8 +1095,7 @@ test "stack.if-else" {
         "  %a0 = alloca i64",
         "  br label %2",
         "2:",
-        "  %2 = icmp eq i1 true, false",
-        "  br i1 %2, label %3, label %4",
+        "  br i1 1, label %3, label %4",
         "3:",
         "  store i64 1, i64* %a0",
         "  br label %5",
@@ -1004,6 +1111,7 @@ test "stack.if-else" {
 }
 
 test "stack.if-no-else" {
+    errdefer log.print();
     try expectResultsInIR(
         \\fun main() void {
         \\  int a;
@@ -1018,8 +1126,7 @@ test "stack.if-no-else" {
         "  %a0 = alloca i64",
         "  br label %2",
         "2:",
-        "  %2 = icmp eq i1 true, false",
-        "  br i1 %2, label %3, label %4",
+        "  br i1 1, label %3, label %4",
         "3:",
         "  store i64 1, i64* %a0",
         "  br label %4",
@@ -1032,8 +1139,230 @@ test "stack.if-no-else" {
     });
 }
 
+test "stack.nested-if-no-else" {
+    try expectResultsInIR(
+        \\fun main() void {
+        \\  int a;
+        \\  if (true) {
+        \\    if (false) {
+        \\      a = 1;
+        \\    }
+        \\  }
+        \\  a = 2;
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  %a0 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  br i1 1, label %3, label %6",
+        "3:",
+        "  br i1 0, label %4, label %5",
+        "4:",
+        "  store i64 1, i64* %a0",
+        "  br label %5",
+        "5:",
+        "  br label %6",
+        "6:",
+        "  store i64 2, i64* %a0",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.nested-if-else" {
+    try expectResultsInIR(
+        \\fun main() void {
+        \\  int a;
+        \\  if (true) {
+        \\    if (false) {
+        \\      a = 1;
+        \\    } else {
+        \\      a = 3;
+        \\    }
+        \\  }
+        \\  a = 2;
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  %a0 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  br i1 1, label %3, label %7",
+        "3:",
+        "  br i1 0, label %4, label %5",
+        "4:",
+        "  store i64 1, i64* %a0",
+        "  br label %6",
+        "5:",
+        "  store i64 3, i64* %a0",
+        "  br label %6",
+        "6:",
+        "  br label %7",
+        "7:",
+        "  store i64 2, i64* %a0",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.while-nested-if" {
+    try expectResultsInIR(
+        \\fun main() void {
+        \\  int a;
+        \\  if (true) {
+        \\    while (false) {
+        \\      a = 1;
+        \\      a = 3;
+        \\    }
+        \\  }
+        \\  a = 2;
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  %a0 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  br i1 1, label %3, label %6",
+        "3:",
+        "  br i1 0, label %4, label %5",
+        "4:",
+        "  store i64 1, i64* %a0",
+        "  store i64 3, i64* %a0",
+        "  br i1 0, label %4, label %5",
+        "5:",
+        "  br label %6",
+        "6:",
+        "  store i64 2, i64* %a0",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.global-access" {
+    try expectResultsInIR(
+        \\int a;
+        \\fun main() void {
+        \\  a = 1;
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  br label %2",
+        "2:",
+        "  store i64 1, i64* @a",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.fun-call.no-args-no-ret" {
+    errdefer log.print();
+
+    try expectResultsInIR(
+        \\fun foo() void {}
+        \\
+        \\fun main() void {
+        \\  foo();
+        \\}
+    , .{
+        "define void @foo() {",
+        "entry:",
+        "  br label %2",
+        "2:",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+        "",
+        "define void @main() {",
+        "entry:",
+        "  br label %2",
+        "2:",
+        "  %foo1 = call void @foo()",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.fun-call.args+ret" {
+    errdefer log.print();
+
+    try expectResultsInIR(
+        \\struct S {
+        \\  int x;
+        \\  bool y;
+        \\  struct S s;
+        \\};
+        \\fun foo(int a, bool b, struct S s) int {
+        \\  if (a <= 1) {
+        \\      return a;
+        \\  }
+        \\  return s.x * a;
+        \\}
+        \\
+        \\fun main() void {
+        \\  struct S s;
+        \\  int res;
+        \\  res = foo(5, true, s);
+        \\}
+    , .{
+        "%struct.S = type { i64, i1, %struct.S* } align 4",
+        "",
+        "define i64 @foo(i64 %a, i1 %b, %struct.S* %s) {",
+        "entry:",
+        "  %0 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  %a2 = load i64* %a",
+        "  %a3 = icmp le i1 %a2, 1",
+        "  br i1 %a3, label %3, label %4",
+        "3:",
+        "  %a4 = load i64* %a",
+        "  store i64 %a4, i64* %0",
+        "  br label %exit",
+        "4:",
+        "  %s8 = load %struct.S** %s",
+        "  %x9 = getelementptr %struct.S, %struct.S* %s8, i1 0, i32 0",
+        "  %x10 = load i64* %x9",
+        "  %a11 = load i64* %a",
+        "  %12 = mul i64 %x10, %a11",
+        "  store i64 %12, i64* %0",
+        "  br label %exit",
+        "exit:",
+        "  %15 = load i64* %0",
+        "  ret i64 %15",
+        "}",
+        "",
+        "define void @main() {",
+        "entry:",
+        "  %s0 = alloca %struct.S*",
+        "  %res1 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  %s3 = load %struct.S** %s0",
+        "  %foo4 = call i64 @foo(i64 5, i1 1, %struct.S* %s3)",
+        "  store i64 %foo4, i64* %res1",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
 // TODO:
-// if/else
 // more statement kinds I think?
-// function calls
-// globals (stringify)
+// read
