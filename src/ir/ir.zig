@@ -37,11 +37,18 @@ pub fn init(alloc: std.mem.Allocator) IR {
     };
 }
 
-/// Stringify the IR
+const Stringify = @import("./stringify.zig");
+
+/// Stringify the IR with default config options
 /// NOTE: highly recommended to pass a std.heap.ArenaAllocator.allocator
 pub fn stringify(self: *const IR, alloc: std.mem.Allocator) ![]const u8 {
-    const stringifyInner = @import("./stringify.zig");
-    return stringifyInner.stringify(self, alloc);
+    return self.stringify_cfg(self, alloc, .{
+        .header = false,
+    });
+}
+
+pub fn stringify_cfg(self: *const IR, alloc: std.mem.Allocator, cfg: Stringify.Config) ![]const u8 {
+    return Stringify.stringify(self, alloc, cfg);
 }
 
 pub fn internIdent(self: *IR, ident: []const u8) StrID {

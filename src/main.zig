@@ -123,7 +123,9 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
         switch (mode) {
             .stack => {
                 const ir = try @import("ir/stack.zig").generate(backendAlloc, &ast);
-                break :ir try ir.stringify(backendAlloc);
+                break :ir try ir.stringify_cfg(backendAlloc, .{
+                    .header = true,
+                });
             },
             .dot => utils.todo("Dot generation", .{}),
             // TODO: should probably break sooner than this instead

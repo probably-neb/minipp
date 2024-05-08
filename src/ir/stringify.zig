@@ -4,6 +4,14 @@ const utils = @import("../utils.zig");
 
 const Alloc = std.mem.Allocator;
 
+pub const Config = struct {
+    /// whether to include the static decls at the top of the file
+    /// this applies to stuff like malloc, free, printf etc not user
+    /// defined globals or types those will always be included.
+    /// This is used to make testing less verbose
+    header: bool,
+};
+
 const INDENT = "  ";
 
 // TODO: add option to include decls or not
@@ -17,14 +25,14 @@ const INDENT = "  ";
 // in fact, that's worth a second fixme
 // FIXME: check for overides when accessing non-user-defined globals
 const DECLS =
-    \\ declare i8* @malloc(i32)
-    \\ declare void @free(i8*)
-    \\ declare i32 @printf(i8*, ...)
-    \\ declare i32 @scanf(i8*, ...)
-    \\ @.println = private unnamed_addr constant [5 x i8] c"%ld\0A\00", align 1
-    \\ @.print = private unnamed_addr constant [5 x i8] c"%ld \00", align 1
-    \\ @.read = private unnamed_addr constant [4 x i8] c"%ld\00", align 1
-    \\ @.read_scratch = common global i32 0, align 4
+    \\declare i8* @malloc(i32)
+    \\declare void @free(i8*)
+    \\declare i32 @printf(i8*, ...)
+    \\declare i32 @scanf(i8*, ...)
+    \\@.println = private unnamed_addr constant [5 x i8] c"%ld\0A\00", align 1
+    \\@.print = private unnamed_addr constant [5 x i8] c"%ld \00", align 1
+    \\@.read = private unnamed_addr constant [4 x i8] c"%ld\00", align 1
+    \\@.read_scratch = common global i32 0, align 4
 ;
 
 const Buf = struct {
@@ -188,8 +196,13 @@ const Rope = struct {
     }
 };
 
-pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
+pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
     var buf = Buf.init(alloc);
+
+    if (cfg.header) {
+        try buf.write(DECLS);
+        try buf.write("\n\n");
+    }
 
     const types = ir.types.items.items;
     // TODO: stringify globals

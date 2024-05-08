@@ -328,7 +328,13 @@ fn gen_block(
                     // this scope is the only one that knows the else
                     // block exists and where it ended
                     const jmpEndInst = Inst.jmp(IR.Ref.label(endBB));
-                    try fun.addCtrlFlowInst(elseEndBB, jmpEndInst);
+                    fun.addCtrlFlowInst(elseEndBB, jmpEndInst) catch |err| {
+                        if (err != error.ConflictingControlFlowInstructions) {
+                            return err;
+                        }
+                        // assume the conflicting control flow is a jmp to ret
+                        // and ignore it
+                    };
                 } else {
                     endBB = try fun.newBBWithParent(condBB);
                     // this makes it so we can make the branch outside
@@ -346,11 +352,8 @@ fn gen_block(
                     if (err != error.ConflictingControlFlowInstructions) {
                         return err;
                     }
-                    // switch (err) {
-                    //     error.ConflictingControlFlowInstructions => {},
-                    //     else => return err,
-                    // }
-                    // assume it was a jump to exit block and we're ok!
+                    // assume the conflicting control flow is a jmp to ret
+                    // and ignore it
                 };
 
                 const brInst = Inst.br(condRef, IR.Ref.label(ifBB), IR.Ref.label(elseBB));
@@ -495,17 +498,17 @@ fn gen_expression(
                 .Div => Inst.div(lhsRef, rhsRef),
                 .And => Inst.and_(lhsRef, rhsRef),
                 .Or => Inst.or_(lhsRef, rhsRef),
-                .Eq => Inst.cmp(.Eq, lhsRef, rhsRef),
+                .DoubleEq => Inst.cmp(.Eq, lhsRef, rhsRef),
                 .NotEq => Inst.cmp(.NEq, lhsRef, rhsRef),
                 .Lt => Inst.cmp(.Lt, lhsRef, rhsRef),
                 .LtEq => Inst.cmp(.LtEq, lhsRef, rhsRef),
                 .Gt => Inst.cmp(.Gt, lhsRef, rhsRef),
                 .GtEq => Inst.cmp(.GtEq, lhsRef, rhsRef),
-                else => unreachable,
+                else => std.debug.panic("gen_expression.binary_operation: {s}\n", .{@tagName(tok.kind)}),
             };
             const ty: IR.Type = switch (tok.kind) {
                 .Plus, .Minus, .Mul, .Div => .int,
-                .Eq, .NotEq, .Lt, .LtEq, .Gt, .GtEq, .And, .Or => .bool,
+                .DoubleEq, .NotEq, .Lt, .LtEq, .Gt, .GtEq, .And, .Or => .bool,
                 else => unreachable,
             };
             const name = join_names(lhsRef.name, rhsRef.name);
@@ -553,6 +556,7 @@ fn gen_expression(
                     break :null IR.Ref.immnull(.i8);
                 },
                 .Invocation => IR.Ref.fromReg(try gen_invocation(ir, fun, ast, bb, atom)),
+                .Expression => try gen_expression(ir, ast, fun, bb, atom.*),
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
             };
             if (sel.chain) |chain| {
