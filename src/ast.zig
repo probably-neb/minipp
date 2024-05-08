@@ -34,19 +34,18 @@ pub fn mapStructs(ast: *Ast) !void {
     }
 }
 
-pub fn printAst(self: *Ast) void{
+pub fn printAst(self: *Ast) void {
     var i: usize = 0;
     const nodes = self.nodes.items;
     for (nodes) |node| {
         const kind = node.kind;
         const token = node.token;
-        std.debug.print("{d}: {s} {s}", .{i, @tagName(kind), token._range.getSubStrFromStr(self.input)});
-        switch (kind){
+        std.debug.print("{d}: {s} {s}", .{ i, @tagName(kind), token._range.getSubStrFromStr(self.input) });
+        switch (kind) {
             .BinaryOperation => {
                 const binOp = node.kind.BinaryOperation;
                 std.debug.print(" lhs: {any}", .{binOp.lhs});
                 std.debug.print(" rhs: {any}\n", .{binOp.rhs});
-
             },
             else => {
                 std.debug.print("\n", .{});
@@ -110,8 +109,6 @@ pub fn getStructNodeFromName(ast: *Ast, name: []const u8) ?*const Node {
     }
     return null;
 }
-
-
 
 pub fn getStructFieldType(ast: *Ast, structName: []const u8, fieldName: []const u8) ?Type {
     const structNode = ast.getStructNodeFromName(structName);
@@ -198,6 +195,7 @@ pub const Node = struct {
                 .BoolType,
                 .IntType,
                 .StructType,
+                .IntArrayType,
             }),
             /// when kind is `StructType` points to the idenfifier
             /// of the struct
@@ -207,6 +205,7 @@ pub const Node = struct {
         BoolType,
         IntType,
         StructType,
+        IntArrayType,
         Void,
         Read,
         Identifier,
@@ -237,8 +236,8 @@ pub const Node = struct {
             fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
                 var iter: ?usize = self.firstDecl;
-                while(iter != null){
-                    if( iter.? > last){
+                while (iter != null) {
+                    if (iter.? > last) {
                         break;
                     }
                     const decl = ast.get(iter.?).kind.TypedIdentifier;
@@ -246,7 +245,7 @@ pub const Node = struct {
                     if (std.mem.eql(u8, name, memberName)) {
                         return decl.getType(ast);
                     }
-                    iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1, last + 1);
+                    iter = ast.findIndexWithin(.TypedIdentifier, iter.? + 1, last + 1);
                 }
                 return null;
             }
@@ -300,17 +299,17 @@ pub const Node = struct {
             fn getMemberType(self: Self, ast: *Ast, memberName: []const u8) ?Type {
                 const last = self.lastDecl orelse self.firstDecl + 1;
                 var iter: ?usize = self.firstDecl;
-                while(iter != null){
-                    if( iter.? > last){
+                while (iter != null) {
+                    if (iter.? > last) {
                         break;
                     }
-                    std.debug.print("iter={d} last={d}\n", .{iter.?, last});
+                    std.debug.print("iter={d} last={d}\n", .{ iter.?, last });
                     const decl = ast.get(iter.?).kind.TypedIdentifier;
                     const name = decl.getName(ast);
                     if (std.mem.eql(u8, name, memberName)) {
                         return decl.getType(ast);
                     }
-                    iter = ast.findIndexWithin(.TypedIdentifier, iter.?+1, last + 1);
+                    iter = ast.findIndexWithin(.TypedIdentifier, iter.? + 1, last + 1);
                 }
                 return null;
             }
@@ -447,6 +446,10 @@ pub const Node = struct {
         New: struct {
             /// pointer to the identifier being allocated
             ident: Ref(.Identifier),
+        },
+        NewIntArray: struct {
+            /// The space to allocate for the array
+            length: Ref(.Number),
         },
         /// keyword `null`
         Null,
@@ -680,6 +683,7 @@ pub const Node = struct {
                             const name = nameToken._range.getSubStrFromStr(ast.input);
                             return .{ .Struct = name };
                         },
+                        .IntArrayType => return .IntArray,
                         else => unreachable,
                     }
                 } else {
@@ -708,6 +712,7 @@ pub const Node = struct {
                         const name = nameToken._range.getSubStrFromStr(ast.input);
                         return .{ .Struct = name };
                     },
+                    .IntArrayType => return .IntArray,
                     else => unreachable,
                 }
             }
@@ -782,6 +787,7 @@ pub const Node = struct {
 pub const Type = union(enum) {
     Bool,
     Int,
+    IntArray,
     Null,
     Void,
     Struct: []const u8,
@@ -826,6 +832,7 @@ const KindTagDupe = enum {
     BoolType,
     IntType,
     StructType,
+    IntArrayType,
     Void,
     Read,
     Identifier,

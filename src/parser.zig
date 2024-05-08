@@ -459,6 +459,9 @@ pub const Parser = struct {
                 kindIndex = try self.astAppend(NodeKind.StructType, token);
                 structIdentifierIndex = try self.astAppendNode(try self.expectIdentifier());
             },
+            TokenKind.KeywordIntArray => {
+                kindIndex = try self.astAppend(NodeKind.IntArrayType, token);
+            },
             else => {
                 // TODO: make this error like the others
                 log.err("Error invalid Token: expected token kind {s} | {s} | {s} but got {s}.\n", .{ @tagName(TokenKind.KeywordInt), @tagName(TokenKind.KeywordBool), @tagName(TokenKind.KeywordStruct), @tagName(token.kind) });
@@ -1554,9 +1557,22 @@ pub const Parser = struct {
                 // Note - leaving checking if the thing after new is right until it's parsed later...
                 // this is probably a badddd idea (malformed expressions like what! (with the lights on!!??))
                 // FIXME: NOTE: for the introductoin of array_list this will have to be changed
-                _ = try self.expectToken(.Identifier);
-                numTokens += 1;
-                utils.assert(numTokens == 2, "New token has more than 2 tokens\n", .{});
+                const nextToken = try self.currentToken();
+
+                if (nextToken.kind == .Identifier) {
+                    _ = try self.expectToken(.Identifier);
+                    numTokens += 1;
+                    utils.assert(numTokens == 2, "New token has more than 2 tokens\n", .{});
+                } else if (nextToken.kind == .KeywordIntArray) {
+                    _ = try self.expectToken(.KeywordIntArray);
+                    _ = try self.expectToken(.LBracket);
+                    _ = try self.expectToken(.Number);
+                    _ = try self.expectToken(.RBracket);
+
+                    numTokens += 4;
+                    // log.info("numTokens: {d}\n", .{numTokens});
+                    utils.assert(numTokens == 5, "New token has more than 4 tokens\n", .{});
+                }
             },
             .Dot => {
                 while ((try self.currentToken()).kind == .Dot) {
@@ -1716,6 +1732,7 @@ pub const Parser = struct {
                 const falseToken = try self.expectAndYeildToken(TokenKind.KeywordFalse);
                 const falseNode = Node{
                     .kind = .False,
+
                     .token = falseToken,
                 };
                 lhsIndex = try self.astAppendNode(falseNode);
@@ -1738,15 +1755,38 @@ pub const Parser = struct {
                 const newToken = try self.expectAndYeildToken(.KeywordNew);
                 const newIndex = try self.reserve();
 
-                // Expect Identifier
-                const identIndex = try self.astAppendNode(try self.expectIdentifier());
+                // const currentToken = try self.expect(.TypeIntArray);
+                if ((try self.currentToken()).kind == .KeywordIntArray) {
+                    _ = try self.consumeToken();
 
-                const newNode = Node{
-                    .kind = .{ .New = .{ .ident = identIndex } },
-                    .token = newToken,
-                };
-                try self.set(newIndex, newNode);
-                lhsIndex = newIndex;
+                    _ = try self.expectToken(.LBracket);
+                    const numberToken = try self.expectAndYeildToken(.Number);
+                    _ = try self.expectToken(.RBracket);
+
+                    const newNumberNode = Node{
+                        .kind = .Number,
+                        .token = numberToken,
+                    };
+
+                    const identNewNumberNode = try self.astAppendNode(newNumberNode);
+
+                    const newNode = Node{
+                        .kind = .{ .New = .{ .ident = identNewNumberNode } },
+                        .token = newToken,
+                    };
+                    try self.set(newIndex, newNode);
+                    lhsIndex = newIndex;
+                } else {
+                    // Expect Identifier
+                    const identIndex = try self.astAppendNode(try self.expectIdentifier());
+
+                    const newNode = Node{
+                        .kind = .{ .New = .{ .ident = identIndex } },
+                        .token = newToken,
+                    };
+                    try self.set(newIndex, newNode);
+                    lhsIndex = newIndex;
+                }
             },
             else => {
                 // TODO: make this error like the others
@@ -1873,6 +1913,16 @@ test "program declarations indices null for no types" {
     }
 }
 
+test "create int array" {
+    const source = "new int_array[5]";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 5;
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
 test "extractAtom.Num" {
     var parser = try testMe("123");
     const atom = try parser.extractAtom();
@@ -1981,6 +2031,7 @@ test "pratt.simple_pemdas" {
 }
 
 // FIXME:
+//
 test "pratt.funcall" {
     var parser = try testMe("foo(1, 2, 3)");
     const expr = try parser.prattParseExpression(debugAlloc, 0);
