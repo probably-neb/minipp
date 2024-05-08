@@ -7,7 +7,7 @@ pub fn assert(a: bool, comptime fmt: []const u8, vars: anytype) void {
     std.debug.panic(fmt, vars);
 }
 
-pub fn todo(comptime fmt: []const u8, vars: anytype) void {
+pub fn todo(comptime fmt: []const u8, vars: anytype) noreturn {
     const prefix = "TODO: ";
     comptime var prefixedFmt: [prefix.len + fmt.len]u8 = .{0};
     @memcpy(prefixedFmt[0..prefix.len], prefix[0..prefix.len]);

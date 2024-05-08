@@ -61,10 +61,48 @@ const Buf = struct {
 /// Mainly for avoiding having to do manual string concatenation/allocation
 /// by allowing variable parts to be variable and constant parts to be constant
 const Rope = struct {
+    // some (possibly empty) (possibly variable i.e. not const) string
+    // will always be printed first
     a: []const u8,
+    // another (possibly empty) (possibly variable i.e. not const) string
+    // will always be printed after `a`. see num_before_b to understand how
+    // it will be printed with respect to num
     b: []const u8,
+    // an optionally null number to print. will only be printed if it is not null
+    // an i128 just so it has enough room for anything that would fit in a i64
+    // plus some (a lot of) wiggle room just in case idk
     num: ?i128 = null,
+    // decides wether to print num then print b or vice versa.
+    // useful because sometimes the number goes at the end i.e.
+    // named result registers (`%{name}{instruction number}` ex. `%foo3`) where:
+    //  a := "%"
+    //  b := {name}
+    //  num := {instruction number}
+    // or alternatively
+    // in array types (`[ {len} x {type} ]` ex. `[ 4 x i32 ]`) where
+    //  a := "[ "
+    //  b := " x i32 ]" or " x i8 ]" depending on {type}
+    //  num  := {len}
+    //  in this case we can use the num_before_b flag to get the correct format
     num_before_b: bool = false,
+    // decides wether to print a pointer symbol (*) after
+    // everything else is printed
+    // used in the `.ptr()` and `.not_ptr()` methods to control
+    // whether something has a pointer postfix or not i.e.
+    // in bitcast:
+    //   the from type is always a pointer, so it has a *,
+    //   but we always assume i8s and structs are pointers,
+    //   (i.e. `stringify_type(IR.Type.i8) => Rope.just("i8").ptr()`)
+    //   so we call `.not_ptr()` on it and put the * in the format string
+    //   so things that are already pointers don't become double pointers
+    //   and things that aren't pointers become pointers
+    // another useful example is the `gep` instruction:
+    //   the basis type (first type param which will be used to do ptr arithmetic)
+    //   is the only place a struct is not a pointer type but its actual type
+    //   therefore we can just call `.not_ptr()` on the basis type and have
+    //   everything work out
+    // also note that having it in a bool allows multiple call sites to call `.ptr()`
+    // on a rope and have it only result in a single * postfix
     is_ptr: bool = false,
 
     // zig will use this to format the struct
@@ -86,45 +124,54 @@ const Rope = struct {
         }
     }
 
+    /// print `{a}{b}`
     fn pair(a: []const u8, b: []const u8) Rope {
         return Rope{ .a = a, .b = b };
     }
 
+    /// print `{a}`
     fn just(a: []const u8) Rope {
         return Rope{ .a = a, .b = "" };
     }
 
+    /// print `{num}`
     fn just_num(num: anytype) Rope {
         return Rope{ .a = "", .b = "", .num = @intCast(num) };
     }
 
+    /// print `{a}{num}`
     fn str_num(a: []const u8, num: anytype) Rope {
         return Rope{ .a = a, .b = "", .num = @intCast(num) };
     }
 
+    /// print `{a}{b}{num}`
     fn str_str_num(a: []const u8, b: []const u8, num: anytype) Rope {
         return Rope{ .a = a, .b = b, .num = @intCast(num) };
     }
 
+    /// print `{a}{num}{b}`
     fn str_num_str(a: []const u8, num: anytype, b: []const u8) Rope {
         return Rope{ .a = a, .b = b, .num = @intCast(num), .num_before_b = true };
     }
 
+    /// takes a rope and returns a new rope with `is_ptr` set to true
     fn ptr(s: Rope) Rope {
         var r = s;
         r.is_ptr = true;
         return r;
     }
 
-    fn ptr_if(s: Rope, cond: bool) Rope {
-        var r = s;
-        r.is_ptr = cond;
-        return r;
-    }
-
+    /// takes a rope and returns a new rope with `is_ptr` set to false
     fn not_ptr(s: Rope) Rope {
         var r = s;
         r.is_ptr = false;
+        return r;
+    }
+
+    /// takes a rope and returns a new rope with `is_ptr` set to `cond`
+    fn ptr_if(s: Rope, cond: bool) Rope {
+        var r = s;
+        r.is_ptr = cond;
         return r;
     }
 };
@@ -145,7 +192,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
                 try buf.write(", ");
             }
         }
-        try buf.write(" }\n");
+        try buf.fmt(" }} align {d}\n", .{IR.ALIGN});
     }
     if (types.len > 0) {
         try buf.write("\n");
@@ -165,19 +212,16 @@ pub fn stringify(ir: *const IR, alloc: Alloc) ![]const u8 {
         var curBB: IR.BasicBlock.ID = IR.Function.entryBBID;
         try buf.fmt("{}:\n", .{stringify_label(curBB)});
 
-        while (iter.next()) |inst| {
+        while (iter.next()) |bbinst| {
+            const instBB = bbinst.bb;
+            const inst = bbinst.inst;
+
             // handle printing the basic block label
-            switch (inst.op) {
-                // No result reg
-                .Store, .Ret, .Br, .Jmp => {},
-                else => {
-                    const reg = fun.regs.get(inst.res.i);
-                    if (reg.bb != curBB) {
-                        curBB = reg.bb;
-                        try buf.fmt("{}:\n", .{stringify_label(curBB)});
-                    }
-                },
+            if (instBB != curBB) {
+                curBB = instBB;
+                buf.fmt("{}:\n", .{stringify_label(curBB)}) catch unreachable;
             }
+
             // handle printing the instruction
             try buf.write(INDENT);
             switch (inst.op) {

@@ -74,7 +74,7 @@ pub fn gen_types(ir: *IR, ast: *const Ast) MemError![]IR.TypeList.Item {
 
     // WARN: read the comment at the call to realloc at the end of this function
     const numDecls = iter.len;
-    log.trace("numDecls: {}\n", .{numDecls});
+    // log.trace("numDecls: {}\n", .{numDecls});
     const types: []Struct = try ir.alloc.alloc(Struct, numDecls);
 
     var ti: usize = 0;
@@ -93,6 +93,7 @@ pub fn gen_types(ir: *IR, ast: *const Ast) MemError![]IR.TypeList.Item {
         const numFields = fieldIter.calculateLen();
         const fields: []Field = try ir.alloc.alloc(Field, numFields);
 
+        var size: u32 = 0;
         var fi: usize = 0;
 
         while (fieldIter.next()) |fieldNode| : (fi += 1) {
@@ -101,10 +102,11 @@ pub fn gen_types(ir: *IR, ast: *const Ast) MemError![]IR.TypeList.Item {
 
             const fieldAstType = field.getType(ast);
             const fieldType = ir.astTypeToIRType(fieldAstType);
+            size += IR.Type.aligned_sizeof(IR.ALIGN, fieldType);
 
             fields[fi] = Field.init(fieldNameID, fieldType);
         }
-        types[ti] = Struct.init(structNameID, fields);
+        types[ti] = Struct.init(structNameID, size, fields);
     }
 
     // So.... the structMap iter.len is not accurate, only bigger as far as I can tell,
@@ -122,7 +124,7 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
     // `calculateLen` helper and I'm too lazy rn to port it
     var funcIter = Ast.NodeIter(.Function).init(ast, 0, ast.nodes.items.len);
     const numFuncs = funcIter.calculateLen();
-    log.trace("num funcs := {}\n", .{numFuncs});
+    // log.trace("num funcs := {}\n", .{numFuncs});
     var funcs: []Fun = try ir.alloc.alloc(Fun, numFuncs);
     var fi: usize = 0;
 
@@ -243,7 +245,7 @@ fn gen_block(ir: *IR, ast: *const Ast, fun: *IR.Function, initialBB: IR.BasicBlo
         const kind = innerNode.kind;
         // FIXME: check for control flow
         switch (kind) {
-            .ConditionalIf, .ConditionalIfElse => utils.todo("gen_function.controlFlow {any}\n", .{stmtNode.kind}),
+            .ConditionalIf, .ConditionalIfElse => utils.todo("gen_function.controlFlow {any}\n", .{@tagName(kind)}),
             .While => |whil| {
                 const startBB = curBB;
                 const condExpr = ast.get(whil.cond).*;
@@ -265,13 +267,14 @@ fn gen_block(ir: *IR, ast: *const Ast, fun: *IR.Function, initialBB: IR.BasicBlo
             },
             .Return => |ret| {
                 if (ret.expr) |retExpr| {
-                    const retExprReg = try gen_expression(ir, ast, fun, curBB, ast.get(retExpr).*);
+                    const retExprRef = try gen_expression(ir, ast, fun, curBB, ast.get(retExpr).*);
                     const returnRegID = fun.returnReg.?;
+                    const returnReg = fun.regs.get(returnRegID);
+                    const returnRef = IR.Ref.fromReg(returnReg);
+                    utils.assert(returnReg.type.eq(fun.returnType), "returnReg.type == fun.returnType", .{});
                     const inst = Inst.store(
-                        fun.returnType,
-                        IR.Ref.fromReg(fun.regs.get(returnRegID)),
-                        retExprReg.type,
-                        retExprReg,
+                        returnRef,
+                        retExprRef,
                     );
                     try fun.addAnonInst(curBB, inst);
                 } else {
@@ -296,17 +299,18 @@ fn gen_statement(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock.
         .Assignment => |assign| {
             const to = ast.get(assign.lhs).kind.LValue;
             const toName = ir.internIdentNodeAt(ast, to.ident);
-            log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
+            // log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             // FIXME: handle selector chain
-            const allocRef = try fun.getNamedRef(ir, toName);
+            var assignRef = try fun.getNamedRef(ir, toName);
+            if (to.chain) |chain| {
+                assignRef = try gen_selector_chain(ir, ast, fun, bb, assignRef, chain);
+            }
 
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).*;
             const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
             const inst = Inst.store(
-                allocRef.type,
-                allocRef,
-                exprRef.type,
+                assignRef,
                 exprRef,
             );
             try fun.addAnonInst(bb, inst);
@@ -375,10 +379,7 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
                 .Eq, .NotEq, .Lt, .LtEq, .Gt, .GtEq, .And, .Or => .bool,
                 else => unreachable,
             };
-            const name = switch (lhsRef.name) {
-                IR.InternPool.NULL => rhsRef.name,
-                else => lhsRef.name,
-            };
+            const name = join_names(lhsRef.name, rhsRef.name);
             const res = try fun.addNamedInst(bb, inst, name, ty);
             return IR.Ref.fromReg(res);
         },
@@ -387,37 +388,58 @@ fn gen_expression(ir: *IR, ast: *const Ast, fun: *IR.Function, bb: IR.BasicBlock
             // I know I know, I just don't know what else to call it
             const atomIndex = factor.factor;
             const atom = ast.get(atomIndex);
-            switch (atom.kind) {
-                .Identifier => {
+            var resultRef = switch (atom.kind) {
+                .Identifier => ident: {
                     const identID = ir.internToken(ast, atom.token);
                     const ref = try fun.getNamedRef(ir, identID);
                     const inst = Inst.load(ref.type, ref);
                     const res = try fun.addNamedInst(bb, inst, ref.name, ref.type);
-                    return IR.Ref.fromReg(res);
+                    break :ident IR.Ref.fromReg(res);
                 },
-                .False => {
-                    return IR.Ref.immFalse();
+                .False => false: {
+                    break :false IR.Ref.immFalse();
                 },
-                .True => {
-                    return IR.Ref.immTrue();
+                .True => true: {
+                    break :true IR.Ref.immTrue();
                 },
-                .Number => {
+                .Number => num: {
                     const tok = atom.token;
                     const num = ir.internToken(ast, tok);
-                    return IR.Ref.immediate(num, .int);
+                    break :num IR.Ref.immediate(num, .int);
                 },
-                .New => |new| {
+                .New => |new| new: {
                     const structName = ir.internIdentNodeAt(ast, new.ident);
-                    const structType = ir.types.get(structName);
+                    const structType = try ir.types.get(structName);
                     const s = structType;
 
                     const memRef = try gen_malloc_struct(ir, fun, bb, s);
-                    return memRef;
+                    break :new memRef;
+                },
+                .Null => null: {
+                    // TODO: if llvm doesn't like this, or I want to make the code pretty
+                    // whichever comes first...
+                    // the way to not have i8* null is to have a `null_` type in IR.Type
+                    // and have it replaced with the destination type in stores (which are
+                    // the only valid place to have null)
+                    break :null IR.Ref.immnull(.i8);
                 },
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
+            };
+            if (sel.chain) |chain| {
+                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain);
+                switch (resultRef.type) {
+                    .strct, .arr => {},
+                    // Whenever we are accessing a field of a struct,
+                    // if it isn't a struct or an array, it should be derefed
+                    // so it isn't a pointer
+                    else => {
+                        const loadInst = Inst.load(resultRef.type, resultRef);
+                        const resultReg = try fun.addNamedInst(bb, loadInst, resultRef.name, resultRef.type);
+                        resultRef = IR.Ref.fromReg(resultReg);
+                    },
+                }
             }
-
-            // TODO: gen gep if selector chain not null
+            return resultRef;
         },
         else => utils.todo("gen_expression: {any}\n", .{exprNode.kind}),
     }
@@ -468,8 +490,9 @@ fn gen_print(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, expr: IR.Ref, nl:
     const fmti8PtrRef = blk: {
         // use gep to get the fmt string as an i8*
         // (ptr to first element) instead of an array
+        // i.e. `i8* ptr = &fmt[0];`
         const zeroIndex = IR.Ref.immediate(0, .i32);
-        const gepFmtPtr = Inst.gep(fmtRef.type, fmtRef.type, fmtRef, zeroIndex);
+        const gepFmtPtr = Inst.gep(fmtRef.type, fmtRef, zeroIndex);
         const res = try fun.addInst(bb, gepFmtPtr, .i8);
         break :blk IR.Ref.fromReg(res);
     };
@@ -484,6 +507,60 @@ fn gen_print(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, expr: IR.Ref, nl:
     const print = Inst.call(.void, printRef, args);
     _ = try fun.addInst(bb, print, .void);
     return;
+}
+
+/// @param chainIndex: the `chain` field in `LValue` or `Selector`
+///               i.e. the pointer to the `SelectorChain` node
+/// @returns the reference to the last instruction in the chain
+fn gen_selector_chain(
+    ir: *IR,
+    ast: *const Ast,
+    fun: *IR.Function,
+    bb: IR.BasicBlock.ID,
+    startRef: IR.Ref,
+    chainIndex: usize,
+) !IR.Ref {
+    var structType = try ir.types.get(startRef.type.strct);
+    var chainLink = ast.get(chainIndex).kind.SelectorChain;
+    var fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
+    var fieldInfo = try structType.getFieldWithName(fieldNameID);
+    var fieldIndex = fieldInfo.index;
+    var field = fieldInfo.field;
+    var inst = IR.Inst.gep(structType.getType(), startRef, IR.Ref.immu32(fieldIndex, .i32));
+
+    var reg = try fun.addNamedInst(bb, inst, field.name, field.type);
+    var ref = IR.Ref.fromReg(reg);
+    var nextChainLink = chainLink.next;
+    var prevField = field;
+
+    while (nextChainLink) |nextIndex| : (nextChainLink = chainLink.next) {
+        chainLink = ast.get(nextIndex).kind.SelectorChain;
+
+        utils.assert(prevField.type == .strct, "prevField.type.isStruct in `gen_selector_chain`", .{});
+        structType = try ir.types.get(prevField.type.strct);
+        fieldInfo = try structType.getFieldWithName(fieldNameID);
+        fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
+        fieldInfo = try structType.getFieldWithName(fieldNameID);
+        fieldIndex = fieldInfo.index;
+        field = fieldInfo.field;
+        inst = IR.Inst.gep(structType.getType(), ref, IR.Ref.immu32(fieldIndex, .i32));
+
+        reg = try fun.addNamedInst(bb, inst, field.name, field.type);
+        ref = IR.Ref.fromReg(reg);
+    }
+    return ref;
+}
+
+// Returns a or b if the other is null and they aren't,
+// NULL if they are both non null
+fn join_names(a: IR.StrID, b: IR.StrID) IR.StrID {
+    if (a == IR.InternPool.NULL) {
+        return b;
+    }
+    if (b == IR.InternPool.NULL) {
+        return a;
+    }
+    return IR.InternPool.NULL;
 }
 
 /////////////
@@ -572,6 +649,21 @@ fn expectIRMatches(fun: IR.Function, expected: []const Inst) !void {
 }
 
 fn expectResultsInIR(input: []const u8, expected: anytype) !void {
+    // NOTE: testing on the strings is really nice except when you
+    // add or remove an instruction and then all the registers are off
+    // this can be fixed by doing the following
+    // vim command with the lines selected:
+    // ```
+    // :'<,'>s/[\( i\d*\) ]\@<!\(\d\+\)/\=submatch(1)+1/g
+    // ```
+    // replacing the `+1` after the `submatch` with `-1` if
+    // you removed an instruction
+    // after that all of the alloca registers will be wrong
+    // (actually all references to registers defined before the new/removed line)
+    // but that's probably easier to fix
+    // the `[\( i\d*\) ]\@<!` part makes it so it doesn't change
+    // numbers prefixed with `i` or ` ` i.e. number types
+    // and indices respectively
     var arena = std.heap.ArenaAllocator.init(ting.allocator);
     defer arena.deinit();
     var alloc = arena.allocator();
@@ -658,32 +750,32 @@ test "stack.str.do-math" {
         "  %0 = alloca i64",
         "  %i1 = alloca i64",
         "  br label %2",
-        "  store i64 0, i64* %i1",
         "2:",
+        "  store i64 0, i64* %i1",
         "  %i4 = load i64* %i1",
         "  %count5 = load i64* %count",
-        "  %i6 = icmp lt i1 %i4, %count5",
-        "  br i1 %i6, label %3, label %4",
+        "  %6 = icmp lt i1 %i4, %count5",
+        "  br i1 %6, label %3, label %4",
         "3:",
         "  %i7 = load i64* %i1",
         "  %i8 = add i64 %i7, 1",
         "  store i64 %i8, i64* %i1",
         "  %base10 = load i64* %base",
         "  %base11 = load i64* %base",
-        "  %base12 = add i64 %base10, %base11",
-        "  store i64 %base12, i64* %base",
+        "  %12 = add i64 %base10, %base11",
+        "  store i64 %12, i64* %base",
         "  %i14 = load i64* %i1",
         "  %count15 = load i64* %count",
-        "  %i16 = icmp lt i1 %i14, %count15",
-        "  br i1 %i16, label %3, label %4",
+        "  %16 = icmp lt i1 %i14, %count15",
+        "  br i1 %16, label %3, label %4",
         "4:",
         "  %i19 = load i64* %i1",
         "  %i20 = add i64 %i19, 1",
         "  store i64 %i20, i64* %i1",
         "  %base22 = load i64* %base",
         "  %base23 = load i64* %base",
-        "  %base24 = add i64 %base22, %base23",
-        "  store i64 %base24, i64* %base",
+        "  %24 = add i64 %base22, %base23",
+        "  store i64 %24, i64* %base",
         "  %base26 = load i64* %base",
         "  store i64 %base26, i64* %0",
         "  br label %exit",
@@ -708,7 +800,7 @@ test "stack.str.new" {
         \\  delete s;
         \\}
     , .{
-        "%struct.S = type { i64 }",
+        "%struct.S = type { i64 } align 4",
         "",
         "define void @main() {",
         "entry:",
@@ -716,86 +808,232 @@ test "stack.str.new" {
         "  br label %2",
         "2:",
         "  %S2 = call i8* @malloc(i32 8)",
-        "  %S3 = bitcast i8* %3 to %struct.S*",
-        "  store %struct.S* %3, %struct.S** %s0",
-        "  %s4 = load %struct.S** %s0",
-        "  %5 = bitcast %struct.S* %s4 to i8*",
-        "  %6 = call void @free(i8* %5)",
+        "  %S3 = bitcast i8* %S2 to %struct.S*",
+        "  store %struct.S* %S3, %struct.S** %s0",
+        "  %s5 = load %struct.S** %s0",
+        "  %6 = bitcast %struct.S* %s5 to i8*",
+        "  %7 = call void @free(i8* %6)",
         "  br label %exit",
         "exit:",
+        "  ret void",
         "}",
     });
 }
 
-// test "stack.str.nested-assign" {
-//     errdefer log.print();
-//     try expectResultsInIR(
-//         \\struct S {
-//         \\  int x;
-//         \\  int y;
-//         \\  struct S s;
-//         \\};
-//         \\
-//         \\fun main() void {
-//         \\  struct S s;
-//         \\  int a;
-//         \\  s = new S;
-//         \\  a = s.s.s.x + s.s.y;
-//         \\  print a endl;
-//         \\  delete s;
-//         \\}
-//     , .{
-//         "%struct.S = type { i64, i64, %struct.S* }",
-//         "",
-//         "define void @main() {",
-//         "entry:",
-//         "  %s0 = alloca %struct.S*",
-//         "  %a1 = alloca i64",
-//         "  store %struct.S* null, %struct.S** %s0",
-//         "  br label %2",
-//         "2:",
-//         "  %4 = call i8* @malloc(i32 24)",
-//         "  %4 = bitcast i8* %4 to %struct.S*",
-//         "  store %struct.S* %4, %struct.S** %s0",
-//         // get x
-//         "  %s5 = load %struct.S** %s0",
-//         // TODO: move this comment to where gep is actually constructed
-//         // NOTE: i'm pretty sure we have to do it this way, not all together
-//         // as "subsequent types being indexed into can never be pointers, since that would require loading the pointer before continuing calculation"
-//         // i.e. for a dynamically allocated element, you can't know apriori what the ptr to it is, and by extension
-//         // cannot know what the ptr to the field is
-//         // This is because gep only does ptr arithmetic, not loading
-//         // https://llvm.org/docs/LangRef.html#id236
-//         "  %s6 = getelementptr %struct.S, %struct.S* %s5, i1 0, i32 2", // get first .s
-//         "  %s7 = getelementptr %struct.S, %struct.S* %s6, i1 0, i32 2", // get second .s
-//         "  %x8 = getelementptr %struct.S, %struct.S* %s8, i1 0, i32 0", // get .x*
-//         "  %x9 = load i64, i64* %x8", // load .x*
-//         // get y
-//         "  %s10 = load %struct.S** %s0",
-//         "  %s11 = getelementptr %struct.S, %struct.S* %s10, i1 0, i32 2",
-//         "  %y12 = getelementptr %struct.S, %struct.S* %s11, i1 0, i32 1",
-//         "  %y13 = load i64, i64* %y12",
-//         // add x and y
-//         "  %a14 = add i64 %x9, %y13",
-//         "  store i64 %a14, i64* %a1",
-//         // print a endl
-//         "  %a16 = load i64* %a1",
-//         "  %17 = call void @printf(@.println, %a16)",
-//         // delete s
-//         "  %s18 = load %struct.S** %s0",
-//         "  %19 = bitcast %struct.S* %s18 to i8*",
-//         "  %20 = call void @free(i8* %19)",
-//         "exit:",
-//         "}",
-//     });
-// }
+test "stack.str.new.with-bool-align" {
+    try expectResultsInIR(
+        \\struct S {
+        \\  int x;
+        \\  bool y;
+        \\};
+        \\
+        \\fun main() void {
+        \\  struct S s;
+        \\  s = new S;
+        \\}
+    , .{
+        "%struct.S = type { i64, i1 } align 4",
+        "",
+        "define void @main() {",
+        "entry:",
+        "  %s0 = alloca %struct.S*",
+        "  br label %2",
+        "2:",
+        "  %S2 = call i8* @malloc(i32 12)",
+        "  %S3 = bitcast i8* %S2 to %struct.S*",
+        "  store %struct.S* %S3, %struct.S** %s0",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.str.nested-assign" {
+    errdefer log.print();
+    try expectResultsInIR(
+        \\struct S {
+        \\  int x;
+        \\  int y;
+        \\  struct S s;
+        \\};
+        \\
+        \\fun main() void {
+        \\  struct S s;
+        \\  int a;
+        \\  s = new S;
+        \\  a = s.s.s.x + s.s.y;
+        \\  print a endl;
+        \\  delete s;
+        \\}
+    , .{
+        "%struct.S = type { i64, i64, %struct.S* } align 4",
+        "",
+        "define void @main() {",
+        "entry:",
+        "  %s0 = alloca %struct.S*",
+        "  %a1 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  %S3 = call i8* @malloc(i32 24)",
+        "  %S4 = bitcast i8* %S3 to %struct.S*",
+        "  store %struct.S* %S4, %struct.S** %s0",
+        // get x
+        "  %s6 = load %struct.S** %s0",
+        // TODO: move this comment to where gep is actually constructed
+        // NOTE: i'm pretty sure we have to do it this way, not all together
+        // as "subsequent types being indexed into can never be pointers, since that would require loading the pointer before continuing calculation"
+        // i.e. for a dynamically allocated element, you can't know apriori what the ptr to it is, and by extension
+        // cannot know what the ptr to the field is
+        // This is because gep only does ptr arithmetic, not loading
+        // https://llvm.org/docs/LangRef.html#id236
+        "  %s7 = getelementptr %struct.S, %struct.S* %s6, i1 0, i32 2", // get first .s
+        "  %s8 = getelementptr %struct.S, %struct.S* %s7, i1 0, i32 2", // get second .s
+        "  %x9 = getelementptr %struct.S, %struct.S* %s8, i1 0, i32 0", // get .x*
+        "  %x10 = load i64* %x9", // load .x*
+        // get y
+        "  %s11 = load %struct.S** %s0",
+        "  %s12 = getelementptr %struct.S, %struct.S* %s11, i1 0, i32 2",
+        "  %y13 = getelementptr %struct.S, %struct.S* %s12, i1 0, i32 1",
+        "  %y14 = load i64* %y13",
+        // add x and y
+        "  %15 = add i64 %x10, %y14",
+        "  store i64 %15, i64* %a1",
+        // print a endl
+        "  %a17 = load i64* %a1",
+        "  %18 = getelementptr [ 5 x i8 ], [ 5 x i8 ]* @.println, i1 0, i32 0",
+        "  %19 = call void @printf(i8* %18, i64 %a17)",
+        // delete s
+        "  %s20 = load %struct.S** %s0",
+        "  %21 = bitcast %struct.S* %s20 to i8*",
+        "  %22 = call void @free(i8* %21)",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.str.gep-assign" {
+    try expectResultsInIR(
+        \\struct S {
+        \\  int x;
+        \\  int y;
+        \\  struct S s;
+        \\};
+        \\
+        \\fun main() void {
+        \\  struct S s;
+        \\  s.s.y = 0;
+        \\}
+    , .{
+        "%struct.S = type { i64, i64, %struct.S* } align 4",
+        "",
+        "define void @main() {",
+        "entry:",
+        "  %s0 = alloca %struct.S*",
+        "  br label %2",
+        "2:",
+        "  %s2 = getelementptr %struct.S, %struct.S* %s0, i1 0, i32 2",
+        "  %y3 = getelementptr %struct.S, %struct.S* %s2, i1 0, i32 1",
+        "  store i64 0, i64* %y3",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.str.assign-null" {
+    try expectResultsInIR(
+        \\struct S {
+        \\  struct S s;
+        \\};
+        \\
+        \\fun main() void {
+        \\  struct S s;
+        \\  s.s = null;
+        \\}
+    , .{
+        "%struct.S = type { %struct.S* } align 4",
+        "",
+        "define void @main() {",
+        "entry:",
+        "  %s0 = alloca %struct.S*",
+        "  br label %2",
+        "2:",
+        "  %s2 = getelementptr %struct.S, %struct.S* %s0, i1 0, i32 0",
+        "  store i8* null, %struct.S** %s2",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.if-else" {
+    try expectResultsInIR(
+        \\fun main() void {
+        \\  int a;
+        \\  if (true) {
+        \\    a = 1;
+        \\  } else {
+        \\    a = 2;
+        \\  }
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  %a0 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  %2 = icmp eq i1 true, false",
+        "  br i1 %2, label %3, label %4",
+        "3:",
+        "  store i64 1, i64* %a0",
+        "  br label %5",
+        "4:",
+        "  store i64 2, i64* %a0",
+        "  br label %5",
+        "5:",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
+
+test "stack.if-no-else" {
+    try expectResultsInIR(
+        \\fun main() void {
+        \\  int a;
+        \\  if (true) {
+        \\    a = 1;
+        \\  }
+        \\  a = 2;
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  %a0 = alloca i64",
+        "  br label %2",
+        "2:",
+        "  %2 = icmp eq i1 true, false",
+        "  br i1 %2, label %3, label %4",
+        "3:",
+        "  store i64 1, i64* %a0",
+        "  br label %4",
+        "4:",
+        "  store i64 2, i64* %a0",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    });
+}
 
 // TODO:
 // if/else
-// types
-// - is_ptr in IR.Type
 // more statement kinds I think?
 // function calls
-// gep
-// globals
-//
+// globals (stringify)

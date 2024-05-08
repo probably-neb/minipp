@@ -1154,7 +1154,7 @@ pub const Parser = struct {
 
         // Expect Expression optionally
         if ((try self.currentToken()).kind != TokenKind.Semicolon) {
-            log.err("Expected an expression after return.\n", .{});
+            // log.err("Expected an expression after return.\n", .{});
             // Expect Expression
             exprIndex = try self.parseExpression();
         }

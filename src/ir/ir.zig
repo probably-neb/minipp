@@ -10,7 +10,7 @@ pub const InternPool = @import("../intern-pool.zig");
 /// The ID of a string stored in the intern pool
 /// Henceforth, all operations involving variable or struct names
 /// shall utilize the power of this type, rather than `std.mem.eql(u8, a, b);`
-const StrID = InternPool.StrID;
+pub const StrID = InternPool.StrID;
 
 pub const IR = @This();
 
@@ -23,6 +23,9 @@ intern_pool: InternPool,
 // I already tried but I was getting segfaults
 // so... idk
 alloc: std.mem.Allocator,
+
+// NOTE: could be made variable by making this a field in the IR struct
+pub const ALIGN = 4;
 
 pub fn init(alloc: std.mem.Allocator) IR {
     return .{
@@ -220,21 +223,18 @@ pub const Function = struct {
         return self.addNamedInst(bb, inst, InternPool.NULL, ty);
     }
 
-    // a helper for the stack ir gen because this is a very common pattern
-    pub fn addLoadAndStoreTo(self: *Function, bb: BasicBlock.ID, from: Register, to: Register.ID) !void {
-        const load = Inst.load(from.type, Ref.local(from.id, from.name, from.type));
-        const loadReg = try self.addInst(bb, load, from.type);
-        const store = Inst.store(loadReg.type, Ref.local(to, loadReg.name, loadReg.type), loadReg.type, Ref.local(loadReg.id, loadReg.name, loadReg.type));
-        try self.addAnonInst(bb, store);
-    }
-
     pub fn addCtrlFlowInst(self: *Function, bb: BasicBlock.ID, inst: Inst) !void {
         utils.assert(inst.isCtrlFlow(), "tried to add non control flow instruction:\n{any}\n", .{inst});
+        // check if the block already ends in a control flow statement
+        // add inst if it doesnt, otherise assert that the two are the same
+        // for easier debugging purposes
+        // this makes it easy for a parent function to say "add this control flow instruction if not already there"
+        // ex. adding a jump to the `%exit` block from the last bb in a function body
         const maybeLastBBInstID = self.bbs.get(bb).getLastInstID();
         if (maybeLastBBInstID) |lastBBInstID| {
             const lastInst = self.insts.get(lastBBInstID).*;
             if (lastInst.isCtrlFlow()) {
-                if (ctrlFlowInstsEqual(lastInst, inst)) {
+                if (!ctrlFlowInstsEqual(lastInst, inst)) {
                     log.err("tried to add control flow instruction to block that already had different control flow instruction.\nexisting = {any}\nnew = {any}\n", .{ lastInst, inst });
                     return error.ConflictingControlFlowInstructions;
                 }
@@ -289,12 +289,12 @@ pub const Function = struct {
             return Ref.fromReg(reg);
         } else |_| {}
 
-        if (self.params.safeLookup(name)) |paramID| {
+        if (self.params.safeIndexOf(name)) |paramID| {
             const param = self.params.entry(paramID);
             return Ref.param(paramID, param.name, param.type);
         }
 
-        const globalID = ir.globals.items.lookup(name);
+        const globalID = ir.globals.items.indexOf(name);
         const global = ir.globals.items.entry(globalID);
         return Ref.global(globalID, global.name, global.type);
     }
@@ -328,7 +328,12 @@ pub const Function = struct {
             return .{ .func = func, .bb = Function.entryBBID, .instIndex = 0 };
         }
 
-        pub fn next(self: *InstIter) ?Inst {
+        pub const Item = struct {
+            bb: BasicBlock.ID,
+            inst: Inst,
+        };
+
+        pub fn next(self: *InstIter) ?Item {
             if (self.bb >= self.func.bbs.len) {
                 return null;
             }
@@ -355,7 +360,7 @@ pub const Function = struct {
             }
             const instID = bb.insts.get(self.instIndex).*;
             self.instIndex += 1;
-            return self.func.insts.get(instID).*;
+            return .{ .bb = self.bb, .inst = self.func.insts.get(instID).* };
         }
     };
 
@@ -483,21 +488,26 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
 
         const Self = @This();
 
-        pub const ID = u32;
+        pub const Index = u32;
 
         pub fn init(items: []Value) Self {
             return .{ .items = items, .len = @intCast(items.len) };
         }
 
-        pub fn lookup(self: Self, key: Key) ID {
-            const maybe_id = self.safeLookup(key);
+        /// FIXME: if you see this function followed
+        /// immediately by a call to `entry`
+        /// it should bre replaced with a call to lookup
+        /// FIXME: remove and make safeIndexOf be indexOf  -> ?Value
+        /// or !Value
+        pub fn indexOf(self: Self, key: Key) Index {
+            const maybe_id = self.safeIndexOf(key);
             if (maybe_id) |id| {
                 return id;
             }
             @panic("Item not found in lookup table");
         }
 
-        pub fn safeLookup(self: Self, key: Key) ?ID {
+        pub fn safeIndexOf(self: Self, key: Key) ?Index {
             for (self.items, 0..) |existing, i| {
                 const itemKey = getKey(existing);
                 if (itemKey == key) {
@@ -507,7 +517,26 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
             return null;
         }
 
-        pub fn entry(self: Self, key: ID) Value {
+        pub fn lookup(self: Self, key: Key) !Value {
+            const maybeid = self.safeIndexOf(key);
+            if (maybeid) |id| {
+                return self.items[id];
+            }
+            return error.NotFound;
+        }
+
+        /// Like lookup but also returns the index
+        pub fn find(self: Self, key: Key) ?struct { index: Index, value: Value } {
+            for (self.items, 0..) |existing, i| {
+                const itemKey = getKey(existing);
+                if (itemKey == key) {
+                    return .{ .index = @intCast(i), .value = existing };
+                }
+            }
+            return null;
+        }
+
+        pub fn entry(self: Self, key: Index) Value {
             return self.items[key];
         }
 
@@ -662,14 +691,21 @@ pub const StructType = struct {
 
     pub const FieldID = u32;
 
-    pub fn init(name: StrID, fieldList: []Field) StructType {
+    pub fn init(name: StrID, size: u32, fieldList: []Field) StructType {
         const fieldLookup = FieldList.init(fieldList);
-        return .{ .name = name, .fieldLookup = fieldLookup, .size = 0 };
+        return .{ .name = name, .fieldLookup = fieldLookup, .size = size };
     }
 
-    pub fn getFieldWithName(self: StructType, name: StrID) Field {
-        const idx = self.fieldLookup.lookup(name);
-        return self.fieldLookup.get(idx);
+    pub fn getFieldWithName(self: StructType, name: StrID) !struct { index: u32, field: Field } {
+        const field = self.fieldLookup.find(name) orelse {
+            return error.FieldNotFound;
+        };
+
+        return .{ .index = field.index, .field = field.value };
+    }
+
+    pub fn indexOfFieldWithName(self: StructType, name: StrID) !FieldList.Index {
+        return self.fieldLookup.safeIndexOf(name) orelse error.FieldNotFound;
     }
 
     pub fn fields(self: *const StructType) []Field {
@@ -714,9 +750,8 @@ pub const TypeList = struct {
         return @intCast(self.items.len);
     }
 
-    pub fn get(self: *const TypeList, id: StructID) Item {
-        const idx = self.items.lookup(id);
-        return self.items.entry(idx);
+    pub fn get(self: *const TypeList, id: StructID) !Item {
+        return self.items.lookup(id) catch error.TypeNotFound;
     }
 
     /// WARN: I think I saw somewhere that the AutoArrayHashMap preserves
@@ -858,6 +893,44 @@ pub const Type = union(enum) {
             else => @intFromEnum(self) == @intFromEnum(other),
         };
     }
+
+    /// WARN: returns sizeof(void*) for structs
+    /// not the actual size of the struct
+    pub fn sizeof(self: Type) u32 {
+        return switch (self) {
+            .strct, .int => 8,
+            .i8, .bool => 1,
+            .void => 0,
+            .i32 => 4,
+            // FIXME: NEEDS TO BE POINTER SIZED IN STRUCTS
+            .arr => |arr| arr.len * (switch (arr.type) {
+                // don't ask
+                .i8 => @as(u32, 1),
+                .int => @as(u32, 8),
+            }),
+        };
+    }
+
+    pub fn aligned_sizeof(alignment: u32, ty: Type) u32 {
+        const size: u32 = Type.sizeof(ty);
+        utils.assert((alignment & 1 == 0), "alignment must be even (power of 2 as optimally???)\n", .{});
+        utils.assert(alignment != 0, "alignment must not be zero\n", .{});
+        if (size < alignment) {
+            return alignment;
+        }
+        // return size + (size >> (alignment >> 1));
+        // WARN: HORROR AHEAD RESULTING FROM TRYING TO BE CLEVER
+
+        // ERR: src/ir/ir.zig:884:43: error: expected type 'u5', found 'u32'
+        // ERR: return size + (size >> (alignment >> 1));
+        //                         ~~~~~~~~~~^~~~
+        // ERR: src/ir/ir.zig:884:43: note: unsigned 5-bit int cannot represent all possible unsigned 32-bit values
+        return size + @mod(size, alignment);
+    }
+
+    test "alignof-bool" {
+        try std.testing.expectEqual(@as(u32, 4), Type.aligned_sizeof(4, .bool));
+    }
 };
 
 /// Ref to a register
@@ -969,6 +1042,11 @@ pub const Ref = struct {
             .len = 5,
         } };
         return Ref{ .kind = .global, .i = 0xfa421, .type = ty, .name = name };
+    }
+
+    /// @param ty: the type of the null pointer
+    pub inline fn immnull(ty: Type) Ref {
+        return Ref.immediate(InternPool.NULL, ty);
     }
 
     pub fn eq(self: Ref, other: Ref) bool {
@@ -1203,10 +1281,10 @@ pub const Inst = struct {
             return Inst.store(inst.ty, inst.to, inst.fromType, inst.from);
         }
     };
-    /// `store <ty> value, <ty>* <pointer>`
+    /// `store {from.type} {from}, {to.type}* {to}`
     // TODO: remove type params and take them from ref
-    pub inline fn store(ty: Type, to: Ref, fromType: Type, from: Ref) Inst {
-        return .{ .op = .Store, .ty1 = ty, .op1 = to, .ty2 = fromType, .op2 = from };
+    pub inline fn store(to: Ref, from: Ref) Inst {
+        return .{ .op = .Store, .ty1 = to.type, .op1 = to, .ty2 = from.type, .op2 = from };
     }
 
     pub const Gep = struct {
@@ -1232,8 +1310,8 @@ pub const Inst = struct {
     /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
     /// newer:
     /// `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
-    pub inline fn gep(basisTy: Type, ptrTy: Type, ptrVal: Ref, index: Ref) Inst {
-        return .{ .op = .Gep, .ty1 = basisTy, .ty2 = ptrTy, .op1 = ptrVal, .op2 = index };
+    pub inline fn gep(basisTy: Type, ptrVal: Ref, index: Ref) Inst {
+        return .{ .op = .Gep, .ty1 = basisTy, .ty2 = basisTy, .op1 = ptrVal, .op2 = index };
     }
 
     pub const Call = struct {
