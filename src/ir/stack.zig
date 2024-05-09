@@ -203,6 +203,19 @@ pub fn gen_function(
         const alloca = Inst.alloca(declType);
         _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
     }
+    // add allocas for all function parameters
+    // and store the params into them
+    // this is necessary to allow for mutating params
+    // PERF: identify params that are stored to and gen alloca/store
+    // for them only
+    for (fun.params.items, 0..) |item, ID| {
+        const name = item.name;
+        const typ = item.type;
+        const alloca = Inst.alloca(typ);
+        const allocaReg = try fun.addNamedInst(entryBB, alloca, name, typ);
+        const storeInst = Inst.store(IR.Ref.fromReg(allocaReg), IR.Ref.param(@intCast(ID), name, typ));
+        _ = try fun.addAnonInst(entryBB, storeInst);
+    }
 
     const bodyBB = try fun.newBBWithParent(entryBB, "body");
     try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(bodyBB)));
