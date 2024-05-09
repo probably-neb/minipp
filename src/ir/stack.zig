@@ -510,8 +510,6 @@ fn gen_expression(
             const rhsRef = try gen_expression(ir, ast, fun, bb, rhsExpr);
 
             const tok = exprNode.token;
-            // log the binary operation's lhs and rhs types
-            std.debug.print("REMOVE_ME: {s}:{} lhs: {s} rhs: {s}\n", .{ "stack.zig", @src().line, @tagName(lhsRef.type), @tagName(rhsRef.type) });
 
             const inst = switch (tok.kind) {
                 .Plus => Inst.add(lhsRef, rhsRef),
