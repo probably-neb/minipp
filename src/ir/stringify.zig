@@ -212,13 +212,8 @@ const Rope = struct {
 pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
     var buf = Buf.init(alloc);
 
-    if (cfg.header) {
-        try buf.write(DECLS);
-        try buf.write("\n\n");
-    }
-
+    // stringify types
     const types = ir.types.items.items;
-    // TODO: stringify globals
     for (types) |ty| {
         try buf.fmt("{} = type {{ ", .{
             stringify_type(ir, IR.Type{ .strct = ty.name }).not_ptr(),
@@ -230,15 +225,21 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                 try buf.write(", ");
             }
         }
-        try buf.fmt(" }} align {d}\n", .{IR.ALIGN});
+        try buf.fmt(" }}\n", .{});
     }
     if (types.len > 0) {
         try buf.write("\n");
     }
 
+    if (cfg.header) {
+        try buf.write(DECLS);
+        try buf.write("\n\n");
+    }
+
+    // stringify globals
     const globals = ir.globals.items.items;
     for (globals, 0..) |global, i| {
-        try buf.fmt("{} = global {}, align {d}\n", .{
+        try buf.fmt("{} = global {} undef, align {d}\n", .{
             stringify_ref(ir, undefined, IR.Ref.global(@truncate(i), global.name, global.type)),
             stringify_type(ir, global.type).not_ptr(),
             IR.ALIGN,
@@ -248,6 +249,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
         try buf.write("\n");
     }
 
+    // stringify functions
     for (ir.funcs.items.items) |*fun| {
         try buf.fmt("define {} @{s}(", .{ stringify_type(ir, fun.returnType), ir.getIdent(fun.name) });
         for (fun.params.items, 0..) |param, i| {
@@ -355,7 +357,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                     // and idk what the second type is for
                     try buf.fmt("{} = load {}, {}* {}", .{
                         stringify_ref(ir, fun, load.res),
-                        stringify_type(ir, load.ty).not_ptr(),
+                        stringify_type(ir, load.ty).ptr_if(load.ty == .strct),
                         stringify_type(ir, load.ty),
                         stringify_ref(ir, fun, load.ptr),
                     });
@@ -393,8 +395,12 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                 // `<result> = call <ty> <fnval>(<args>)`
                 .Call => {
                     const call = IR.Inst.Call.get(inst);
-                    try buf.fmt("{} = call {} (", .{
-                        stringify_ref(ir, fun, call.res),
+                    if (call.retTy != .void) {
+                        try buf.fmt("{} = ", .{
+                            stringify_ref(ir, fun, call.res),
+                        });
+                    }
+                    try buf.fmt("call {} (", .{
                         stringify_type(ir, call.retTy),
                     });
 

@@ -478,7 +478,12 @@ fn gen_expression(
                 .Minus => Inst.neg(exprReg),
                 else => unreachable,
             };
-            const res = try fun.addNamedInst(bb, inst, exprReg.name, .bool);
+            const ty: IR.Type = switch (tok.kind) {
+                .Not => .bool,
+                .Minus => .int,
+                else => unreachable,
+            };
+            const res = try fun.addNamedInst(bb, inst, exprReg.name, ty);
             return IR.Ref.fromReg(res);
         },
         .BinaryOperation => |binary| {

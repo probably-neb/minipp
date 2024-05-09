@@ -25,7 +25,9 @@ intern_pool: InternPool,
 alloc: std.mem.Allocator,
 
 // NOTE: could be made variable by making this a field in the IR struct
-pub const ALIGN = 4;
+// SEE: https://releases.llvm.org/7.0.0/docs/LangRef.html#data-layout
+// for defaults this is probably the safest byte alignment
+pub const ALIGN = 8;
 
 pub fn init(alloc: std.mem.Allocator) IR {
     return .{
