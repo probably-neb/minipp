@@ -382,7 +382,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                         stringify_ref(ir, fun, gep.res),
                         stringify_type(ir, gep.baseTy).not_ptr(),
                         // cannot be double pointer, so we put the star in ourselves
-                        stringify_type(ir, gep.ptrTy).ptr_if(gep.ptrVal.kind == .param),
+                        stringify_type(ir, gep.ptrTy).not_ptr(),
                         stringify_ref(ir, fun, gep.ptrVal),
                         stringify_type(ir, gep.index.type),
                         stringify_ref(ir, fun, gep.index),
