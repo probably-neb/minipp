@@ -308,6 +308,11 @@ pub const Lexer = struct {
     fn skip_whitespace(lxr: *Lexer) void {
         while (true) {
             switch (lxr.ch) {
+                '#' => {
+                    while (lxr.ch != '\n' and lxr.ch != 0) {
+                        lxr.step();
+                    }
+                },
                 '\n' => {
                     lxr.line_number += 1;
                     lxr.column = 0;
@@ -548,6 +553,32 @@ test "all_keywords" {
 test "ident_with_num" {
     const tokens = try expect_results_in_tokens("foo1", &[_]TokenKind{
         .Identifier,
+        .Eof,
+    });
+    defer testAlloc.free(tokens);
+}
+
+test "comment" {
+    const input =
+        \\ # inComment == new;
+        \\ fun foo() void {
+        \\    # inComment == true;
+        \\      return; # postComment = while
+        \\    # inComment == false;
+        \\    # inComment == false;
+        \\ }
+        \\ # inComment == false;
+    ;
+    const tokens = try expect_results_in_tokens(input, &[_]TokenKind{
+        .KeywordFun,
+        .Identifier,
+        .LParen,
+        .RParen,
+        .KeywordVoid,
+        .LCurly,
+        .KeywordReturn,
+        .Semicolon,
+        .RCurly,
         .Eof,
     });
     defer testAlloc.free(tokens);
