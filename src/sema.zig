@@ -351,6 +351,15 @@ pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []cons
     }
     if (!leftType.?.equals(rightType)) {
         // FIXME: add error
+        // chek if left is struct and right is null
+        var lType = leftType.?;
+        var rType = rightType;
+        if (lType.equals(Ast.Type.Null) and rType.isStruct()) {
+            return;
+        }
+        if (lType.isStruct() and rType.equals(Ast.Type.Null)) {
+            return;
+        }
         return error.InvalidAssignmentType;
     }
 }
@@ -573,7 +582,17 @@ pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []
             const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs).*;
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
             const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
+            // log the types
+            log.trace("lhsType: {s}\n", .{@tagName(lhsType)});
+            log.trace("rhsType: {s}\n", .{@tagName(rhsType)});
             if (!lhsType.equals(rhsType)) {
+                // check if the types are struct and null
+                if (lhsType.equals(Ast.Type.Null) and rhsType.isStruct()) {
+                    return Ast.Type.Bool;
+                }
+                if (lhsType.isStruct() and rhsType.equals(Ast.Type.Null)) {
+                    return Ast.Type.Bool;
+                }
                 return error.BinaryOperationTypeMismatch;
             }
             if (!lhsType.equals(Ast.Type.Int)) {
