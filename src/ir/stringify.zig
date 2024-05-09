@@ -253,7 +253,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
     for (ir.funcs.items.items) |*fun| {
         try buf.fmt("define {} @{s}(", .{ stringify_type(ir, fun.returnType), ir.getIdent(fun.name) });
         for (fun.params.items, 0..) |param, i| {
-            try buf.fmt("{any}* %{s}", .{ stringify_type(ir, param.type), ir.getIdent(param.name) });
+            try buf.fmt("{any} %{s}", .{ stringify_type(ir, param.type), ir.getIdent(param.name) });
             if (i + 1 != fun.params.items.len) {
                 try buf.write(", ");
             }

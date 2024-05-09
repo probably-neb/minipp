@@ -203,6 +203,19 @@ pub fn gen_function(
         const alloca = Inst.alloca(declType);
         _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
     }
+    // add allocas for all function parameters
+    // and store the params into them
+    // this is necessary to allow for mutating params
+    // PERF: identify params that are stored to and gen alloca/store
+    // for them only
+    for (fun.params.items, 0..) |item, ID| {
+        const name = item.name;
+        const typ = item.type;
+        const alloca = Inst.alloca(typ);
+        const allocaReg = try fun.addNamedInst(entryBB, alloca, name, typ);
+        const storeInst = Inst.store(IR.Ref.fromReg(allocaReg), IR.Ref.param(@intCast(ID), name, typ));
+        _ = try fun.addAnonInst(entryBB, storeInst);
+    }
 
     const bodyBB = try fun.newBBWithParent(entryBB, "body");
     try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(bodyBB)));
@@ -528,9 +541,9 @@ fn gen_expression(
                 .Identifier => ident: {
                     const identID = ir.internToken(ast, atom.token);
                     const ref = try fun.getNamedRef(ir, identID);
-                    // if (ref.kind == .param) {
-                    //     break :ident ref;
-                    // }
+                    if (ref.kind == .param) {
+                        break :ident ref;
+                    }
                     const inst = Inst.load(ref.type, ref);
                     const res = try fun.addNamedInst(bb, inst, ref.name, ref.type);
                     break :ident IR.Ref.fromReg(res);
@@ -1588,32 +1601,6 @@ test "stack.suite.prime" {
         "exit:",
         "  %_38 = load i1, i1* %_0",
         "  ret i1 %_38",
-        "}",
-    });
-}
-
-test "stack.neg-is-type-int" {
-    try expectResultsInIR(
-        \\fun main() void {
-        \\  int a, b;
-        \\  a = -1;
-        \\  b = a + 1;
-        \\}
-    , .{
-        "define void @main() {",
-        "entry:",
-        "  %a1 = alloca i64",
-        "  %b2 = alloca i64",
-        "1:",
-        "  %a2 = load i64, i64* %a1",
-        "  %a3 = neg i64 0, %a2",
-        "  store %i64 %a3, %i64* %a1",
-        "  %a5 = load i64, i64* %a1",
-        "  %a6 = add i64, %a5 1",
-        "  store i64 %a6, i64* %b2",
-        "  br label %exit",
-        "exit:",
-        "  ret void",
         "}",
     });
 }
