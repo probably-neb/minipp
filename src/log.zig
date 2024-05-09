@@ -49,14 +49,20 @@ pub fn warn(comptime msg: []const u8, vars: anytype) void {
     logInner(Level.Warn, msg, vars);
 }
 
+const RED = "\\033[0;31m";
+const GREEN = "\\033[0;32m";
+const YELLOW = "\\033[0;33m";
+const BLUE = "\\033[0;34m";
+const NC = "\\033[0m";
+
 /// prints all messages in the log
 pub fn print() void {
     for (msgs.items) |msg| {
         switch (msg.level) {
-            .Info => std.debug.print("INFO  : {s}", .{msg.msg}),
-            .Err => std.debug.print("ERROR : {s}", .{msg.msg}),
-            .Warn => std.debug.print("WARN  : {s}", .{msg.msg}),
-            .Trace => std.debug.print("TRACE : {s}", .{msg.msg}),
+            .Info => std.debug.print("{s}INFO{s}  : {s}", .{ GREEN, NC, msg.msg }),
+            .Err => std.debug.print("{s}ERROR{s} : {s}", .{ RED, NC, msg.msg }),
+            .Warn => std.debug.print("{s}WARN{s}  : {s}", .{ YELLOW, NC, msg.msg }),
+            .Trace => std.debug.print("{s}TRACE{s} : {s}", .{ BLUE, NC, msg.msg }),
         }
     }
 }
