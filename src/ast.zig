@@ -37,22 +37,22 @@ pub fn mapStructs(ast: *Ast) !void {
 pub fn printAst(self: *const Ast) void {
     var i: usize = 0;
     const nodes = self.nodes.items;
+    log.trace("AST PRINT START\n", .{});
     for (nodes) |node| {
         const kind = node.kind;
         const token = node.token;
-        log.trace("{d}: {s} {s}", .{ i, @tagName(kind), token._range.getSubStrFromStr(self.input) });
+        log.trace("{d}: {s} {s}\n", .{ i, @tagName(kind), token._range.getSubStrFromStr(self.input) });
         switch (kind) {
             .BinaryOperation => {
                 const binOp = node.kind.BinaryOperation;
-                log.trace(" lhs: {any}", .{binOp.lhs});
+                log.trace(" lhs: {any}\n", .{binOp.lhs});
                 log.trace(" rhs: {any}\n", .{binOp.rhs});
             },
-            else => {
-                log.trace("\n", .{});
-            },
+            else => {},
         }
         i += 1;
     }
+    log.trace("AST PRINT END\n", .{});
 }
 
 pub fn mapFunctions(ast: *Ast) !void {
