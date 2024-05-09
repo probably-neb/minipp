@@ -439,7 +439,10 @@ fn gen_statement(
             // FIXME: handle selector chain
             var assignRef = try fun.getNamedRef(ir, toName);
             if (to.chain) |chain| {
-                assignRef = try gen_selector_chain(ir, ast, fun, bb, assignRef, chain);
+                const derefInst = Inst.gep_deref(assignRef);
+                const derefedReg = try fun.addNamedInst(bb, derefInst, assignRef.name, assignRef.type);
+                const derefedRef = IR.Ref.fromReg(derefedReg);
+                assignRef = try gen_selector_chain(ir, ast, fun, bb, derefedRef, chain);
             }
 
             // FIXME: rhs could also be a `read` handle!

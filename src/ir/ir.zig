@@ -1382,6 +1382,11 @@ pub const Inst = struct {
         return .{ .op = .Gep, .ty1 = basisTy, .ty2 = basisTy, .op1 = ptrVal, .op2 = index };
     }
 
+    /// a wrapper around gep with index 0
+    pub inline fn gep_deref(ptrVal: Ref) Inst {
+        return Inst.gep(ptrVal.type, ptrVal, Ref.immu32(0, .i32));
+    }
+
     pub const Call = struct {
         res: Ref,
         retTy: Type,
