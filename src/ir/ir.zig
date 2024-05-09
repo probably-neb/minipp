@@ -42,7 +42,7 @@ const Stringify = @import("./stringify.zig");
 /// Stringify the IR with default config options
 /// NOTE: highly recommended to pass a std.heap.ArenaAllocator.allocator
 pub fn stringify(self: *const IR, alloc: std.mem.Allocator) ![]const u8 {
-    return self.stringify_cfg(self, alloc, .{
+    return self.stringify_cfg(alloc, .{
         .header = false,
     });
 }
@@ -195,14 +195,14 @@ pub const Function = struct {
         return self.name;
     }
 
-    pub fn newBB(self: *Function) !BasicBlock.ID {
-        const bb = BasicBlock.init(self.alloc);
+    pub fn newBB(self: *Function, name: []const u8) !BasicBlock.ID {
+        const bb = BasicBlock.init(self.alloc, name);
         const id = try self.bbs.add(bb);
         return id;
     }
 
-    pub fn newBBWithParent(self: *Function, parent: BasicBlock.ID) !BasicBlock.ID {
-        var bb = BasicBlock.init(self.alloc);
+    pub fn newBBWithParent(self: *Function, parent: BasicBlock.ID, name: []const u8) !BasicBlock.ID {
+        var bb = BasicBlock.init(self.alloc, name);
         try bb.addIncomer(parent);
         const id = try self.bbs.add(bb);
         try self.bbs.get(parent).addOutgoer(id);
@@ -448,6 +448,7 @@ pub const Register = struct {
 };
 
 pub const BasicBlock = struct {
+    name: []const u8,
     incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
     // and ORDERED list of the instruction ids of the instructions in this block
@@ -461,11 +462,12 @@ pub const BasicBlock = struct {
 
     pub const List = OrderedList(Function.InstID);
 
-    pub fn init(alloc: std.mem.Allocator) BasicBlock {
+    pub fn init(alloc: std.mem.Allocator, name: []const u8) BasicBlock {
         return .{
             .incomers = std.ArrayList(Label).init(alloc),
             .outgoers = [2]?Label{ null, null },
             .insts = List.init(alloc),
+            .name = name,
         };
     }
 

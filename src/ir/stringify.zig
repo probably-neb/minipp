@@ -261,7 +261,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
         var iter = fun.instIter();
 
         var curBB: IR.BasicBlock.ID = IR.Function.entryBBID;
-        try buf.fmt("{}:\n", .{stringify_label(curBB)});
+        try buf.fmt("{}:\n", .{stringify_label(fun, curBB)});
 
         while (iter.next()) |bbinst| {
             const instBB = bbinst.bb;
@@ -270,7 +270,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
             // handle printing the basic block label
             if (instBB != curBB) {
                 curBB = instBB;
-                buf.fmt("{}:\n", .{stringify_label(curBB)}) catch unreachable;
+                buf.fmt("{}:\n", .{stringify_label(fun, curBB)}) catch unreachable;
             }
 
             // handle printing the instruction
@@ -332,8 +332,8 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                     const br = IR.Inst.Br.get(inst);
                     try buf.fmt("br i1 {any}, {any}, {any}", .{
                         stringify_ref(ir, fun, br.on),
-                        stringify_label_ref(br.iftrue),
-                        stringify_label_ref(br.iffalse),
+                        stringify_label_ref(fun, br.iftrue),
+                        stringify_label_ref(fun, br.iffalse),
                     });
                 },
                 // `br label <dest>`
@@ -342,7 +342,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                 // I dislike Mr. Lattner's design decision
                 .Jmp => {
                     const jmp = IR.Inst.Jmp.get(inst);
-                    try buf.fmt("br {}", .{stringify_label_ref(jmp.dest)});
+                    try buf.fmt("br {}", .{stringify_label_ref(fun, jmp.dest)});
                 },
 
                 // Loads & Stores
@@ -528,7 +528,7 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
         .local => return stringify_reg(ir, fun, ref.i),
         .param => return Rope.pair("%", ir.getIdent(ref.name)),
         .global => return Rope.pair("@", ir.getIdent(ref.name)),
-        .label => return stringify_label_ref(ref.i),
+        .label => return stringify_label_ref(fun, ref.i),
         // FIXME: i don't like that it's getIdent semantically
         // really it's just that everything is interned
         .immediate => return Rope.pair("", if (ref.i == IR.InternPool.NULL) "null" else ir.getIdent(ref.i)),
@@ -546,20 +546,22 @@ pub fn stringify_reg(ir: *const IR, fun: *const IR.Function, regID: IR.Register.
     }
 }
 
-pub fn stringify_label(label: IR.BasicBlock.ID) Rope {
+pub fn stringify_label(fun: *const IR.Function, label: IR.BasicBlock.ID) Rope {
     if (label == IR.Function.entryBBID) {
         return Rope.just("entry");
     } else if (label == IR.Function.exitBBID) {
         return Rope.just("exit");
     }
-    return Rope.str_num("_", label - 1);
+    const name = fun.bbs.get(label).name;
+    return Rope.str_num(name, label - 1);
 }
 
-pub fn stringify_label_ref(label: IR.BasicBlock.ID) Rope {
+pub fn stringify_label_ref(fun: *const IR.Function, label: IR.BasicBlock.ID) Rope {
     if (label == IR.Function.entryBBID) {
         return Rope.just("label %entry");
     } else if (label == IR.Function.exitBBID) {
         return Rope.just("label %exit");
     }
-    return Rope.str_num("label %_", label - 1);
+    const name = fun.bbs.get(label).name;
+    return Rope.str_str_num("label %", name, label - 1);
 }

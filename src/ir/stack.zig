@@ -174,10 +174,10 @@ pub fn gen_function(
     // entry block is the one that holds `alloca`s
     // separated to make it easier to just append `alloca`s
     // to the start and maintain hoisting (all allocas are in order at start of function)
-    const entryBB = try fun.newBB();
+    const entryBB = try fun.newBB("entry");
     // Exit is like entryBB in that it is intentionally bare, containing only
     // the return instruction
-    const exitBB = try fun.newBB();
+    const exitBB = try fun.newBB("exit");
 
     const funBody = funNode.getBody(ast);
 
@@ -204,7 +204,7 @@ pub fn gen_function(
         _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
     }
 
-    const bodyBB = try fun.newBBWithParent(entryBB);
+    const bodyBB = try fun.newBBWithParent(entryBB, "body");
     try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(bodyBB)));
 
     // generate IR for the function body
@@ -306,7 +306,7 @@ fn gen_block(
                     ifBlockNode = ast.get(condIfElse.ifBlock).*;
                 }
 
-                const ifBB = try fun.newBBWithParent(condBB);
+                const ifBB = try fun.newBBWithParent(condBB, "if.then");
                 const ifEndBB = try gen_block(ir, ast, fun, ifBB, ifBlockNode);
                 if (ifBlockNode.kind.Block.range(ast)) |range| {
                     statementsIter.skipTo(range[1]);
@@ -316,14 +316,14 @@ fn gen_block(
                 var endBB: IR.BasicBlock.ID = undefined;
 
                 if (elseBlockNode) |elseBlock| {
-                    elseBB = try fun.newBBWithParent(condBB);
+                    elseBB = try fun.newBBWithParent(condBB, "if.else");
                     const elseEndBB = try gen_block(ir, ast, fun, elseBB, elseBlock);
                     if (elseBlock.kind.Block.range(ast)) |range| {
                         statementsIter.skipTo(range[1]);
                     }
                     // now that we've created elseBB we can create
                     // endBB while maintaining order
-                    endBB = try fun.newBB();
+                    endBB = try fun.newBB("if.end");
                     // need to handle this inside here because
                     // this scope is the only one that knows the else
                     // block exists and where it ended
@@ -336,7 +336,7 @@ fn gen_block(
                         // and ignore it
                     };
                 } else {
-                    endBB = try fun.newBBWithParent(condBB);
+                    endBB = try fun.newBBWithParent(condBB, "if.end");
                     // this makes it so we can make the branch outside
                     // of this (zig not mini) if/else block
                     // and point it to ifBB and elseBB
@@ -366,15 +366,15 @@ fn gen_block(
                 const condExpr = ast.get(whil.cond).*;
                 const initialCondRef = try gen_expression(ir, ast, fun, curBB, condExpr);
 
-                const bodyBB = try fun.newBBWithParent(curBB);
+                const bodyBB = try fun.newBBWithParent(curBB, "while.body");
                 const whileBlockNode = ast.get(whil.block).*;
                 const endBodyBB = try gen_block(ir, ast, fun, bodyBB, whileBlockNode);
                 if (whileBlockNode.kind.Block.range(ast)) |range| {
                     statementsIter.skipTo(range[1]);
                 }
-                const endCondRef = try gen_expression(ir, ast, fun, bodyBB, condExpr);
+                const endCondRef = try gen_expression(ir, ast, fun, endBodyBB, condExpr);
 
-                const endBB = try fun.newBB();
+                const endBB = try fun.newBB("while.end");
 
                 const startBr = Inst.br(initialCondRef, IR.Ref.label(bodyBB), IR.Ref.label(endBB));
                 try fun.addCtrlFlowInst(startBB, startBr);
@@ -396,8 +396,6 @@ fn gen_block(
                         retExprRef,
                     );
                     try fun.addAnonInst(curBB, inst);
-                } else {
-                    utils.todo("gen_block.return.void\n", .{});
                 }
                 try fun.addCtrlFlowInst(curBB, Inst.jmp(IR.Ref.label(IR.Function.exitBBID)));
                 return curBB;
@@ -1503,6 +1501,88 @@ test "stack.str.read" {
         "  br label %exit",
         "exit:",
         "  ret void",
+        "}",
+    });
+}
+
+test "stack.suite.prime" {
+    try expectResultsInIR(
+        \\fun main(int a) bool
+        \\{
+        \\  int max, divisor, remainder;
+        \\  if (a < 2)
+        \\  {
+        \\    return false;
+        \\  }
+        \\  else
+        \\  {
+        \\    max = isqrt(a);
+        \\    divisor = 2;
+        \\    while (divisor <= max)
+        \\    {
+        \\      remainder = a - ((a / divisor) * divisor);
+        \\      if (remainder == 0)
+        \\      {
+        \\        return false;
+        \\      }
+        \\      divisor = divisor + 1;
+        \\    }
+        \\    return true;
+        \\  }
+        \\}
+    , .{
+        "define i1 @prime(i64 %a) {",
+        "entry:",
+        "  %_0 = alloca i1",
+        "  %max1 = alloca i64",
+        "  %divisor2 = alloca i64",
+        "  %remainder3 = alloca i64",
+        "  %limit4 = alloca i64",
+        "  br label %fuck1",
+        "_:",
+        "  %a6 = icmp slt i64 %a, 2",
+        "  br i1 %a6, label %_2, label %fuck3",
+        "_2:",
+        "  store i1 0, i1* %_0",
+        "  br label %exit",
+        "_3:",
+        "  %isqrt9 = call i64 (i64) @isqrt(i64 %a)",
+        "  store i64 %isqrt9, i64* %max1",
+        "  store i64 2, i64* %divisor2",
+        "  %divisor12 = load i64, i64* %divisor2",
+        "  %max13 = load i64, i64* %max1",
+        "  %_14 = icmp sle i64 %divisor12, %max13",
+        "  br i1 %_14, label %_4, label %fuck7",
+        "_4:",
+        "  %divisor15 = load i64, i64* %divisor2",
+        "  %_16 = sdiv i64 %a, %divisor15",
+        "  %divisor17 = load i64, i64* %divisor2",
+        "  %divisor18 = mul i64 %_16, %divisor17",
+        "  %_19 = sub i64 %a, %divisor18",
+        "  store i64 %_19, i64* %remainder3",
+        "  %remainder21 = load i64, i64* %remainder3",
+        "  %remainder22 = icmp eq i64 %remainder21, 0",
+        "  br i1 %remainder22, label %_5, label %fuck6",
+        "  %divisor29 = load i64, i64* %divisor2",
+        "  %max30 = load i64, i64* %max1",
+        "  %_31 = icmp sle i64 %divisor29, %max30",
+        "",
+        "_5:",
+        "  store i1 0, i1* %_0",
+        "  br label %exit",
+        "_6:",
+        "  %divisor26 = load i64, i64* %divisor2",
+        "  %divisor27 = add i64 %divisor26, 1",
+        "  store i64 %divisor27, i64* %divisor2",
+        "  br i1 %_31, label %_4, label %fuck7",
+        "_7:",
+        "  store i1 1, i1* %_0",
+        "  br label %exit",
+        "_8:",
+        "  br label %exit",
+        "exit:",
+        "  %_38 = load i1, i1* %_0",
+        "  ret i1 %_38",
         "}",
     });
 }
