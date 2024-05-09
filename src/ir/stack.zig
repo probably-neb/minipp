@@ -507,6 +507,9 @@ fn gen_expression(
             const rhsRef = try gen_expression(ir, ast, fun, bb, rhsExpr);
 
             const tok = exprNode.token;
+            // log the binary operation's lhs and rhs types
+            std.debug.print("REMOVE_ME: {s}:{} lhs: {s} rhs: {s}\n", .{ "stack.zig", @src().line, @tagName(lhsRef.type), @tagName(rhsRef.type) });
+
             const inst = switch (tok.kind) {
                 .Plus => Inst.add(lhsRef, rhsRef),
                 .Minus => Inst.sub(lhsRef, rhsRef),
@@ -573,6 +576,11 @@ fn gen_expression(
                     // the way to not have i8* null is to have a `null_` type in IR.Type
                     // and have it replaced with the destination type in stores (which are
                     // the only valid place to have null)
+                    //
+                    // FIXME: this is mad broken yo
+                    // I think that we should implment a structID named null,
+                    // since it is a keyword the user could never do so,
+                    // and this would add no new abstractions to the IR
                     break :null IR.Ref.immnull(.i8);
                 },
                 .Invocation => IR.Ref.fromReg(try gen_invocation(ir, fun, ast, bb, atom)),
