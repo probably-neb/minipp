@@ -23,6 +23,7 @@ const TypeError = error{
     InvalidAssignmentNoDeclaration,
     StructHasNoMember,
     BinaryOperationTypeMismatch,
+    InvalidBinaryOperationType,
     InvalidTypeExptectedInt,
     InvalidTypeExpectedBool,
     InvalidFunctionCallNoDefinedArguments,
@@ -56,9 +57,9 @@ fn allFunctionsHaveValidReturnPaths(ast: *const Ast) !void {
 /// note that the ast must be sliced to start at some function for this function
 /// to work
 fn allReturnPathsHaveReturnType(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
-
     // Get the name
     const funcName = func.getName(ast);
+    errdefer log.err("Function: {s}\n", .{funcName});
     // Get the return type
     const returnType = func.getReturnType(ast).?;
 
@@ -179,6 +180,7 @@ fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
 }
 
 fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
+    errdefer log.err("Function: {s}\n", .{func.getName(ast)});
     const returnType = func.getReturnType(ast).?;
     const statementList = func.getBody(ast).getStatementList();
     if (returnType == .Void and statementList == null) {
@@ -203,6 +205,7 @@ pub fn typeCheck(ast: *const Ast) !void {
 }
 // Done
 pub fn typeCheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
+    errdefer ast.printNodeLine(func);
     var fc = func.kind.Function;
     const functionName = fc.getName(ast);
     const returnType = fc.getReturnType(ast).?;
@@ -244,20 +247,21 @@ pub fn typeCheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
 
 // Done
 pub fn typeCheckStatementList(ast: *const Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    ast.printAst();
-    log.trace("statementListn: {d}\n", .{statementListn.?});
+    errdefer if (statementListn) |lst| ast.printNodeLine(ast.get(lst).*);
+    // log.trace("statementListn: {d}\n", .{statementListn.?});
     const list = try StatemenListgetList(statementListn, ast);
     if (list == null) {
         return;
     }
     for (list.?) |statement| {
-        log.trace("Statement {any}\n", .{statement});
+        // log.trace("Statement {any}\n", .{statement});
         const statNode = ast.get(statement).*;
         try typeCheckStatement(ast, statNode, fName, returnType);
     }
 }
 
 pub fn typeCheckStatement(ast: *const Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    errdefer ast.printNodeLine(statement);
     const kind = statement.kind;
     _ = switch (kind) {
         .Block => {
@@ -302,6 +306,7 @@ pub fn typeCheckStatement(ast: *const Ast, statement: Ast.Node, fName: []const u
 
 // Done
 pub fn typeCheckBlock(ast: *const Ast, blockn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    errdefer ast.printNodeLine(blockn);
     // Block to statement list
     const block = blockn.kind.Block;
     const statementIndex = block.statements;
@@ -313,6 +318,7 @@ pub fn typeCheckBlock(ast: *const Ast, blockn: Ast.Node, fName: []const u8, retu
 
 // Done
 pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    errdefer ast.printNodeLine(assignmentn);
     const assignment = assignmentn.kind.Assignment;
     const left = assignment.lhs;
     const right = assignment.rhs;
@@ -345,10 +351,6 @@ pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []cons
     // right hand side is an expression
     const rightExpr = ast.get(right).*;
     const rightType = try getAndCheckTypeExpression(ast, rightExpr, fName, returnType);
-    if (rightType.isStruct()) {
-        log.trace("rightType: {s}\n", .{rightType.Struct});
-        log.trace("leftType: {s}\n", .{leftType.?.Struct});
-    }
     if (!leftType.?.equals(rightType)) {
         // FIXME: add error
         // chek if left is struct and right is null
@@ -366,6 +368,7 @@ pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []cons
 
 // Done
 pub fn typeCheckPrint(ast: *const Ast, printn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    errdefer ast.printNodeLine(printn);
     const print = printn.kind.Print;
     const expr = print.expr;
     const exprNode = ast.get(expr).*;
@@ -378,11 +381,11 @@ pub fn typeCheckPrint(ast: *const Ast, printn: Ast.Node, fName: []const u8, retu
 
 // Done
 pub fn typeCheckConditional(ast: *const Ast, conditionaln: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    errdefer ast.printNodeLine(conditionaln);
     // first check if conditional is bool
     const conditional = conditionaln.kind.ConditionalIf;
     const cond = conditional.cond;
     const condNode = ast.get(cond).*;
-    log.trace("condNode: {any}\n", .{cond});
     const condType = try getAndCheckTypeExpression(ast, condNode, fName, returnType);
     if (!condType.equals(Ast.Type.Bool)) {
         utils.todo("Error on conditional type checking\n", .{});
@@ -404,6 +407,7 @@ pub fn typeCheckConditional(ast: *const Ast, conditionaln: Ast.Node, fName: []co
 
 // Done
 pub fn typeCheckWhile(ast: *const Ast, while_nN: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    errdefer ast.printNodeLine(while_nN);
     // first check if conditional is bool
     const while_n = while_nN.kind.While;
     const cond = while_n.cond;
@@ -420,6 +424,7 @@ pub fn typeCheckWhile(ast: *const Ast, while_nN: Ast.Node, fName: []const u8, re
 
 // Done
 pub fn typeCheckDelete(ast: *const Ast, deleten: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    errdefer ast.printNodeLine(deleten);
     const delete = deleten.kind.Delete;
     const expr = delete.expr;
     const exprNode = ast.get(expr).*;
@@ -432,6 +437,7 @@ pub fn typeCheckDelete(ast: *const Ast, deleten: Ast.Node, fName: []const u8, re
 
 // Done
 pub fn typeCheckReturn(ast: *const Ast, retn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+    errdefer ast.printNodeLine(retn);
     const ret = retn.kind.Return;
     const expr = ret.expr;
     if (expr == null) {
@@ -450,6 +456,7 @@ pub fn typeCheckReturn(ast: *const Ast, retn: Ast.Node, fName: []const u8, retur
 
 // Done
 pub fn getAndCheckInvocation(ast: *const Ast, invocationn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    errdefer ast.printNodeLine(invocationn);
     const invocation = invocationn.kind.Invocation;
     const funcName = ast.get(invocation.funcName).token._range.getSubStrFromStr(ast.input);
     const func = ast.getFunctionFromName(funcName);
@@ -472,8 +479,6 @@ pub fn getAndCheckInvocation(ast: *const Ast, invocationn: Ast.Node, fName: []co
 
     var argsList = try ArgumentsgetArgumentTypes(args, ast, fName, returnType);
     var funcPList = try ParametergetParamTypes(funcProto, ast);
-    log.trace("argsList: {any}\n", .{argsList});
-    log.trace("funcPList: {any}\n", .{funcPList});
 
     if (argsList == null) {
         if (funcPList == null) {
@@ -498,8 +503,6 @@ pub fn getAndCheckInvocation(ast: *const Ast, invocationn: Ast.Node, fName: []co
     argsList = argsList.?;
     if (argsList.?.len != funcPList.?.len) {
         // print the position of argslist
-        log.trace("argsList: {d}\n", .{args.?});
-        utils.todo("Error on invocation type checking\n", .{});
         return error.InvalidFunctionCall;
     }
 
@@ -533,6 +536,7 @@ pub fn getAndCheckInvocation(ast: *const Ast, invocationn: Ast.Node, fName: []co
 
 // Done
 pub fn getAndCheckTypeExpression(ast: *const Ast, exprn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    errdefer ast.printNodeLine(exprn);
     switch (exprn.kind) {
         .BinaryOperation => {
             return try getAndCheckBinaryOperation(ast, exprn, fName, returnType);
@@ -575,6 +579,7 @@ pub fn getAndCheckTypeExpression(ast: *const Ast, exprn: Ast.Node, fName: []cons
 
 // TODO: fix the errors
 pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    errdefer ast.printNodeLine(binaryOp);
     const token = binaryOp.token;
     switch (token.kind) {
         .Lt, .Gt, .GtEq, .LtEq, .DoubleEq, .NotEq => {
@@ -583,8 +588,8 @@ pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
             const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
             // log the types
-            log.trace("lhsType: {s}\n", .{@tagName(lhsType)});
-            log.trace("rhsType: {s}\n", .{@tagName(rhsType)});
+            // log.trace("lhsType: {s}\n", .{@tagName(lhsType)});
+            // log.trace("rhsType: {s}\n", .{@tagName(rhsType)});
             if (!lhsType.equals(rhsType)) {
                 // check if the types are struct and null
                 if (lhsType.equals(Ast.Type.Null) and rhsType.isStruct()) {
@@ -595,8 +600,8 @@ pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []
                 }
                 return error.BinaryOperationTypeMismatch;
             }
-            if (!lhsType.equals(Ast.Type.Int)) {
-                return error.InvalidTypeExptectedInt;
+            if (lhsType != .Int and lhsType != .Struct and lhsType != .Null) {
+                return error.InvalidBinaryOperationType;
             }
             return Ast.Type.Bool;
         },
@@ -619,7 +624,6 @@ pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []
         .Plus,
         .Div,
         => {
-            ast.printAst();
             const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs).*;
             const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs).*;
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
@@ -644,6 +648,7 @@ pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []
 }
 
 pub fn getAndCheckUnaryOperation(ast: *const Ast, unaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    errdefer ast.printNodeLine(unaryOp);
     const token = unaryOp.token;
     switch (token.kind) {
         .Not => {
@@ -671,6 +676,7 @@ pub fn getAndCheckUnaryOperation(ast: *const Ast, unaryOp: Ast.Node, fName: []co
 }
 
 pub fn getAndCheckSelector(ast: *const Ast, selectorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    errdefer ast.printNodeLine(selectorn);
     const selector = selectorn.kind.Selector;
     const factorNode = ast.get(selector.factor).*;
     const factorType = try getAndCheckFactor(ast, factorNode, fName, returnType);
@@ -682,6 +688,7 @@ pub fn getAndCheckSelector(ast: *const Ast, selectorn: Ast.Node, fName: []const 
 }
 
 pub fn getAndCheckFactor(ast: *const Ast, factorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
+    errdefer ast.printNodeLine(factorn);
     const factor = factorn.kind.Factor;
     const kind = factor.factor;
     const node = ast.get(kind).*;
@@ -702,6 +709,7 @@ pub fn getAndCheckFactor(ast: *const Ast, factorn: Ast.Node, fName: []const u8, 
 }
 
 pub fn getAndCheckNew(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
+    errdefer ast.printNodeLine(newn);
     const new = newn.kind.New;
     const name = ast.get(new.ident).token._range.getSubStrFromStr(ast.input);
     const structType = ast.getStructNodeFromName(name);
@@ -713,6 +721,7 @@ pub fn getAndCheckNew(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
 }
 
 pub fn getAndCheckLocalIdentifier(ast: *const Ast, localId: Ast.Node, fName: []const u8) TypeError!Ast.Type {
+    errdefer ast.printNodeLine(localId);
     const token = localId.token;
     const name = token._range.getSubStrFromStr(ast.input);
     const func = ast.getFunctionFromName(fName).?.kind.Function.proto;
@@ -722,7 +731,6 @@ pub fn getAndCheckLocalIdentifier(ast: *const Ast, localId: Ast.Node, fName: []c
     const funcParam = try ParamatergetParamTypeFromName(param, ast, name);
     const globalDecl = ast.getDeclarationGlobalFromName(name);
     const localDecl = funcParam orelse funcDecl orelse globalDecl;
-    log.trace("name: {s}\n", .{name});
     if (localDecl == null) {
         return error.InvalidType;
     }
@@ -824,6 +832,7 @@ pub fn ParamatergetParamTypeFromName(this: ?usize, ast: *const Ast, name: []cons
 }
 
 pub fn TypedIdentifergetType(tid: Ast.Node, ast: *const Ast) !Ast.Type {
+    errdefer ast.printNodeLine(tid);
     const ty = ast.get(tid.kind.TypedIdentifier.type).*.kind.Type;
     const ff = ast.get(ty.kind).*.kind;
     _ = switch (ff) {
@@ -846,12 +855,12 @@ pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *const Ast, fName: []const u
     if (this == null) {
         return null;
     }
+    errdefer ast.printNodeLine(ast.get(this.?).*);
     const self = ast.get(this.?).kind.Arguments;
     var list = std.ArrayList(Ast.Type).init(ast.allocator);
     const last: usize = self.lastArg orelse self.firstArg + 1;
     var iter: ?usize = self.firstArg;
 
-    ast.printAst();
     var depth: usize = 0;
 
     while (iter != null) {
@@ -895,12 +904,12 @@ pub fn LValuegetType(this: ?usize, ast: *const Ast, fName: []const u8) !?Ast.Typ
         // TODO add error
         return null;
     }
+    errdefer ast.printNodeLine(ast.get(this.?).*);
     const self = ast.get(this.?).kind.LValue;
     const identNode = ast.get(self.ident);
     const ident = identNode.token._range.getSubStrFromStr(ast.input);
     // const g_decl = ast.getDeclarationGlobalFromName(ident);
     const f_decl = try getAndCheckLocalIdentifier(ast, identNode.*, fName);
-    log.trace("name {s}\n", .{ident});
     var decl = f_decl;
     // if (decl == null) {
     //     // TODO: add error
@@ -941,6 +950,7 @@ pub fn StatemenListgetList(this: ?usize, ast: *const Ast) TypeError!?[]usize {
     if (this == null) {
         return null;
     }
+    errdefer ast.printNodeLine(ast.get(this.?).*);
     const self = ast.get(this.?).kind.StatementList;
     var list = std.ArrayList(usize).init(ast.allocator);
     const last = self.lastStatement orelse self.firstStatement + 1;
