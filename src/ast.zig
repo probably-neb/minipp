@@ -408,7 +408,13 @@ pub const Node = struct {
         },
         /// A chain of `.ident` selectors
         SelectorChain: struct {
-            ident: Ref(.Identifier),
+            /// TODO: change ident to something that can be used for array access
+            /// and struct access
+            ident: RefOneOf(.{
+                .Identifier,
+                // Expression is used for array access
+                .Expression,
+            }),
             /// Pointer to `SelectorChain`
             /// null if last in chain
             next: ?Ref(.SelectorChain) = null,

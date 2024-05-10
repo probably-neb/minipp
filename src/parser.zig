@@ -1509,17 +1509,18 @@ pub const Parser = struct {
         var startTok = try self.currentToken();
         const peekKind = (try self.peekToken()).kind;
 
-        if ((startTok.kind == .Identifier) and (peekKind == .LParen or peekKind == .Dot)) {
+        if ((startTok.kind == .Identifier) and (peekKind == .LParen or peekKind == .Dot or peekKind == .LBracket)) {
             // skipping all tokens for function call `id '(' {args},* ')'` is functionally the same as skipping all tokens in a parenthized as expression
             // skipping the id token makes it so they can be handled in the same switch arm in the
             // following switch statement
             _ = try self.consumeToken();
             startTok = try self.currentToken();
-            if (peekKind == .LParen) {
+            if (peekKind == .LParen or peekKind == .LBracket) {
                 // Dot `numTokens` calculation is harder when we increment
                 // in both cases here
                 numTokens += 1;
             }
+            // TODO: SPENCER Possibly do a simmilar thing to the LParen case for LBracket
             // skipping on `.` however just makes it so identifier is easier in the next switch
         }
         switch (startTok.kind) {
@@ -1548,6 +1549,34 @@ pub const Parser = struct {
                 } else {
                     const final = self.tokens[self.pos - 1];
                     utils.assert(final.kind == .RParen, "final token not RParen, is: {}\n", .{final});
+                }
+            },
+            .LBracket => {
+                // keep "stack" of paren count to find the last one
+                var count: u32 = 1;
+                std.debug.print("LBracket I Am HEREERERERERERE\n", .{});
+                _ = try self.consumeToken();
+                while (count != 0) {
+                    numTokens += 1;
+                    const tok = try self.consumeToken();
+                    if (tok.kind == .Eof) {
+                        // TODO: handle
+                        return error.NotEnoughTokens;
+                    }
+                    if (tok.kind == .LBracket) {
+                        count += 1;
+                    } else if (tok.kind == .RBracket) {
+                        count -= 1;
+                    }
+                }
+                const current = try self.currentToken();
+                if (current.kind == .Dot) {
+                    _ = try self.consumeToken();
+                    try self.expectToken(.Identifier);
+                    numTokens += 2;
+                } else {
+                    const final = self.tokens[self.pos - 1];
+                    utils.assert(final.kind == .RBracket, "final token not RBracket, is: {}\n", .{final});
                 }
             },
             .KeywordNew => {
@@ -1632,18 +1661,37 @@ pub const Parser = struct {
         var curChainIndex: ?usize = null;
 
         // Expect ("." Identifier)*
-        while ((try self.currentToken()).kind == TokenKind.Dot) {
+        while ((try self.currentToken()).kind == TokenKind.Dot or (try self.currentToken()).kind == TokenKind.LBracket) {
             const chainNodeIndex = try self.reserve();
             if (chainIndex == null) {
                 chainIndex = chainNodeIndex;
             }
-            // Expect .
-            const dotToken = try self.expectAndYeildToken(TokenKind.Dot);
-            // Expect Identifier
-            const identIndex = try self.astAppendNode(try self.expectIdentifier());
+
+            const curToken = try self.currentToken();
+
+            const identIndex = switch (curToken.kind) {
+                TokenKind.Dot => blk: {
+                    // Expect .
+                    _ = try self.expectAndYeildToken(TokenKind.Dot);
+                    // Expect Identifier
+                    const identIndex = try self.astAppendNode(try self.expectIdentifier());
+                    break :blk identIndex;
+                },
+                TokenKind.LBracket => blk: {
+                    _ = try self.expectAndYeildToken(TokenKind.LBracket);
+                    const expresion = try self.parseExpression();
+                    _ = try self.expectAndYeildToken(TokenKind.RBracket);
+                    break :blk expresion;
+                },
+                else => {
+                    log.err("Expected a dot or but got {s}.\n", .{@tagName(curToken.kind)});
+                    return error.InvalidToken;
+                },
+            };
+
             const chainNode = Node{
                 .kind = .{ .SelectorChain = .{ .ident = identIndex, .next = null } },
-                .token = dotToken,
+                .token = curToken,
             };
             try self.set(chainNodeIndex, chainNode);
 
@@ -1681,6 +1729,14 @@ pub const Parser = struct {
                 // Expect )
                 try self.expectToken(TokenKind.RParen);
             },
+            // TokenKind.LBracket => {
+            // Expect [
+            // try self.expectToken(TokenKind.LBracket);
+            // // Expect Expression
+            // lhsIndex = try self.parseExpression();
+            // // Expect ]
+            // try self.expectToken(TokenKind.RBracket);
+            // },
             TokenKind.Identifier => {
                 const peekTokenKind = (try self.peekToken()).kind;
                 if (peekTokenKind == .LParen) {
@@ -2011,6 +2067,34 @@ test "extractAtom.new_in_fkncall" {
     const len: usize = 7;
     const tokenKinds = [_]TokenKind{ .Identifier, .LParen, .KeywordNew, .Identifier, .Comma, .Number, .RParen };
     try expectAtomSliceTokenKinds(&parser, atom, &tokenKinds);
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
+test "extractAtom.access_int_array" {
+    const source = "foo[1]";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 4;
+    // std.debug.print("parsed: {any}\n", .{parser.tokens[atom.start..(atom.start + atom.len)]});
+    // try parser.prettyPrintAst();
+    const tokenKinds = [_]TokenKind{ .Identifier, .LBracket, .Number, .RBracket };
+    try expectAtomSliceTokenKinds(&parser, atom, &tokenKinds);
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
+test "extractAtom.access_int_array2" {
+    const source = "bar[foo(1+2) + 1]";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 11;
+    // std.debug.print("parsed: {any}\n", .{parser.tokens[atom.start..(atom.start + atom.len)]});
+    // try parser.prettyPrintAst();
+    // const tokenKinds = [_]TokenKind{ .Identifier, .LBracket, .Number, .RBracket };
+    // try expectAtomSliceTokenKinds(&parser, atom, &tokenKinds);
     try ting.expectEqual(start, atom.start);
     try ting.expectEqual(len, atom.len);
 }
