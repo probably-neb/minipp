@@ -796,7 +796,6 @@ fn gen_selector_chain(
 
         utils.assert(prevField.type == .strct, "prevField.type.isStruct in `gen_selector_chain`", .{});
         structType = try ir.types.get(prevField.type.strct);
-        fieldInfo = try structType.getFieldWithName(fieldNameID);
         fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
         fieldInfo = try structType.getFieldWithName(fieldNameID);
         fieldIndex = fieldInfo.index;
