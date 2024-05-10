@@ -85,6 +85,11 @@ pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
     };
 }
 
+pub fn safeGetIdent(self: *const IR, id: StrID) ![]const u8 {
+    // this is only supposed to be used for debugging, so just panic
+    return self.intern_pool.get(id);
+}
+
 pub fn getIdent(self: *const IR, id: StrID) []const u8 {
     // this is only supposed to be used for debugging, so just panic
     return self.intern_pool.get(id) catch unreachable;
