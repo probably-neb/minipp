@@ -439,10 +439,15 @@ fn gen_statement(
             // FIXME: handle selector chain
             var assignRef = try fun.getNamedRef(ir, toName);
             if (to.chain) |chain| {
-                const derefInst = Inst.gep_deref(assignRef);
-                const derefedReg = try fun.addNamedInst(bb, derefInst, assignRef.name, assignRef.type);
-                const derefedRef = IR.Ref.fromReg(derefedReg);
-                assignRef = try gen_selector_chain(ir, ast, fun, bb, derefedRef, chain);
+                const structRef = blk: {
+                    // it's a chain, so the assign must be a struct, we're in the load/store ir,
+                    // so it's got to be a %struct.{name}** (i.e. a pointer struct pointer on the stack)
+                    // so we have to load it first because gep can't do shit in this situation
+                    const loadStructInst = Inst.load(assignRef.type, assignRef);
+                    const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
+                    break :blk IR.Ref.fromReg(loadReg);
+                };
+                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain);
             }
 
             // FIXME: rhs could also be a `read` handle!
