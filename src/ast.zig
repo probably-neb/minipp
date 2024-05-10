@@ -1018,6 +1018,28 @@ pub fn iterFuncs(ast: *const Ast) FuncIter {
     return FuncIter.new(ast);
 }
 
+pub fn printNodeLine(ast: *const Ast, node: Node) void {
+    const input = ast.input;
+    const tok = node.token;
+    const tok_start = tok._range.start;
+    const tok_end = tok._range.end;
+    var line_start: usize = tok_start;
+    while (line_start >= 0 and input[line_start] != '\n') : (line_start -= 1) {}
+    line_start += 1;
+    var line_end: usize = tok_end;
+    while (line_end < input.len and input[line_end] != '\n') : (line_end += 1) {}
+    const line = input[line_start..line_end];
+    var line_no: usize = 0;
+    var i: usize = 0;
+    while (i < line_start) : (i += 1) {
+        if (input[i] == '\n') {
+            line_no += 1;
+        }
+    }
+    const col_no = tok_start - line_start;
+    std.debug.print("LINE {d}:{d} \"{s}\"\n", .{ line_no, col_no, line });
+}
+
 const ting = std.testing;
 const debugAlloc = std.heap.page_allocator;
 
