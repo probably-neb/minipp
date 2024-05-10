@@ -303,8 +303,7 @@ pub const Node = struct {
                     if (iter.? > last) {
                         break;
                     }
-                    std.debug.print("iter={d} last={d}\n", .{ iter.?, last });
-                    const decl = ast.get(iter.?).kind.TypedIdentifier;
+                    const decl = ast.get(iterator.?).kind.TypedIdentifier;
                     const name = decl.getName(ast);
                     if (std.mem.eql(u8, name, memberName)) {
                         return decl.getType(ast);
@@ -808,13 +807,31 @@ pub const Type = union(enum) {
         return @intFromEnum(self) == @intFromEnum(other);
     }
     pub fn equals(self: Self, other: Self) bool {
-        const tmp = @intFromEnum(self) ^ @intFromEnum(other);
-        // if struct
-        if (std.mem.eql(u8, @tagName(self), @tagName(other)) and std.mem.eql(u8, @tagName(self), "Struct")) {
-            // memcmp
-            return std.mem.eql(u8, self.Struct, other.Struct);
-        }
-        return tmp == 0;
+        return switch (self) {
+            .Struct => switch (other) {
+                // names equal
+                .Struct => std.mem.eql(u8, self.Struct, other.Struct),
+                .Null => true,
+                else => false,
+            },
+            // I'm not sure if the null == null is necessary but it can't
+            // hurt right?
+            //
+            // right?
+            .Null => other == .Struct or other == .Null,
+            else => @intFromEnum(self) == @intFromEnum(other),
+        };
+        // Dylan I see what you were going for here I just don't like it ;)
+        // also it didn't work and was hard to extend to support null so I made
+        // it better ;) - Ben
+        // ... why did copilot just sign my name for me?
+        // const tmp = @intFromEnum(self) ^ @intFromEnum(other);
+        // // if struct
+        // if (std.mem.eql(u8, @tagName(self), @tagName(other)) and std.mem.eql(u8, @tagName(self), "Struct")) {
+        //     // memcmp
+        //     return std.mem.eql(u8, self.Struct, other.Struct);
+        // }
+        // return tmp == 0;
     }
 };
 
