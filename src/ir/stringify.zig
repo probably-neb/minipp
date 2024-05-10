@@ -405,29 +405,42 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
 
                     if (C_STD_FN_ARG_SIGNATURES.get(ir.getIdent(call.fun.name))) |argSig| {
                         try buf.write(argSig);
-                    } else {
-                        // assume arg signatures match the
-                        // function signature instead of fetching
-                        // the function and doing it properly
+                        try buf.fmt(") {}(", .{
+                            stringify_ref(ir, fun, call.fun),
+                        });
                         for (call.args, 0..) |arg, i| {
-                            try buf.fmt("{}", .{
-                                stringify_type(ir, arg.type).ensure_ptr_if(arg.kind == .global),
+                            try buf.fmt("{} {}", .{
+                                stringify_type(ir, arg.type),
+                                stringify_ref(ir, fun, arg),
                             });
                             if (i + 1 < call.args.len) {
                                 try buf.write(", ");
                             }
                         }
-                    }
-                    try buf.fmt(") {}(", .{
-                        stringify_ref(ir, fun, call.fun),
-                    });
-                    for (call.args, 0..) |arg, i| {
-                        try buf.fmt("{} {}", .{
-                            stringify_type(ir, arg.type).ensure_ptr_if(arg.kind == .global),
-                            stringify_ref(ir, fun, arg),
+                    } else {
+                        const callee = try ir.getFun(call.fun.name);
+                        const params = callee.params.items;
+                        for (params, 0..) |param, i| {
+                            try buf.fmt("{}", .{
+                                stringify_type(ir, param.type),
+                            });
+                            if (i + 1 < call.args.len) {
+                                try buf.write(", ");
+                            }
+                        }
+                        try buf.fmt(") {}(", .{
+                            stringify_ref(ir, fun, call.fun),
                         });
-                        if (i + 1 < call.args.len) {
-                            try buf.write(", ");
+                        var i: usize = 0;
+                        utils.assert(call.args.len == params.len, "call args and params len mismatch for {s}\nparams={any}\nargs={any}", .{ ir.getIdent(callee.name), params, call.args });
+                        for (call.args, params) |arg, param| {
+                            try buf.fmt("{} {}", .{
+                                stringify_type(ir, param.type),
+                                stringify_ref(ir, fun, arg),
+                            });
+                            if (i + 1 < call.args.len) {
+                                try buf.write(", ");
+                            }
                         }
                     }
                     try buf.write(")");
@@ -517,6 +530,7 @@ pub fn stringify_type(ir: *const IR, ty: IR.Type) Rope {
             };
             return Rope.str_num_str(prefix, arr.len, postfix);
         },
+        .null_ => std.debug.panic("null type in stringify", .{}),
         //     const name = ir.getIdent(nameID);
         //     const strct = "struct ";
         //     // catch unreachable here to make it cleaner to use in fmt args

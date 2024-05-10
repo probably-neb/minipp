@@ -587,7 +587,7 @@ fn gen_expression(
                     // I think that we should implment a structID named null,
                     // since it is a keyword the user could never do so,
                     // and this would add no new abstractions to the IR
-                    break :null IR.Ref.immnull(.i8);
+                    break :null IR.Ref.immnull();
                 },
                 .Invocation => IR.Ref.fromReg(try gen_invocation(ir, fun, ast, bb, atom)),
                 .Expression => try gen_expression(ir, ast, fun, bb, atom.*),

@@ -926,6 +926,7 @@ pub const Type = union(enum) {
         },
         len: u32,
     },
+    null_,
     /// The type used instead of optionals
     pub const default = Type.void;
 
@@ -933,8 +934,10 @@ pub const Type = union(enum) {
         return switch (self) {
             .strct => |selfStructID| switch (other) {
                 .strct => |otherStructID| selfStructID == otherStructID,
+                .null_ => true,
                 else => false,
             },
+            .null_ => other == .strct or other == .null_,
             .arr => |selfArr| switch (other) {
                 .arr => |otherArr| selfArr.type == otherArr.type and selfArr.len == otherArr.len,
                 else => false,
@@ -947,7 +950,7 @@ pub const Type = union(enum) {
     /// not the actual size of the struct
     pub fn sizeof(self: Type) u32 {
         return switch (self) {
-            .strct, .int => 8,
+            .strct, .int, .null_ => 8,
             .i8, .bool => 1,
             .void => 0,
             .i32 => 4,
@@ -977,6 +980,15 @@ pub const Type = union(enum) {
         return size + @mod(size, alignment);
     }
 
+    pub fn orelseIfNull(self: Type, dfault: Type) Type {
+        if (self == .null_) {
+            return dfault;
+        }
+        if (dfault == .null_) {
+            return .i8;
+        }
+        return self;
+    }
     test "alignof-bool" {
         try std.testing.expectEqual(@as(u32, 4), Type.aligned_sizeof(4, .bool));
     }
@@ -1117,8 +1129,8 @@ pub const Ref = struct {
     }
 
     /// @param ty: the type of the null pointer
-    pub inline fn immnull(ty: Type) Ref {
-        return Ref.immediate(InternPool.NULL, ty);
+    pub inline fn immnull() Ref {
+        return Ref.immediate(InternPool.NULL, .null_);
     }
 
     pub fn eq(self: Ref, other: Ref) bool {
@@ -1263,8 +1275,8 @@ pub const Inst = struct {
     // Comparison and Branching
     /// <recmp> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
     pub inline fn cmp(cond: Op.Cond, lhs: Ref, rhs: Ref) Inst {
-        utils.assert(lhs.type.eq(rhs.type), "comparison operands must have the same type\n", .{});
-        return .{ .op = .Cmp, .ty1 = lhs.type, .op1 = lhs, .op2 = rhs, .extra = .{ .cond = cond } };
+        utils.assert(lhs.type.eq(rhs.type), "comparison operands must have the same type\n {s} != {s}", .{ @tagName(lhs.type), @tagName(rhs.type) });
+        return .{ .op = .Cmp, .ty1 = lhs.type.orelseIfNull(rhs.type), .op1 = lhs, .op2 = rhs, .extra = .{ .cond = cond } };
     }
 
     pub const Br = struct {
@@ -1357,7 +1369,7 @@ pub const Inst = struct {
     /// `store {from.type} {from}, {to.type}* {to}`
     // TODO: remove type params and take them from ref
     pub inline fn store(to: Ref, from: Ref) Inst {
-        return .{ .op = .Store, .ty1 = to.type, .op1 = to, .ty2 = from.type, .op2 = from };
+        return .{ .op = .Store, .ty1 = to.type, .op1 = to, .ty2 = from.type.orelseIfNull(to.type), .op2 = from };
     }
 
     pub const Gep = struct {
