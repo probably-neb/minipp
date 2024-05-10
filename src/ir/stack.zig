@@ -447,7 +447,7 @@ fn gen_statement(
                     const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
                     break :blk IR.Ref.fromReg(loadReg);
                 };
-                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain);
+                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, true);
             }
 
             // FIXME: rhs could also be a `read` handle!
@@ -594,7 +594,7 @@ fn gen_expression(
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
             };
             if (sel.chain) |chain| {
-                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain);
+                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain, null);
                 switch (resultRef.type) {
                     .strct, .arr => {},
                     // Whenever we are accessing a field of a struct,
@@ -777,6 +777,7 @@ fn gen_selector_chain(
     bb: IR.BasicBlock.ID,
     startRef: IR.Ref,
     chainIndex: usize,
+    optionallyNoDerefFinal: ?bool,
 ) !IR.Ref {
     var structType = try ir.types.get(startRef.type.strct);
     var chainLink = ast.get(chainIndex).kind.SelectorChain;
@@ -800,9 +801,24 @@ fn gen_selector_chain(
         fieldInfo = try structType.getFieldWithName(fieldNameID);
         fieldIndex = fieldInfo.index;
         field = fieldInfo.field;
-        inst = IR.Inst.gep(structType.getType(), ref, IR.Ref.immu32(fieldIndex, .i32));
+        const loadRef = blk: {
+            // need to load the secondary struct because rn we have a struct**
+            const loadInst = Inst.load(structType.getType(), ref);
+            reg = try fun.addNamedInst(bb, loadInst, structType.name, structType.getType());
+            break :blk IR.Ref.fromReg(reg);
+        };
+        inst = IR.Inst.gep(structType.getType(), loadRef, IR.Ref.immu32(fieldIndex, .i32));
 
         reg = try fun.addNamedInst(bb, inst, field.name, field.type);
+        ref = IR.Ref.fromReg(reg);
+    }
+    const okToDerefFinal = !(optionallyNoDerefFinal orelse false);
+    if (ref.type == .strct and okToDerefFinal) {
+        // if the final field being accessed in the struct, we are polite
+        // and return a pointer to the struct instead of the pointer to the pointer to the struct
+        // because that is (certainly?) what the consumer expects
+        const loadInst = Inst.load(ref.type, ref);
+        reg = try fun.addNamedInst(bb, loadInst, ref.name, ref.type);
         ref = IR.Ref.fromReg(reg);
     }
     return ref;
