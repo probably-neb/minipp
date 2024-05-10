@@ -1141,9 +1141,6 @@ pub const Inst = struct {
     pub const Extra = union {
         /// The default
         none_: void,
-        /// Used in gep to identify special case where we are going from
-        /// a struct** to a struct* (i.e. assigning to a field of a struct on the stack)
-        is_deref_ptr_ptr: bool,
         /// Used in phi node to store their entries
         phi: std.ArrayList(PhiEntry),
         /// used in cmp to store the condition
@@ -1364,8 +1361,6 @@ pub const Inst = struct {
         ptrTy: Type,
         ptrVal: Ref,
         index: Ref,
-        isDerefPtrPtr: bool = false,
-
         pub inline fn get(inst: Inst) Gep {
             return .{
                 .res = inst.res,
@@ -1373,28 +1368,23 @@ pub const Inst = struct {
                 .ptrTy = inst.ty2,
                 .ptrVal = inst.op1,
                 .index = inst.op2,
-                .isDerefPtrPtr = inst.extra.is_deref_ptr_ptr,
             };
         }
 
         pub inline fn toInst(inst: Gep) Inst {
-            var gepInst = Inst.gep(inst.res, inst.baseTy, inst.ptrTy, inst.ptrVal, inst.index);
-            gepInst.extra = Extra{ .is_deref_ptr_ptr = inst.isDerefPtrPtr };
-            return gepInst;
+            return Inst.gep(inst.res, inst.baseTy, inst.ptrTy, inst.ptrVal, inst.index);
         }
     };
     /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
     /// newer:
     /// `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
     pub inline fn gep(basisTy: Type, ptrVal: Ref, index: Ref) Inst {
-        return .{ .op = .Gep, .ty1 = basisTy, .ty2 = basisTy, .op1 = ptrVal, .op2 = index, .extra = .{ .is_deref_ptr_ptr = false } };
+        return .{ .op = .Gep, .ty1 = basisTy, .ty2 = basisTy, .op1 = ptrVal, .op2 = index };
     }
 
     /// a wrapper around gep with index 0
-    pub inline fn gep_deref_ptr_ptr(ptrVal: Ref) Inst {
-        var inst = Inst.gep(ptrVal.type, ptrVal, Ref.immu32(0, .i32));
-        inst.extra.is_deref_ptr_ptr = true;
-        return inst;
+    pub inline fn gep_deref(ptrVal: Ref) Inst {
+        return Inst.gep(ptrVal.type, ptrVal, Ref.immu32(0, .i32));
     }
 
     pub const Call = struct {
