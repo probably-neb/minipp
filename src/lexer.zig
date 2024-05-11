@@ -1,15 +1,16 @@
 const std = @import("std");
+const log = @import("log.zig");
 
 /// Print function that only prints in test mode. Useful for printing info
 /// for debugging purposes that you don't want to show up when not running tests
 fn test_print(comptime fmt: []const u8, args: anytype) void {
     const builtin = @import("builtin");
     if (builtin.is_test) {
-        std.debug.print(fmt, args);
+        log.err(fmt, args);
     }
 }
 
-const Range = struct {
+pub const Range = struct {
     start: u32,
     end: u32,
 
@@ -53,22 +54,22 @@ const Range = struct {
         // // print ^ from self.start to self.end
         // // print spaces from self.end to end
         while (start < self.start) {
-            std.debug.print(" ", .{});
+            log.err(" ", .{});
             start += 1;
         }
         if (self.start == self.end) {
-            std.debug.print("^", .{});
+            log.err("^", .{});
             start += 1;
         }
         while (start < self.end) {
-            std.debug.print("^", .{});
+            log.err("^", .{});
             start += 1;
         }
         while (start < end) {
-            std.debug.print(" ", .{});
+            log.err(" ", .{});
             start += 1;
         }
-        std.debug.print("\n", .{});
+        log.err("\n", .{});
     }
 };
 
@@ -264,9 +265,9 @@ pub const Lexer = struct {
                 }
                 // TODO: improve error handling
                 if (lxr.file.len == 0) {
-                    std.debug.print("error: unexpected character {any} in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
+                    log.err("unexpected character {any} in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
                 } else {
-                    std.debug.print("error: unexpected character {any} in line=\"{s}\" in file=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.file, lxr.line_number, lxr.column });
+                    log.err("error: unexpected character {any} in line=\"{s}\" in file=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.file, lxr.line_number, lxr.column });
                 }
                 lxr.line.end = if (lxr.line.end == 0) @truncate(lxr.input.len) else lxr.line.end;
                 return error.InvalidToken;
@@ -307,6 +308,11 @@ pub const Lexer = struct {
     fn skip_whitespace(lxr: *Lexer) void {
         while (true) {
             switch (lxr.ch) {
+                '#' => {
+                    while (lxr.ch != '\n' and lxr.ch != 0) {
+                        lxr.step();
+                    }
+                },
                 '\n' => {
                     lxr.line_number += 1;
                     lxr.column = 0;
@@ -373,9 +379,9 @@ pub const Lexer = struct {
             // TODO: improve error handling
             else => {
                 if (lxr.file.len == 0) {
-                    std.debug.print("error: unexpected character \'{c}\' in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
+                    log.err("error: unexpected character \'{c}\' in line=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.line_number, lxr.column });
                 } else {
-                    std.debug.print("error: unexpected character \'{c}\' in line=\"{s}\" in file=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.file, lxr.line_number, lxr.column });
+                    log.err("error: unexpected character \'{c}\' in line=\"{s}\" in file=\"{s}\"@{any}:{any}\n", .{ lxr.ch, lxr.line.getSubStrFromStr(lxr.input), lxr.file, lxr.line_number, lxr.column });
                 }
                 lxr.line.end = if (lxr.line.end == 0) @truncate(lxr.input.len) else lxr.line.end;
                 return error.InvalidToken;
@@ -399,20 +405,20 @@ const testAlloc = std.testing.allocator;
 
 fn expect_token_kinds_equals(expected: []const TokenKind, actual: []Token) !void {
     if (expected.len != actual.len) {
-        std.debug.print("error: expected {d} tokens but got {d}\n", .{ expected.len, actual.len });
-        std.debug.print("expected tokens:\n{any}\n", .{expected});
-        std.debug.print("got tokens:\n{any}\n", .{actual});
+        log.err("error: expected {d} tokens but got {d}\n", .{ expected.len, actual.len });
+        log.err("expected tokens:\n{any}\n", .{expected});
+        log.err("got tokens:\n{any}\n", .{actual});
         return error.TokensDoNotMatch;
     }
     for (expected, 0..) |expected_kind, i| {
         if (i >= actual.len) {
-            std.debug.print("error: expected token kind {any} but got EOF\n", .{expected_kind});
+            log.err("error: expected token kind {any} but got EOF\n", .{expected_kind});
             return error.NotEnoughTokens;
         }
         const actual_tok = actual[i];
         const actual_kind = actual_tok.kind;
         if (!expected_kind.equals(actual_kind)) {
-            std.debug.print("error: expected token kind {any} but got {any}\n", .{ expected_kind, actual_kind });
+            log.err("error: expected token kind {any} but got {any}\n", .{ expected_kind, actual_kind });
             return error.TokensDoNotMatch;
         }
     }
@@ -432,7 +438,7 @@ fn expect_results_in_tokens(contents: []const u8, expected: []const TokenKind) !
 
 fn print_tokens(tokens: []Token) void {
     for (tokens) |token| {
-        std.debug.print("{}\n", .{token.kind});
+        log.err("{}\n", .{token.kind});
     }
 }
 
@@ -471,7 +477,7 @@ test "simple_struct" {
     //if (ident_token._range) |range| {
     //    try expect(std.mem.eql(u8, range.getSubStrFromStr(content), "SimpleStruct"));
     //} else {
-    //    std.debug.print("error: expected range for identifier token but got none\n", .{});
+    //    log.err("error: expected range for identifier token but got none\n", .{});
     //    return error.NoRangeForToken;
     //}
     try expect(std.mem.eql(u8, ident_token._range.getSubStrFromStr(content), "SimpleStruct"));
@@ -547,6 +553,32 @@ test "all_keywords" {
 test "ident_with_num" {
     const tokens = try expect_results_in_tokens("foo1", &[_]TokenKind{
         .Identifier,
+        .Eof,
+    });
+    defer testAlloc.free(tokens);
+}
+
+test "comment" {
+    const input =
+        \\ # inComment == new;
+        \\ fun foo() void {
+        \\    # inComment == true;
+        \\      return; # postComment = while
+        \\    # inComment == false;
+        \\    # inComment == false;
+        \\ }
+        \\ # inComment == false;
+    ;
+    const tokens = try expect_results_in_tokens(input, &[_]TokenKind{
+        .KeywordFun,
+        .Identifier,
+        .LParen,
+        .RParen,
+        .KeywordVoid,
+        .LCurly,
+        .KeywordReturn,
+        .Semicolon,
+        .RCurly,
         .Eof,
     });
     defer testAlloc.free(tokens);
