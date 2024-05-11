@@ -580,3 +580,36 @@ test "ident_with_num" {
     });
     defer testAlloc.free(tokens);
 }
+
+test "lexer.checkArrayAccess" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
+    const tokens = try expect_results_in_tokens(source, &[_]TokenKind{
+        .KeywordFun,
+        .Identifier,
+        .LParen,
+        .RParen,
+        .KeywordVoid,
+        .LCurly,
+        .KeywordIntArray,
+        .Identifier,
+        .Semicolon,
+        .Identifier,
+        .Eq,
+        .KeywordNew,
+        .KeywordIntArray,
+        .LBracket,
+        .Number,
+        .RBracket,
+        .Semicolon,
+        .Identifier,
+        .LBracket,
+        .Number,
+        .RBracket,
+        .Eq,
+        .Number,
+        .Semicolon,
+        .RCurly,
+        .Eof,
+    });
+    defer testAlloc.free(tokens);
+}

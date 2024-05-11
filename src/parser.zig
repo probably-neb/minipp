@@ -1400,11 +1400,11 @@ pub const Parser = struct {
                 self.readPos = expr.Atom.start + 1;
 
                 const atomIndex = try self.parseSelector();
-                std.debug.print("\n", .{});
-                prettyPrintTokens(self, self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
-                std.debug.print("\n", .{});
-                prettyPrintTokens(self, self.tokens[expr.Atom.start..self.pos]);
-                std.debug.print("\n", .{});
+                // std.debug.print("\n", .{});
+                // prettyPrintTokens(self, self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)]);
+                // std.debug.print("\n", .{});
+                // prettyPrintTokens(self, self.tokens[expr.Atom.start..self.pos]);
+                // std.debug.print("\n", .{});
                 // I really should have made this error shorter before the hundredth time I saw it
                 utils.assert(self.pos == (expr.Atom.start + expr.Atom.len), "either didn't skip enough tokens when extracting atom or didn't parse enough when reconstructing tree... either way shits borqed! glhf!!!\n Expected to parse: \n {any} \nBut Parsed: \n {any} \n", .{ self.tokens[expr.Atom.start..(expr.Atom.start + expr.Atom.len)], self.tokens[expr.Atom.start..self.pos] });
 
@@ -1554,7 +1554,7 @@ pub const Parser = struct {
             .LBracket => {
                 // keep "stack" of paren count to find the last one
                 var count: u32 = 1;
-                std.debug.print("LBracket I Am HEREERERERERERE\n", .{});
+                // std.debug.print("LBracket I Am HEREERERERERERE\n", .{});
                 _ = try self.consumeToken();
                 while (count != 0) {
                     numTokens += 1;
@@ -1868,7 +1868,6 @@ pub fn main() !void {
     const tokens = try Lexer.tokenizeFromStr(source, std.heap.page_allocator);
     const parser = try Parser.parseTokens(tokens, source, std.heap.page_allocator);
     log.err("Parsed successfully\n", .{});
-    std.debug.print("haha penis", .{});
     try parser.prettyPrintAst();
 }
 
@@ -2206,3 +2205,12 @@ test "fun.with_locals" {
     try ting.expect(nodes[funNode.kind.Function.proto].kind == .FunctionProto);
     // TODO: add more checks for function subtree structure
 }
+test "parser.checkArrayAccess" {
+    const source = "int_array a; a = new int_array[10];}";
+    _ = try parseMe(source);
+}
+
+// test "parser.checkArrayAccess" {
+//     const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
+//     _ = try parseMe(source);
+// }
