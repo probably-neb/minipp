@@ -818,6 +818,11 @@ pub const Node = struct {
                 const identNode: ReturnTypedIdentifierType = ast.get(self.name).kind.ReturnTypedIdentifier;
                 return identNode.getType(ast);
             }
+
+            pub fn getName(self: Self, ast: *const Ast) []const u8 {
+                const retIdent: ReturnTypedIdentifierType = ast.get(self.name).kind.ReturnTypedIdentifier;
+                return ast.getIdentValue(retIdent.ident);
+            }
         };
 
         pub const ReturnTypeType = struct {
