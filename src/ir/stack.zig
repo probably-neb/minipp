@@ -24,11 +24,11 @@ pub fn generate(alloc: std.mem.Allocator, ast: *const Ast) !IR {
 
     var ir = IR.init(alloc);
 
-    const globals = try gen_globals(&ir, ast);
-    ir.globals.fill(globals);
-
     const types = try gen_types(&ir, ast);
     ir.types.fill(types);
+
+    const globals = try gen_globals(&ir, ast);
+    ir.globals.fill(globals);
 
     const funcs = try gen_functions(&ir, ast);
     ir.funcs.fill(funcs);
