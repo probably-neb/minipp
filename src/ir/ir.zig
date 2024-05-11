@@ -981,13 +981,13 @@ pub const Type = union(enum) {
     }
 
     pub fn orelseIfNull(self: Type, dfault: Type) Type {
-        if (self == .null_) {
-            return dfault;
+        switch (self) {
+            .null_ => switch (dfault) {
+                .null_ => return .i8,
+                else => return dfault,
+            },
+            else => return self,
         }
-        if (dfault == .null_) {
-            return .i8;
-        }
-        return self;
     }
     test "alignof-bool" {
         try std.testing.expectEqual(@as(u32, 4), Type.aligned_sizeof(4, .bool));
