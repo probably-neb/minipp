@@ -241,7 +241,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
     for (globals, 0..) |global, i| {
         try buf.fmt("{} = global {} undef, align {d}\n", .{
             stringify_ref(ir, undefined, IR.Ref.global(@truncate(i), global.name, global.type)),
-            stringify_type(ir, global.type).not_ptr(),
+            stringify_type(ir, global.type).ptr_if(global.type == .strct),
             IR.ALIGN,
         });
     }
