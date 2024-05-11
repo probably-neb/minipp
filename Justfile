@@ -17,6 +17,23 @@ make path exe="a.out": build
 ensure-test-suite:
     git submodule update --init --recursive
 
+run-suite: ensure-test-suite
+    #!/usr/bin/env bash
+    set -uo pipefail
+
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    NC='\033[0m'
+    
+    for test in $(ls {{TEST_SUITE}}); do
+        just run-suite-test $test > /dev/null 2>&1
+        if [ $? -eq 0 ]; then
+          echo -e "${GREEN}SUCCESS${NC} - ${test}"
+        else
+          echo -e "${RED}FAIL   ${NC} - ${test}"
+        fi
+    done
+
 run-suite-test name: ensure-test-suite
     #!/usr/bin/env bash
     set -euo pipefail

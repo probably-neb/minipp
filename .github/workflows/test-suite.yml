@@ -6,7 +6,10 @@ on:
   pull_request:
     branches:
       - '*'
-
+# cancel in progress checks when a push occurs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   Fibonacci:
     runs-on: ubuntu-latest

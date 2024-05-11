@@ -241,7 +241,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
     for (globals, 0..) |global, i| {
         try buf.fmt("{} = global {} undef, align {d}\n", .{
             stringify_ref(ir, undefined, IR.Ref.global(@truncate(i), global.name, global.type)),
-            stringify_type(ir, global.type).not_ptr(),
+            stringify_type(ir, global.type).ptr_if(global.type == .strct),
             IR.ALIGN,
         });
     }
@@ -410,7 +410,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                         });
                         for (call.args, 0..) |arg, i| {
                             try buf.fmt("{} {}", .{
-                                stringify_type(ir, arg.type),
+                                stringify_type(ir, arg.type).ensure_ptr_if(arg.kind == .global),
                                 stringify_ref(ir, fun, arg),
                             });
                             if (i + 1 < call.args.len) {
@@ -431,11 +431,10 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                         try buf.fmt(") {}(", .{
                             stringify_ref(ir, fun, call.fun),
                         });
-                        var i: usize = 0;
                         utils.assert(call.args.len == params.len, "call args and params len mismatch for {s}\nparams={any}\nargs={any}", .{ ir.getIdent(callee.name), params, call.args });
-                        for (call.args, params) |arg, param| {
+                        for (call.args, params, 0..) |arg, param, i| {
                             try buf.fmt("{} {}", .{
-                                stringify_type(ir, param.type),
+                                stringify_type(ir, param.type).ensure_ptr_if(arg.kind == .global),
                                 stringify_ref(ir, fun, arg),
                             });
                             if (i + 1 < call.args.len) {
