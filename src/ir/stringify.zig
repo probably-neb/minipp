@@ -410,7 +410,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                         });
                         for (call.args, 0..) |arg, i| {
                             try buf.fmt("{} {}", .{
-                                stringify_type(ir, arg.type),
+                                stringify_type(ir, arg.type).ensure_ptr_if(arg.kind == .global),
                                 stringify_ref(ir, fun, arg),
                             });
                             if (i + 1 < call.args.len) {
@@ -435,7 +435,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                         utils.assert(call.args.len == params.len, "call args and params len mismatch for {s}\nparams={any}\nargs={any}", .{ ir.getIdent(callee.name), params, call.args });
                         for (call.args, params) |arg, param| {
                             try buf.fmt("{} {}", .{
-                                stringify_type(ir, param.type),
+                                stringify_type(ir, param.type).ensure_ptr_if(arg.kind == .global),
                                 stringify_ref(ir, fun, arg),
                             });
                             if (i + 1 < call.args.len) {
