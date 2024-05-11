@@ -443,7 +443,7 @@ pub const Node = struct {
                     if (iterator.? > last) {
                         break;
                     }
-                    const decl = ast.get(iterator.?).kind.TypedIdentifier;
+                    const decl = ast.get(iter.?).kind.TypedIdentifier;
                     const name = decl.getName(ast);
                     if (std.mem.eql(u8, name, memberName)) {
                         return decl.getType(ast);

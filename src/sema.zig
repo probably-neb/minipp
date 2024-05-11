@@ -1333,6 +1333,13 @@ test "sema.checkArrayAccess" {
     // var funcLit = func.?.*;
     try typecheck(&ast);
 }
+test "sema.checkArrayAccess" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
+    var ast = try testMe(source);
+    // var func = ast.getFunctionFromName("main");
+    // var funcLit = func.?.*;
+    try typeCheck(&ast);
+}
 test "sema.4mini" {
     // load source from file
     const source = @embedFile("4.mini");
