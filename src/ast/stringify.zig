@@ -348,6 +348,18 @@ fn tok_name(node: Ast.Node) []const u8 {
 
 test "ast/stringify.make-sure-this-shit-compiles" {
     defer log.print();
+    // TODO: comment out the `else` arms in the repr and treenode
+    // switch statements and handle unhandled nodes
+    // i.e.
+    //  - Delete
+    //  - New
+    //  - Read
+    //  - Print
+    //  - Print endl
+    //  - BackfillReserve -> unreachable
+    // FIXME:
+    // figure out why it is printing the local a in main
+    // as a global
     const input =
         \\ struct foo {
         \\   int a;
