@@ -531,12 +531,11 @@ fn gen_expression(
                 .GtEq => Inst.cmp(.GtEq, lhsRef, rhsRef),
                 else => std.debug.panic("gen_expression.binary_operation: {s}\n", .{@tagName(tok.kind)}),
             };
-            // const ty: IR.Type = switch (tok.kind) {
-            //     .Plus, .Minus, .Mul, .Div => .int,
-            //     .DoubleEq, .NotEq, .Lt, .LtEq, .Gt, .GtEq, .And, .Or => .,
-            //     else => unreachable,
-            // };
-            const ty: IR.Type = .int;
+            const ty: IR.Type = switch (tok.kind) {
+                .Plus, .Minus, .Mul, .Div => .int,
+                .DoubleEq, .NotEq, .Lt, .LtEq, .Gt, .GtEq, .And, .Or => .bool,
+                else => unreachable,
+            };
             const name = join_names(lhsRef.name, rhsRef.name);
             const res = try fun.addNamedInst(bb, inst, name, ty);
             return IR.Ref.fromReg(res);
