@@ -671,7 +671,8 @@ fn gen_invocation(ir: *IR, fun: *IR.Function, ast: *const Ast, bb: IR.BasicBlock
     var args: []IR.Ref = undefined;
     if (invoc.args) |argsIndex| {
         var argsIter = ast.get(argsIndex).*.kind.Arguments.iter(ast);
-        args = try ir.alloc.alloc(IR.Ref, argsIter.calculateLen());
+        const numArgs = argsIter.calculateLen();
+        args = try ir.alloc.alloc(IR.Ref, numArgs);
         var ai: usize = 0;
         while (argsIter.next()) |arg| : (ai += 1) {
             const argRef = try gen_expression(ir, ast, fun, bb, arg);

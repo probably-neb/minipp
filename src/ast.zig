@@ -474,8 +474,72 @@ pub const Node = struct {
             /// null if only one argument
             lastArg: ?Ref(.Expression) = null,
 
-            pub fn iter(self: @This(), ast: *const Ast) NodeIter(.Expression) {
-                return NodeIter(.Expression).init(
+            pub const ArgsIter = struct {
+                first: usize,
+                last: usize,
+                i: ?usize,
+                ast: *const Ast,
+
+                pub fn init(ast: *const Ast, firstArg: usize, lastArg: ?usize) ArgsIter {
+                    const last: usize = lastArg orelse firstArg + 1;
+                    const i: usize = firstArg;
+
+                    return .{
+                        .first = i,
+                        .last = last,
+                        .i = i,
+                        .ast = ast,
+                    };
+                }
+                pub fn next(self: *ArgsIter) ?Ast.Node {
+                    var depth: usize = 0;
+                    var arg: ?Ast.Node = null;
+
+                    if (self.i) |i| {
+                        arg = self.ast.get(i).*;
+                        // Move to the next argument, considering nested Arguments and ArgumentEnds
+                        var cursor = i + 1;
+                        var flag = true;
+                        while (flag and cursor <= self.last) : (cursor += 1) {
+                            const node = self.ast.get(cursor).*;
+                            switch (node.kind) {
+                                .Arguments => depth += 1,
+                                .ArgumentEnd => {
+                                    if (depth == 0) {
+                                        flag = false;
+                                    }
+                                },
+                                .ArgumentsEnd => {
+                                    if (depth > 0) {
+                                        depth -= 1;
+                                    } else {
+                                        std.debug.panic("tried to iter over invalid arguments - modify this error message to see what went wrong. Note - ArgsIter should only be used after sema", .{});
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+
+                        self.i = if (flag == false) cursor else null;
+                    }
+
+                    return arg;
+                }
+                pub fn calculateLen(self: ArgsIter) usize {
+                    // create a copy of the iterator with the initial state
+                    // (i == first) so we do not mutate the original iterator
+                    var copy = ArgsIter{ .ast = self.ast, .i = self.first, .first = self.first, .last = self.last };
+                    var length: usize = 0;
+                    // the |_| is needed so zig realizes I want them to go until
+                    // next is null, otherwise get `expected bool` compile error
+                    while (copy.next()) |_| : (length += 1) {
+                        // do nothing
+                    }
+                    return length;
+                }
+            };
+            pub fn iter(self: @This(), ast: *const Ast) ArgsIter {
+                return ArgsIter.init(
                     ast,
                     self.firstArg,
                     self.lastArg,
