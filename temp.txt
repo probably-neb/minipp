@@ -1,1 +1,0 @@
-/mnt/c/school/csc/431/minipp/zig-out/bin/minipp
