@@ -1,0 +1,17 @@
+name: Tests (zig files)
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  Tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just test
+        shell: bash
