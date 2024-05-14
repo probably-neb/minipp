@@ -357,13 +357,9 @@ pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []cons
         // FIXME: add error
         // chek if left is struct and right is null
         var lType = leftType.?;
+        _ = lType;
         var rType = rightType;
-        if (lType.equals(Ast.Type.Null) and rType.isStruct()) {
-            return;
-        }
-        if (lType.isStruct() and rType.equals(Ast.Type.Null)) {
-            return;
-        }
+        _ = rType;
         return error.InvalidAssignmentType;
     }
 }
@@ -626,8 +622,8 @@ pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []
         .Plus,
         .Div,
         => {
-            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
-            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
+            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs).*;
+            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs).*;
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
             const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
             if (!lhsType.equals(rhsType)) {
@@ -1540,6 +1536,13 @@ test "sema.ia_struct_toself" {
 
 test "sema.ia_struct_toself2" {
     const source = "struct S {struct S s; int_array a; int b;}; fun main() void {struct S c; c.s.s.s.s.s.s.s.a = new int_array[100]; c.s.s.s.s.s.s.s.b = c.a[20]; c.s.s.s.s.s.s.s.s.s.a[20] = 2;}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
+
+test "sema.struct_null" {
+    const source = "struct S {int a;}; fun main() void {struct S b; b = null;}";
     var ast = try testMe(source);
     // expect error
     try typeCheck(&ast);
