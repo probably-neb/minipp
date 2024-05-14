@@ -1,5 +1,10 @@
 // Defines an intern pool for strings. Used for easy lookup / comparison of strings based on their index in a biggg pool of bytes
-
+/// This is an interning pool
+/// The value for the string "0" is 0
+/// The value for the string "1" is 1
+/// The value for false is 0
+/// the value for true is 1
+/// the value for null is 2
 const std = @import("std");
 const utils = @import("utils.zig");
 
