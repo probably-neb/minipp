@@ -62,6 +62,7 @@ pub fn internIdent(self: *IR, ident: []const u8) StrID {
     };
 }
 
+/// Puts the ident at the given index in the ast into the interning pool
 pub fn internIdentNodeAt(self: *IR, ast: *const Ast, identIdx: usize) StrID {
     const str = ast.getIdentValue(identIdx);
     return self.internIdent(str);
@@ -165,6 +166,12 @@ pub const Function = struct {
     returnType: Type,
     bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
+
+    /// a list of the instructions that are within the fuction
+    /// the basic blocks have a list of instructions that they use,
+    /// those come out of this list.
+    /// To remove or add instructions, either remove from the Basic Block list
+    /// or add to this ordered list and then referer to it in the Basic Block
     insts: OrderedList(Inst),
     returnReg: ?Register.ID = null,
     params: ParamsList,
@@ -175,6 +182,7 @@ pub const Function = struct {
     pub const entryBBID = 0;
     pub const exitBBID = 1;
 
+    pub const ParamsList = StaticSizeLookupTable(Param.ID, Param, Param.getKey);
     pub const Param = struct {
         name: StrID,
         type: Type,
@@ -184,8 +192,6 @@ pub const Function = struct {
             return self.name;
         }
     };
-
-    pub const ParamsList = StaticSizeLookupTable(Param.ID, Param, Param.getKey);
 
     pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type, params: []Param) Function {
         return .{
@@ -203,16 +209,22 @@ pub const Function = struct {
         return self.name;
     }
 
+    /// Requires a name which will go to the name of the label in the strinify
     pub fn newBB(self: *Function, name: []const u8) !BasicBlock.ID {
         const bb = BasicBlock.init(self.alloc, name);
         const id = try self.bbs.add(bb);
         return id;
     }
 
+    ///
     pub fn newBBWithParent(self: *Function, parent: BasicBlock.ID, name: []const u8) !BasicBlock.ID {
         var bb = BasicBlock.init(self.alloc, name);
+
+        // add the given parent as an incomer
         try bb.addIncomer(parent);
         const id = try self.bbs.add(bb);
+
+        // add itself to the parent's outgoers list
         try self.bbs.get(parent).addOutgoer(id);
         return id;
     }
@@ -222,18 +234,20 @@ pub const Function = struct {
         const regID = try self.regs.add(undefined);
         const instID = try self.insts.add(undefined);
 
-        // construct
+        // construct the register to be added, using the reserved IDs
         const reg = Register{ .id = regID, .inst = instID, .name = name, .bb = bb, .type = ty };
         var inst = basicInst;
-        inst.res = Ref.local(regID, name, ty);
+        inst.res = Ref.local(regID, name, ty); // update the reference of the incoming instruction
 
         // save
         self.regs.set(regID, reg);
-        self.insts.set(instID, inst);
+        self.insts.set(instID, inst); // in the inst array update the resulting instruction
         try self.bbs.get(bb).insts.append(instID);
         return reg;
     }
 
+    /// Add an unnamed instruction, this is used for intermeidates,
+    /// This is preety much used for print and read as shown for the LLVM stuff
     pub fn addInst(self: *Function, bb: BasicBlock.ID, inst: Inst, ty: Type) !Register {
         return self.addNamedInst(bb, inst, InternPool.NULL, ty);
     }
@@ -433,6 +447,12 @@ fn ctrlFlowInstsEqual(a: Inst, b: Inst) bool {
     return false;
 }
 
+/// The number for the resiter is based off the ID ad the name
+/// so if there are two xs in phi, one with id 2 and one iwth id 20
+/// x = 5
+/// x = x +1;
+/// x2 = 5;
+/// x20 = x2 + 1;
 pub const Register = struct {
     id: ID,
     inst: Function.InstID,
@@ -1022,6 +1042,7 @@ pub const Ref = struct {
     pub inline fn fromReg(reg: Register) Ref {
         return Ref{ .i = reg.id, .kind = .local, .name = reg.name, .type = reg.type };
     }
+
     /// Helper function to create a ref to eine local
     pub inline fn local(i: u32, maybeName: ?StrID, ty: Type) Ref {
         const name = maybeName orelse InternPool.NULL;
@@ -1142,6 +1163,8 @@ pub const Ref = struct {
 /// A reference to another basic block
 pub const Label = u32;
 
+/// TODO: this needs to hold a register ID, which, is then used as a list inside
+/// of the Inst type.
 pub const PhiEntry = struct { label: Label };
 
 pub const Inst = struct {

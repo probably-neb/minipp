@@ -123,13 +123,16 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
     // NOTE: not using the `iterFuncs` method because we wan't to use the
     // `calculateLen` helper and I'm too lazy rn to port it
     var funcIter = Ast.NodeIter(.Function).init(ast, 0, ast.nodes.items.len);
+
     // create a copy of funcIter we will use to generate proto definitions
     // of the functions before generating the ir for each function body
     // this ensures when generating the function body ir, that when
     // we encounter a function call it will be able to find the
     // name + return type to reference
     var funcProtoIter = funcIter;
+
     const numFuncs = funcIter.calculateLen();
+
     // log.trace("num funcs := {}\n", .{numFuncs});
     var funcs: []Fun = try ir.alloc.alloc(Fun, numFuncs);
     var fi: usize = 0;
@@ -138,6 +141,7 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
         const funNode = node.kind.Function;
         const funName = ir.internIdent(funNode.getName(ast));
         const funReturnType = ir.astTypeToIRType(funNode.getReturnType(ast).?);
+
         // we don't neeeeed to generate the params before the function bodies
         // are generated, as we assume all that jazz has been checked by sema
         // but I wrote the Function.init to take them, and they are
@@ -147,6 +151,8 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
         var fun = IR.Function.init(ir.alloc, funName, funReturnType, params);
         funcs[fi] = fun;
     }
+
+    // NOTE: identical to phi above this point
 
     ir.funcs.fill(funcs);
     fi = 0;
@@ -175,6 +181,7 @@ pub fn gen_function(
     // separated to make it easier to just append `alloca`s
     // to the start and maintain hoisting (all allocas are in order at start of function)
     const entryBB = try fun.newBB("entry");
+
     // Exit is like entryBB in that it is intentionally bare, containing only
     // the return instruction
     const exitBB = try fun.newBB("exit");
@@ -203,6 +210,7 @@ pub fn gen_function(
         const alloca = Inst.alloca(declType);
         _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
     }
+
     // add allocas for all function parameters
     // and store the params into them
     // this is necessary to allow for mutating params
@@ -227,6 +235,7 @@ pub fn gen_function(
     // generate return instruction in exit block
     if (fun.returnType != .void) {
         // load it in the exit block
+        // NOTE: could use a name like anon_return or something, but that would have to go into the intern pool
         const retValReg = try fun.addInst(exitBB, Inst.load(fun.returnType, IR.Ref.fromReg(retReg)), fun.returnType);
         // return the loaded return value
         // using addAnonInst so ctrl flow cfg construction is skipped
