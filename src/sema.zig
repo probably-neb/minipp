@@ -1414,3 +1414,21 @@ test "sema.struct_null" {
     // expect error
     try typecheck(&ast);
 }
+
+test "sema.ia_invalid_access" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[true] = 1;}";
+    var ast = try testMe(source);
+    // expect error
+    try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheck(&ast));
+}
+
+test "sema.ia_invalid_new" {
+    const source = "fun main() void {int_array a; a = new int_array[true];}";
+    _ = try ting.expectError(TypeError.InvalidToken, testMe(source));
+}
+
+test "sema_ia_lots_of_errors" {
+    const source = "fun main() void {int_array a; int b; int c; a = new int_array[0]; c = b + a[100000000]; a = new int_array[2000]; a[0] = c;}";
+    _ = try testMe(source);
+    // expect error
+}
