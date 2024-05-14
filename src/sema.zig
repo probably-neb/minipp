@@ -1458,3 +1458,24 @@ test "sema_ia_lots_of_errors" {
     _ = try testMe(source);
     // expect error
 }
+
+test "sema_ia.structs" {
+    const source = "struct S {int a;}; fun main() void {int_array a; struct S b; a = new int_array[10]; b.a = a[0];}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
+
+test "sema.ia_structs_assign_retrive" {
+    const source = "struct S {int a;}; fun main() void {int_array a; struct S b; a = new int_array[10]; b.a = a[0]; a[0] = b.a;}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
+
+test "sema.ia_int_arryay_member_struct" {
+    const source = "struct S {int_array a;}; fun main() void {struct S b; b.a = new int_array[10]; b.a[0] = 1;}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
