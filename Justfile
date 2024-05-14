@@ -48,6 +48,7 @@ run-suite-test name: ensure-test-suite
     echo -e "${BLUE}Building Test Suite Test...${NC}"
     just build-suite-test {{name}}
     echo -e "${GREEN}BUILD SUCCESS${NC}"
+
     dir="{{TEST_SUITE}}/{{name}}"
     bin="$dir/{{name}}"
 
@@ -71,6 +72,8 @@ run-suite-test name: ensure-test-suite
 build-suite-test name: build
     #!/usr/bin/env bash
     set -euxo pipefail
+    name="{{name}}"
+    name="${name#array_}"
     dir="{{TEST_SUITE}}/{{name}}"
-    {{minipp}} -i "$dir/{{name}}.mini" -o "$dir/{{name}}.ll"
+    {{minipp}} -i "$dir/${name}.mini" -o "$dir/{{name}}.ll"
     clang "$dir/{{name}}.ll" -o "$dir/{{name}}"
