@@ -186,7 +186,7 @@ pub const Parser = struct {
 
     pub fn isCurrentTokenAType(self: *Parser) !bool {
         switch ((try self.currentToken()).kind) {
-            TokenKind.KeywordInt, TokenKind.KeywordBool, TokenKind.KeywordStruct => {
+            TokenKind.KeywordInt, TokenKind.KeywordBool, TokenKind.KeywordStruct, TokenKind.KeywordIntArray => {
                 return true;
             },
             else => {
@@ -428,7 +428,7 @@ pub const Parser = struct {
         return declIndex;
     }
 
-    // Type = "int" | "bool" | "struct" Identifier
+    // Type = "int" | "bool" | "struct" Identifier | "int_array"
     pub fn parseType(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
@@ -1595,7 +1595,10 @@ pub const Parser = struct {
                 } else if (nextToken.kind == .KeywordIntArray) {
                     _ = try self.expectToken(.KeywordIntArray);
                     _ = try self.expectToken(.LBracket);
-                    _ = try self.expectToken(.Number);
+                    _ = self.expectToken(.Number) catch {
+                        log.err("Expected a number after new int[]\n", .{});
+                        return error.InvalidToken;
+                    };
                     _ = try self.expectToken(.RBracket);
 
                     numTokens += 4;
@@ -1652,7 +1655,7 @@ pub const Parser = struct {
     }
 
     /// Parses a chain of selectors
-    /// `{ "." Identifier }*`
+    /// `{ "." Identifier }*{ "[" Expression "]" }?`
     /// expects caller to parse first item in chain
     /// i.e. Factor for `Selector` and `Identifier` for `LValue`
     pub fn parseSelectorChain(self: *Parser) !?usize {
@@ -1827,7 +1830,7 @@ pub const Parser = struct {
                     const identNewNumberNode = try self.astAppendNode(newNumberNode);
 
                     const newNode = Node{
-                        .kind = .{ .New = .{ .ident = identNewNumberNode } },
+                        .kind = .{ .NewIntArray = .{ .length = identNewNumberNode } },
                         .token = newToken,
                     };
                     try self.set(newIndex, newNode);
@@ -2205,12 +2208,13 @@ test "fun.with_locals" {
     try ting.expect(nodes[funNode.kind.Function.proto].kind == .FunctionProto);
     // TODO: add more checks for function subtree structure
 }
-test "parser.checkArrayAccess" {
-    const source = "int_array a; a = new int_array[10];}";
+test "parser.1checkArrayAccess" {
+    const source = "int_array a; fun main() void{ a = new int_array[10];}";
     _ = try parseMe(source);
 }
 
-// test "parser.checkArrayAccess" {
-//     const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
-//     _ = try parseMe(source);
-// }
+test "parser.checkArrayAccess" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
+
+    _ = try parseMe(source);
+}

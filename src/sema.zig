@@ -13,6 +13,7 @@ const SemaError = error{
 
 const TypeError = error{
     InvalidType,
+    InvalidToken,
     InvalidFunctionCall,
     OutOfBounds,
     OutOfMemory,
@@ -680,6 +681,7 @@ pub fn getAndCheckFactor(ast: *const Ast, factorn: Ast.Node, fName: []const u8, 
         .True, .False => return Ast.Type.Bool,
         .Null => return Ast.Type.Null,
         .New => return try getAndCheckNew(ast, node),
+        .NewIntArray => return getAndCheckNewIntArray(ast, node),
         .Invocation => return try getAndCheckInvocation(ast, node, fName, returnType),
         .Expression => return try getAndCheckTypeExpression(ast, node, fName, returnType),
         .Identifier => return try getAndCheckLocalIdentifier(ast, node, fName),
@@ -703,6 +705,17 @@ pub fn getAndCheckNew(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
     return Ast.Type{ .Struct = name };
 }
 
+pub fn getAndCheckNewIntArray(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
+    // errdefer ast.printNodeLine(newn);
+    const new = newn.kind.NewIntArray;
+    // check that len is a number node
+    const len = ast.get(new.length).kind;
+    if (len != .Number) {
+        utils.todo("Error on newIntArray type checking\n", .{});
+        return error.InvalidType;
+    }
+    return Ast.Type.IntArray;
+}
 pub fn getAndCheckLocalIdentifier(ast: *const Ast, localId: Ast.Node, fName: []const u8) TypeError!Ast.Type {
     // errdefer ast.printNodeLine(localId);
     const token = localId.token;
@@ -890,14 +903,25 @@ pub fn LValuegetType(this: ?usize, ast: *const Ast, fName: []const u8) !?Ast.Typ
     // errdefer ast.printNodeLine(ast.get(this.?).*);
     const self = ast.get(this.?).kind.LValue;
     const identNode = ast.get(self.ident);
+    // check if the ident is an identifier or an expression
+    switch (identNode.kind) {
+        .Identifier => {},
+        .Expression => {
+            const exp_I_arr = try getAndCheckTypeExpression(ast, ast.get(identNode.kind.Expression.expr).*, fName, Ast.Type.Int);
+            if (!exp_I_arr.equals(Ast.Type.Int)) {
+                return error.InvalidTypeExptectedInt;
+            }
+            return Ast.Type.Int;
+        },
+        else => {
+            utils.todo("Error on lvalue type checking\n", .{});
+            return error.InvalidType;
+        },
+    }
     const ident = identNode.token._range.getSubStrFromStr(ast.input);
     // const g_decl = ast.getDeclarationGlobalFromName(ident);
     const f_decl = try getAndCheckLocalIdentifier(ast, identNode.*, fName);
     var decl = f_decl;
-    // if (decl == null) {
-    //     // TODO: add error
-    //     return error.InvalidAssignmentNoDeclaration;
-    // }
 
     var result: ?Ast.Type = null;
     var tmpIdent = ident;
@@ -905,12 +929,56 @@ pub fn LValuegetType(this: ?usize, ast: *const Ast, fName: []const u8) !?Ast.Typ
     if (chaini == null) {
         return decl;
     }
+    // check if type is a struct or an intarray
+    switch (decl) {
+        .Struct => {},
+        .IntArray => {
+            // check if the chain is an expression
+            const chainIdent = ast.get(chaini.?).kind.SelectorChain.ident;
+            const chainIdentNode = ast.get(chainIdent).kind;
+            switch (chainIdentNode) {
+                .Expression => {
+                    const exprI_ARR = try getAndCheckTypeExpression(ast, ast.get(chainIdentNode.Expression.expr).*, fName, Ast.Type.Int);
+                    if (!exprI_ARR.equals(Ast.Type.Int)) {
+                        return error.InvalidTypeExptectedInt;
+                    }
+                    return Ast.Type.Int;
+                },
+                else => {
+                    utils.todo("Error on lvalue type checking, expexcted xpression\n", .{});
+                    return error.InvalidType;
+                },
+            }
+        },
+        else => {
+            utils.todo("Error on lvalue type checking\n", .{});
+            return error.InvalidType;
+        },
+    }
     tmpIdent = decl.Struct;
     tmpIdent = ast.get(ast.getStructNodeFromName(tmpIdent).?.kind.TypeDeclaration.ident).token._range.getSubStrFromStr(ast.input);
 
     var chain = ast.get(chaini.?).kind.SelectorChain;
     while (true) {
-        const chainIdent = ast.get(chain.ident).token._range.getSubStrFromStr(ast.input);
+        var chainIdent_K = ast.get(chain.ident);
+        // check if the ident is an identifier or an expression
+        switch (chainIdent_K.kind) {
+            .Identifier => {},
+            .Expression => {
+                const exp_type = try getAndCheckTypeExpression(ast, ast.get(chainIdent_K.kind.Expression.expr).*, fName, Ast.Type.Int);
+                // assert exp_type.equals(Ast.Type.Int);
+                if (!exp_type.equals(Ast.Type.Int)) {
+                    return error.InvalidTypeExptectedInt;
+                }
+                return Ast.Type.Int;
+            },
+            else => {
+                utils.todo("Error on lvalue type checking\n", .{});
+                return error.InvalidType;
+            },
+        }
+
+        const chainIdent = chainIdent_K.token._range.getSubStrFromStr(ast.input);
         const field = ast.getStructFieldType(tmpIdent, chainIdent);
         if (field == null) {
             // TODO: add error
@@ -1371,4 +1439,22 @@ test "sema.4mini" {
     var ast = try testMe(source);
     // expect error InvalidAssignmentType
     try typeCheck(&ast);
+}
+
+test "sema.ia_invalid_access" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[true] = 1;}";
+    var ast = try testMe(source);
+    // expect error
+    try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheck(&ast));
+}
+
+test "sema.ia_invalid_new" {
+    const source = "fun main() void {int_array a; a = new int_array[true];}";
+    _ = try ting.expectError(TypeError.InvalidToken, testMe(source));
+}
+
+test "sema_ia_lots_of_errors" {
+    const source = "fun main() void {int_array a; int b; int c; a = new int_array[0]; c = b + a[100000000]; a = new int_array[2000]; a[0] = c;}";
+    _ = try testMe(source);
+    // expect error
 }

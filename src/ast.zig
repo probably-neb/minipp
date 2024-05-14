@@ -1186,3 +1186,17 @@ test "ast.getGloablStructTypeFromName_notFound" {
     const ty = ast.getDeclarationGlobalFromName("b");
     try ting.expect(ty == null);
 }
+
+test "ast.int_array_main" {
+    errdefer log.print();
+    const input = "fun main() void { int_array a; a = new int_array[10]; }";
+    var ast = try testMe(input);
+    _ = ast.getFunctionDeclarationTypeFromName("main", "a");
+}
+
+test "ast.int_array_access" {
+    errdefer log.print();
+    const input = "fun main() void { int_array a; a = new int_array[10]; a[0] = 1; }";
+    var ast = try testMe(input);
+    _ = ast;
+}
