@@ -1611,6 +1611,36 @@ pub const Parser = struct {
                     _ = try self.consumeToken();
                     try self.expectToken(.Identifier);
                     numTokens += 2;
+
+                    var nextToken = try self.currentToken();
+                    if (nextToken.kind == .LBracket) {
+                        numTokens += 1;
+                        var count: u32 = 1;
+                        // std.debug.print("LBracket I Am HEREERERERERERE\n", .{});
+                        _ = try self.consumeToken();
+                        while (count != 0) {
+                            numTokens += 1;
+                            const tok = try self.consumeToken();
+                            if (tok.kind == .Eof) {
+                                // TODO: handle
+                                return error.NotEnoughTokens;
+                            }
+                            if (tok.kind == .LBracket) {
+                                count += 1;
+                            } else if (tok.kind == .RBracket) {
+                                count -= 1;
+                            }
+                        }
+                        const current = try self.currentToken();
+                        if (current.kind == .Dot) {
+                            _ = try self.consumeToken();
+                            try self.expectToken(.Identifier);
+                            numTokens += 2;
+                        } else {
+                            const final = self.tokens[self.pos - 1];
+                            utils.assert(final.kind == .RBracket, "final token not RBracket, is: {}\n", .{final});
+                        }
+                    }
                 }
             },
             .Number, .KeywordTrue, .KeywordFalse, .KeywordNull, .Identifier => {

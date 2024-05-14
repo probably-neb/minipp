@@ -664,7 +664,7 @@ pub fn getAndCheckSelector(ast: *const Ast, selectorn: Ast.Node, fName: []const 
     const selector = selectorn.kind.Selector;
     const factorNode = ast.get(selector.factor).*;
     const factorType = try getAndCheckFactor(ast, factorNode, fName, returnType);
-    const chainType = try SelectorChaingetType(selector.chain, ast, factorType);
+    const chainType = try SelectorChaingetType(selector.chain, ast, factorType, fName, returnType);
     if (chainType == null) {
         return factorType;
     }
@@ -733,16 +733,37 @@ pub fn getAndCheckLocalIdentifier(ast: *const Ast, localId: Ast.Node, fName: []c
     return localDecl.?;
 }
 
-pub fn SelectorChaingetType(this: ?usize, ast: *const Ast, ty: Ast.Type) !?Ast.Type {
+pub fn SelectorChaingetType(this: ?usize, ast: *const Ast, ty: Ast.Type, fName: []const u8, returnType: Ast.Type) !?Ast.Type {
     if (this == null) {
         return null;
     }
 
-    // check if type is a struct
-    if (!ty.isStruct()) {
-        utils.todo("this must be a struct, do error proper", .{});
-        return null;
+    // check if its int array or struct
+    switch (ty) {
+        .IntArray => {
+            const chain = ast.get(this.?).kind.SelectorChain;
+            // check if chain.ident is identifier or expression
+            const ident = ast.get(chain.ident).kind;
+            switch (ident) {
+                .Identifier => {
+                    return Ast.Type.IntArray;
+                },
+                .Expression => {
+                    const expr = ident.Expression;
+                    const exprNode = ast.get(expr.expr).*;
+                    return try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
+                },
+                else => {
+                    return error.InvalidType;
+                },
+            }
+        },
+        .Struct => {},
+        else => {
+            return error.InvalidType;
+        },
     }
+
     // get the ident of the struct
     const ident = ty.Struct;
 
@@ -757,7 +778,20 @@ pub fn SelectorChaingetType(this: ?usize, ast: *const Ast, ty: Ast.Type) !?Ast.T
 
     var chain = ast.get(chaini.?).kind.SelectorChain;
     while (true) {
-        const chainIdent = ast.get(chain.ident).token._range.getSubStrFromStr(ast.input);
+        const chainIdent2 = ast.get(chain.ident);
+        // check if chain.ident is identifier or expression
+        switch (chainIdent2.kind) {
+            .Identifier => {},
+            .Expression => {
+                const expr = chainIdent2.kind.Expression;
+                const exprNode = ast.get(expr.expr).*;
+                return try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
+            },
+            else => {
+                return error.InvalidType;
+            },
+        }
+        const chainIdent = chainIdent2.token._range.getSubStrFromStr(ast.input);
         const field = ast.getStructFieldType(tmpIdent, chainIdent);
         if (field == null) {
             // TODO: add error
@@ -1475,6 +1509,12 @@ test "sema.ia_structs_assign_retrive" {
 
 test "sema.ia_int_arryay_member_struct" {
     const source = "struct S {int_array a;}; fun main() void {struct S b; b.a = new int_array[10]; b.a[0] = 1;}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
+test "sema.ia_struct_toself" {
+    const source = "struct S {int_array a; int b;}; fun main() void {struct S c; c.a = new int_array[100]; c.b = c.a[20];}";
     var ast = try testMe(source);
     // expect error
     try typeCheck(&ast);
