@@ -1519,3 +1519,10 @@ test "sema.ia_struct_toself" {
     // expect error
     try typeCheck(&ast);
 }
+
+test "sema.ia_struct_toself2" {
+    const source = "struct S {struct S s; int_array a; int b;}; fun main() void {struct S c; c.s.s.s.s.s.s.s.a = new int_array[100]; c.s.s.s.s.s.s.s.b = c.a[20]; c.s.s.s.s.s.s.s.s.s.a[20] = 2;}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
