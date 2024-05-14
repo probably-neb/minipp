@@ -96,6 +96,8 @@ pub const TokenKind = enum {
     RParen,
     LCurly,
     RCurly,
+    LBracket,
+    RBracket,
     Semicolon,
     Eof,
     Or,
@@ -118,6 +120,7 @@ pub const TokenKind = enum {
     KeywordTrue,
     KeywordVoid,
     KeywordWhile,
+    KeywordIntArray,
     Unset,
 
     // NOTE: bool, int, void shouldn't be valid keywords, (valid /type/ names)
@@ -142,6 +145,7 @@ pub const TokenKind = enum {
         .{ "true", TokenKind.KeywordTrue },
         .{ "void", TokenKind.KeywordVoid },
         .{ "while", TokenKind.KeywordWhile },
+        .{ "int_array", TokenKind.KeywordIntArray },
     });
 
     pub fn equals(self: TokenKind, other: TokenKind) bool {
@@ -250,7 +254,7 @@ pub const Lexer = struct {
         lxr.skip_whitespace();
 
         const info: TokInfo = switch (lxr.ch) {
-            'a'...'z', 'A'...'Z' => lxr.ident_or_builtin(),
+            'a'...'z', 'A'...'Z' => try lxr.ident_or_builtin(),
             '0'...'9' => .{ .kind = TokenKind.Number, .range = try lxr.read_number() },
             else => blk: {
                 const pos = lxr.pos;
@@ -328,19 +332,29 @@ pub const Lexer = struct {
         }
     }
 
-    fn read_ident(lxr: *Lexer) Range {
+    fn read_ident(lxr: *Lexer) !Range {
         const pos = lxr.pos;
         // NOTE: no need to check first char is not numeric here
         // because if first char was numeric we would have called
         // read_number instead
-        while (std.ascii.isAlphanumeric(lxr.ch)) {
+        var hasUnderscore = false;
+        while (std.ascii.isAlphanumeric(lxr.ch) or lxr.ch == '_') {
+            hasUnderscore = hasUnderscore or lxr.ch == '_';
             lxr.step();
         }
-        return Range{ .start = pos, .end = lxr.pos };
+        const range = Range{ .start = pos, .end = lxr.pos };
+        if (hasUnderscore) {
+            const ident = lxr.slice(range);
+            if (!std.mem.eql(u8, ident, "int_array")) {
+                log.err("error: only ident allowed to have underscore is `int_array` not {s}\n", .{ident});
+                return error.InvalidToken;
+            }
+        }
+        return range;
     }
 
-    fn ident_or_builtin(lxr: *Lexer) TokInfo {
-        const range = lxr.read_ident();
+    fn ident_or_builtin(lxr: *Lexer) !TokInfo {
+        const range = try lxr.read_ident();
         const ident = lxr.slice(range);
         const kw = TokenKind.keywords.get(ident);
         if (kw) |kw_kind| {
@@ -371,6 +385,8 @@ pub const Lexer = struct {
             ')' => .RParen,
             '{' => .LCurly,
             '}' => .RCurly,
+            '[' => .LBracket,
+            ']' => .RBracket,
             '+' => .Plus,
             '*' => .Mul,
             '/' => .Div,
@@ -449,6 +465,18 @@ test "add" {
         .Number,
         .Plus,
         .Number,
+        .Eof,
+    });
+    defer testAlloc.free(tokens);
+}
+
+test "brackets" {
+    const tokens = try expect_results_in_tokens("new int_array[10]", &[_]TokenKind{
+        .KeywordNew,
+        .KeywordIntArray,
+        .LBracket,
+        .Number,
+        .RBracket,
         .Eof,
     });
     defer testAlloc.free(tokens);
@@ -577,6 +605,39 @@ test "comment" {
         .KeywordVoid,
         .LCurly,
         .KeywordReturn,
+        .Semicolon,
+        .RCurly,
+        .Eof,
+    });
+    defer testAlloc.free(tokens);
+}
+
+test "lexer.checkArrayAccess" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
+    const tokens = try expect_results_in_tokens(source, &[_]TokenKind{
+        .KeywordFun,
+        .Identifier,
+        .LParen,
+        .RParen,
+        .KeywordVoid,
+        .LCurly,
+        .KeywordIntArray,
+        .Identifier,
+        .Semicolon,
+        .Identifier,
+        .Eq,
+        .KeywordNew,
+        .KeywordIntArray,
+        .LBracket,
+        .Number,
+        .RBracket,
+        .Semicolon,
+        .Identifier,
+        .LBracket,
+        .Number,
+        .RBracket,
+        .Eq,
+        .Number,
         .Semicolon,
         .RCurly,
         .Eof,

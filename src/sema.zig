@@ -13,6 +13,7 @@ const SemaError = error{
 
 const TypeError = error{
     InvalidType,
+    InvalidToken,
     InvalidFunctionCall,
     OutOfBounds,
     OutOfMemory,
@@ -203,9 +204,10 @@ pub fn typeCheck(ast: *const Ast) !void {
         try typeCheckFunction(ast, func.*);
     }
 }
+
 // Done
 pub fn typeCheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
-    errdefer ast.printNodeLine(func);
+    // errdefer ast.printNodeLine(func);
     var fc = func.kind.Function;
     const functionName = fc.getName(ast);
     const returnType = fc.getReturnType(ast).?;
@@ -247,7 +249,7 @@ pub fn typeCheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
 
 // Done
 pub fn typeCheckStatementList(ast: *const Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer if (statementListn) |lst| ast.printNodeLine(ast.get(lst).*);
+    // errdefer if (statementListn) |lst| ast.printNodeLine(ast.get(lst).*);
     // log.trace("statementListn: {d}\n", .{statementListn.?});
     const list = try StatemenListgetList(statementListn, ast);
     if (list == null) {
@@ -261,7 +263,7 @@ pub fn typeCheckStatementList(ast: *const Ast, statementListn: ?usize, fName: []
 }
 
 pub fn typeCheckStatement(ast: *const Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer ast.printNodeLine(statement);
+    // errdefer ast.printNodeLine(statement);
     const kind = statement.kind;
     _ = switch (kind) {
         .Block => {
@@ -306,7 +308,7 @@ pub fn typeCheckStatement(ast: *const Ast, statement: Ast.Node, fName: []const u
 
 // Done
 pub fn typeCheckBlock(ast: *const Ast, blockn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer ast.printNodeLine(blockn);
+    // errdefer ast.printNodeLine(blockn);
     // Block to statement list
     const block = blockn.kind.Block;
     const statementIndex = block.statements;
@@ -318,7 +320,7 @@ pub fn typeCheckBlock(ast: *const Ast, blockn: Ast.Node, fName: []const u8, retu
 
 // Done
 pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer ast.printNodeLine(assignmentn);
+    // errdefer ast.printNodeLine(assignmentn);
     const assignment = assignmentn.kind.Assignment;
     const left = assignment.lhs;
     const right = assignment.rhs;
@@ -368,7 +370,7 @@ pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []cons
 
 // Done
 pub fn typeCheckPrint(ast: *const Ast, printn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer ast.printNodeLine(printn);
+    // errdefer ast.printNodeLine(printn);
     const print = printn.kind.Print;
     const expr = print.expr;
     const exprNode = ast.get(expr).*;
@@ -381,7 +383,7 @@ pub fn typeCheckPrint(ast: *const Ast, printn: Ast.Node, fName: []const u8, retu
 
 // Done
 pub fn typeCheckConditional(ast: *const Ast, conditionaln: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer ast.printNodeLine(conditionaln);
+    // errdefer ast.printNodeLine(conditionaln);
     // first check if conditional is bool
     const conditional = conditionaln.kind.ConditionalIf;
     const cond = conditional.cond;
@@ -407,7 +409,7 @@ pub fn typeCheckConditional(ast: *const Ast, conditionaln: Ast.Node, fName: []co
 
 // Done
 pub fn typeCheckWhile(ast: *const Ast, while_nN: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer ast.printNodeLine(while_nN);
+    // errdefer ast.printNodeLine(while_nN);
     // first check if conditional is bool
     const while_n = while_nN.kind.While;
     const cond = while_n.cond;
@@ -424,7 +426,7 @@ pub fn typeCheckWhile(ast: *const Ast, while_nN: Ast.Node, fName: []const u8, re
 
 // Done
 pub fn typeCheckDelete(ast: *const Ast, deleten: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer ast.printNodeLine(deleten);
+    // errdefer ast.printNodeLine(deleten);
     const delete = deleten.kind.Delete;
     const expr = delete.expr;
     const exprNode = ast.get(expr).*;
@@ -437,7 +439,7 @@ pub fn typeCheckDelete(ast: *const Ast, deleten: Ast.Node, fName: []const u8, re
 
 // Done
 pub fn typeCheckReturn(ast: *const Ast, retn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
-    errdefer ast.printNodeLine(retn);
+    // errdefer ast.printNodeLine(retn);
     const ret = retn.kind.Return;
     const expr = ret.expr;
     if (expr == null) {
@@ -456,7 +458,7 @@ pub fn typeCheckReturn(ast: *const Ast, retn: Ast.Node, fName: []const u8, retur
 
 // Done
 pub fn getAndCheckInvocation(ast: *const Ast, invocationn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
-    errdefer ast.printNodeLine(invocationn);
+    // errdefer ast.printNodeLine(invocationn);
     const invocation = invocationn.kind.Invocation;
     const funcName = ast.get(invocation.funcName).token._range.getSubStrFromStr(ast.input);
     const func = ast.getFunctionFromName(funcName);
@@ -536,7 +538,7 @@ pub fn getAndCheckInvocation(ast: *const Ast, invocationn: Ast.Node, fName: []co
 
 // Done
 pub fn getAndCheckTypeExpression(ast: *const Ast, exprn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
-    errdefer ast.printNodeLine(exprn);
+    // errdefer ast.printNodeLine(exprn);
     switch (exprn.kind) {
         .BinaryOperation => {
             return try getAndCheckBinaryOperation(ast, exprn, fName, returnType);
@@ -579,7 +581,7 @@ pub fn getAndCheckTypeExpression(ast: *const Ast, exprn: Ast.Node, fName: []cons
 
 // TODO: fix the errors
 pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
-    errdefer ast.printNodeLine(binaryOp);
+    // errdefer ast.printNodeLine(binaryOp);
     const token = binaryOp.token;
     switch (token.kind) {
         .Lt, .Gt, .GtEq, .LtEq, .DoubleEq, .NotEq => {
@@ -624,8 +626,8 @@ pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []
         .Plus,
         .Div,
         => {
-            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs).*;
-            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs).*;
+            const lhsExpr = ast.get(binaryOp.kind.BinaryOperation.lhs.?).*;
+            const rhsExpr = ast.get(binaryOp.kind.BinaryOperation.rhs.?).*;
             const lhsType = try getAndCheckTypeExpression(ast, lhsExpr, fName, returnType);
             const rhsType = try getAndCheckTypeExpression(ast, rhsExpr, fName, returnType);
             if (!lhsType.equals(rhsType)) {
@@ -648,7 +650,7 @@ pub fn getAndCheckBinaryOperation(ast: *const Ast, binaryOp: Ast.Node, fName: []
 }
 
 pub fn getAndCheckUnaryOperation(ast: *const Ast, unaryOp: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
-    errdefer ast.printNodeLine(unaryOp);
+    // errdefer ast.printNodeLine(unaryOp);
     const token = unaryOp.token;
     switch (token.kind) {
         .Not => {
@@ -676,11 +678,11 @@ pub fn getAndCheckUnaryOperation(ast: *const Ast, unaryOp: Ast.Node, fName: []co
 }
 
 pub fn getAndCheckSelector(ast: *const Ast, selectorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
-    errdefer ast.printNodeLine(selectorn);
+    // errdefer ast.printNodeLine(selectorn);
     const selector = selectorn.kind.Selector;
     const factorNode = ast.get(selector.factor).*;
     const factorType = try getAndCheckFactor(ast, factorNode, fName, returnType);
-    const chainType = try SelectorChaingetType(selector.chain, ast, factorType);
+    const chainType = try SelectorChaingetType(selector.chain, ast, factorType, fName, returnType);
     if (chainType == null) {
         return factorType;
     }
@@ -688,7 +690,7 @@ pub fn getAndCheckSelector(ast: *const Ast, selectorn: Ast.Node, fName: []const 
 }
 
 pub fn getAndCheckFactor(ast: *const Ast, factorn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!Ast.Type {
-    errdefer ast.printNodeLine(factorn);
+    // errdefer ast.printNodeLine(factorn);
     const factor = factorn.kind.Factor;
     const kind = factor.factor;
     const node = ast.get(kind).*;
@@ -697,6 +699,7 @@ pub fn getAndCheckFactor(ast: *const Ast, factorn: Ast.Node, fName: []const u8, 
         .True, .False => return Ast.Type.Bool,
         .Null => return Ast.Type.Null,
         .New => return try getAndCheckNew(ast, node),
+        .NewIntArray => return getAndCheckNewIntArray(ast, node),
         .Invocation => return try getAndCheckInvocation(ast, node, fName, returnType),
         .Expression => return try getAndCheckTypeExpression(ast, node, fName, returnType),
         .Identifier => return try getAndCheckLocalIdentifier(ast, node, fName),
@@ -709,7 +712,7 @@ pub fn getAndCheckFactor(ast: *const Ast, factorn: Ast.Node, fName: []const u8, 
 }
 
 pub fn getAndCheckNew(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
-    errdefer ast.printNodeLine(newn);
+    // errdefer ast.printNodeLine(newn);
     const new = newn.kind.New;
     const name = ast.get(new.ident).token._range.getSubStrFromStr(ast.input);
     const structType = ast.getStructNodeFromName(name);
@@ -720,8 +723,19 @@ pub fn getAndCheckNew(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
     return Ast.Type{ .Struct = name };
 }
 
+pub fn getAndCheckNewIntArray(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
+    // errdefer ast.printNodeLine(newn);
+    const new = newn.kind.NewIntArray;
+    // check that len is a number node
+    const len = ast.get(new.length).kind;
+    if (len != .Number) {
+        utils.todo("Error on newIntArray type checking\n", .{});
+        return error.InvalidType;
+    }
+    return Ast.Type.IntArray;
+}
 pub fn getAndCheckLocalIdentifier(ast: *const Ast, localId: Ast.Node, fName: []const u8) TypeError!Ast.Type {
-    errdefer ast.printNodeLine(localId);
+    // errdefer ast.printNodeLine(localId);
     const token = localId.token;
     const name = token._range.getSubStrFromStr(ast.input);
     const func = ast.getFunctionFromName(fName).?.kind.Function.proto;
@@ -737,16 +751,37 @@ pub fn getAndCheckLocalIdentifier(ast: *const Ast, localId: Ast.Node, fName: []c
     return localDecl.?;
 }
 
-pub fn SelectorChaingetType(this: ?usize, ast: *const Ast, ty: Ast.Type) !?Ast.Type {
+pub fn SelectorChaingetType(this: ?usize, ast: *const Ast, ty: Ast.Type, fName: []const u8, returnType: Ast.Type) !?Ast.Type {
     if (this == null) {
         return null;
     }
 
-    // check if type is a struct
-    if (!ty.isStruct()) {
-        utils.todo("this must be a struct, do error proper", .{});
-        return null;
+    // check if its int array or struct
+    switch (ty) {
+        .IntArray => {
+            const chain = ast.get(this.?).kind.SelectorChain;
+            // check if chain.ident is identifier or expression
+            const ident = ast.get(chain.ident).kind;
+            switch (ident) {
+                .Identifier => {
+                    return Ast.Type.IntArray;
+                },
+                .Expression => {
+                    const expr = ident.Expression;
+                    const exprNode = ast.get(expr.expr).*;
+                    return try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
+                },
+                else => {
+                    return error.InvalidType;
+                },
+            }
+        },
+        .Struct => {},
+        else => {
+            return error.InvalidType;
+        },
     }
+
     // get the ident of the struct
     const ident = ty.Struct;
 
@@ -761,7 +796,20 @@ pub fn SelectorChaingetType(this: ?usize, ast: *const Ast, ty: Ast.Type) !?Ast.T
 
     var chain = ast.get(chaini.?).kind.SelectorChain;
     while (true) {
-        const chainIdent = ast.get(chain.ident).token._range.getSubStrFromStr(ast.input);
+        const chainIdent2 = ast.get(chain.ident);
+        // check if chain.ident is identifier or expression
+        switch (chainIdent2.kind) {
+            .Identifier => {},
+            .Expression => {
+                const expr = chainIdent2.kind.Expression;
+                const exprNode = ast.get(expr.expr).*;
+                return try getAndCheckTypeExpression(ast, exprNode, fName, returnType);
+            },
+            else => {
+                return error.InvalidType;
+            },
+        }
+        const chainIdent = chainIdent2.token._range.getSubStrFromStr(ast.input);
         const field = ast.getStructFieldType(tmpIdent, chainIdent);
         if (field == null) {
             // TODO: add error
@@ -832,7 +880,7 @@ pub fn ParamatergetParamTypeFromName(this: ?usize, ast: *const Ast, name: []cons
 }
 
 pub fn TypedIdentifergetType(tid: Ast.Node, ast: *const Ast) !Ast.Type {
-    errdefer ast.printNodeLine(tid);
+    // errdefer ast.printNodeLine(tid);
     const ty = ast.get(tid.kind.TypedIdentifier.type).*.kind.Type;
     const ff = ast.get(ty.kind).*.kind;
     _ = switch (ff) {
@@ -855,7 +903,7 @@ pub fn ArgumentsgetArgumentTypes(this: ?usize, ast: *const Ast, fName: []const u
     if (this == null) {
         return null;
     }
-    errdefer ast.printNodeLine(ast.get(this.?).*);
+    // errdefer ast.printNodeLine(ast.get(this.?).*);
     const self = ast.get(this.?).kind.Arguments;
     var list = std.ArrayList(Ast.Type).init(ast.allocator);
     const last: usize = self.lastArg orelse self.firstArg + 1;
@@ -904,17 +952,28 @@ pub fn LValuegetType(this: ?usize, ast: *const Ast, fName: []const u8) !?Ast.Typ
         // TODO add error
         return null;
     }
-    errdefer ast.printNodeLine(ast.get(this.?).*);
+    // errdefer ast.printNodeLine(ast.get(this.?).*);
     const self = ast.get(this.?).kind.LValue;
     const identNode = ast.get(self.ident);
+    // check if the ident is an identifier or an expression
+    switch (identNode.kind) {
+        .Identifier => {},
+        .Expression => {
+            const exp_I_arr = try getAndCheckTypeExpression(ast, ast.get(identNode.kind.Expression.expr).*, fName, Ast.Type.Int);
+            if (!exp_I_arr.equals(Ast.Type.Int)) {
+                return error.InvalidTypeExptectedInt;
+            }
+            return Ast.Type.Int;
+        },
+        else => {
+            utils.todo("Error on lvalue type checking\n", .{});
+            return error.InvalidType;
+        },
+    }
     const ident = identNode.token._range.getSubStrFromStr(ast.input);
     // const g_decl = ast.getDeclarationGlobalFromName(ident);
     const f_decl = try getAndCheckLocalIdentifier(ast, identNode.*, fName);
     var decl = f_decl;
-    // if (decl == null) {
-    //     // TODO: add error
-    //     return error.InvalidAssignmentNoDeclaration;
-    // }
 
     var result: ?Ast.Type = null;
     var tmpIdent = ident;
@@ -922,12 +981,56 @@ pub fn LValuegetType(this: ?usize, ast: *const Ast, fName: []const u8) !?Ast.Typ
     if (chaini == null) {
         return decl;
     }
+    // check if type is a struct or an intarray
+    switch (decl) {
+        .Struct => {},
+        .IntArray => {
+            // check if the chain is an expression
+            const chainIdent = ast.get(chaini.?).kind.SelectorChain.ident;
+            const chainIdentNode = ast.get(chainIdent).kind;
+            switch (chainIdentNode) {
+                .Expression => {
+                    const exprI_ARR = try getAndCheckTypeExpression(ast, ast.get(chainIdentNode.Expression.expr).*, fName, Ast.Type.Int);
+                    if (!exprI_ARR.equals(Ast.Type.Int)) {
+                        return error.InvalidTypeExptectedInt;
+                    }
+                    return Ast.Type.Int;
+                },
+                else => {
+                    utils.todo("Error on lvalue type checking, expexcted xpression\n", .{});
+                    return error.InvalidType;
+                },
+            }
+        },
+        else => {
+            utils.todo("Error on lvalue type checking\n", .{});
+            return error.InvalidType;
+        },
+    }
     tmpIdent = decl.Struct;
     tmpIdent = ast.get(ast.getStructNodeFromName(tmpIdent).?.kind.TypeDeclaration.ident).token._range.getSubStrFromStr(ast.input);
 
     var chain = ast.get(chaini.?).kind.SelectorChain;
     while (true) {
-        const chainIdent = ast.get(chain.ident).token._range.getSubStrFromStr(ast.input);
+        var chainIdent_K = ast.get(chain.ident);
+        // check if the ident is an identifier or an expression
+        switch (chainIdent_K.kind) {
+            .Identifier => {},
+            .Expression => {
+                const exp_type = try getAndCheckTypeExpression(ast, ast.get(chainIdent_K.kind.Expression.expr).*, fName, Ast.Type.Int);
+                // assert exp_type.equals(Ast.Type.Int);
+                if (!exp_type.equals(Ast.Type.Int)) {
+                    return error.InvalidTypeExptectedInt;
+                }
+                return Ast.Type.Int;
+            },
+            else => {
+                utils.todo("Error on lvalue type checking\n", .{});
+                return error.InvalidType;
+            },
+        }
+
+        const chainIdent = chainIdent_K.token._range.getSubStrFromStr(ast.input);
         const field = ast.getStructFieldType(tmpIdent, chainIdent);
         if (field == null) {
             // TODO: add error
@@ -950,7 +1053,7 @@ pub fn StatemenListgetList(this: ?usize, ast: *const Ast) TypeError!?[]usize {
     if (this == null) {
         return null;
     }
-    errdefer ast.printNodeLine(ast.get(this.?).*);
+    // errdefer ast.printNodeLine(ast.get(this.?).*);
     const self = ast.get(this.?).kind.StatementList;
     var list = std.ArrayList(usize).init(ast.allocator);
     const last = self.lastStatement orelse self.firstStatement + 1;
@@ -1375,10 +1478,69 @@ test "sema.check_binop_mul_bools" {
     // expect error
     try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheckFunction(&ast, funcLit));
 }
+test "sema.checkArrayAccess" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
+    var ast = try testMe(source);
+    // var func = ast.getFunctionFromName("main");
+    // var funcLit = func.?.*;
+    try typeCheck(&ast);
+}
 test "sema.4mini" {
     // load source from file
     const source = @embedFile("4.mini");
     var ast = try testMe(source);
     // expect error InvalidAssignmentType
+    try typeCheck(&ast);
+}
+
+test "sema.ia_invalid_access" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[true] = 1;}";
+    var ast = try testMe(source);
+    // expect error
+    try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheck(&ast));
+}
+
+test "sema.ia_invalid_new" {
+    const source = "fun main() void {int_array a; a = new int_array[true];}";
+    _ = try ting.expectError(TypeError.InvalidToken, testMe(source));
+}
+
+test "sema_ia_lots_of_errors" {
+    const source = "fun main() void {int_array a; int b; int c; a = new int_array[0]; c = b + a[100000000]; a = new int_array[2000]; a[0] = c;}";
+    _ = try testMe(source);
+    // expect error
+}
+
+test "sema_ia.structs" {
+    const source = "struct S {int a;}; fun main() void {int_array a; struct S b; a = new int_array[10]; b.a = a[0];}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
+
+test "sema.ia_structs_assign_retrive" {
+    const source = "struct S {int a;}; fun main() void {int_array a; struct S b; a = new int_array[10]; b.a = a[0]; a[0] = b.a;}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
+
+test "sema.ia_int_arryay_member_struct" {
+    const source = "struct S {int_array a;}; fun main() void {struct S b; b.a = new int_array[10]; b.a[0] = 1;}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
+test "sema.ia_struct_toself" {
+    const source = "struct S {int_array a; int b;}; fun main() void {struct S c; c.a = new int_array[100]; c.b = c.a[20];}";
+    var ast = try testMe(source);
+    // expect error
+    try typeCheck(&ast);
+}
+
+test "sema.ia_struct_toself2" {
+    const source = "struct S {struct S s; int_array a; int b;}; fun main() void {struct S c; c.s.s.s.s.s.s.s.a = new int_array[100]; c.s.s.s.s.s.s.s.b = c.a[20]; c.s.s.s.s.s.s.s.s.s.a[20] = 2;}";
+    var ast = try testMe(source);
+    // expect error
     try typeCheck(&ast);
 }

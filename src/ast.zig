@@ -194,6 +194,7 @@ pub const Node = struct {
                 .BoolType,
                 .IntType,
                 .StructType,
+                .IntArrayType,
             }),
             /// when kind is `StructType` points to the idenfifier
             /// of the struct
@@ -203,6 +204,7 @@ pub const Node = struct {
         BoolType,
         IntType,
         StructType,
+        IntArrayType,
         Void,
         Read,
         Identifier,
@@ -445,7 +447,13 @@ pub const Node = struct {
         },
         /// A chain of `.ident` selectors
         SelectorChain: struct {
-            ident: Ref(.Identifier),
+            /// TODO: change ident to something that can be used for array access
+            /// and struct access
+            ident: RefOneOf(.{
+                .Identifier,
+                // Expression is used for array access
+                .Expression,
+            }),
             /// Pointer to `SelectorChain`
             /// null if last in chain
             next: ?Ref(.SelectorChain) = null,
@@ -555,6 +563,10 @@ pub const Node = struct {
         New: struct {
             /// pointer to the identifier being allocated
             ident: Ref(.Identifier),
+        },
+        NewIntArray: struct {
+            /// The space to allocate for the array
+            length: Ref(.Number),
         },
         /// keyword `null`
         Null,
@@ -773,6 +785,7 @@ pub const Node = struct {
                             const name = nameToken._range.getSubStrFromStr(ast.input);
                             return .{ .Struct = name };
                         },
+                        .IntArrayType => return .IntArray,
                         else => unreachable,
                     }
                 } else {
@@ -801,6 +814,7 @@ pub const Node = struct {
                         const name = nameToken._range.getSubStrFromStr(ast.input);
                         return .{ .Struct = name };
                     },
+                    .IntArrayType => return .IntArray,
                     else => unreachable,
                 }
             }
@@ -884,6 +898,7 @@ pub const Node = struct {
 pub const Type = union(enum) {
     Bool,
     Int,
+    IntArray,
     Null,
     Void,
     Struct: []const u8,
@@ -946,6 +961,7 @@ const KindTagDupe = enum {
     BoolType,
     IntType,
     StructType,
+    IntArrayType,
     Void,
     Read,
     Identifier,
@@ -1348,4 +1364,18 @@ test "ast.getGloablStructTypeFromName_notFound" {
     var ast = try testMe(input);
     const ty = ast.getDeclarationGlobalFromName("b");
     try ting.expect(ty == null);
+}
+
+test "ast.int_array_main" {
+    errdefer log.print();
+    const input = "fun main() void { int_array a; a = new int_array[10]; }";
+    var ast = try testMe(input);
+    _ = ast.getFunctionDeclarationTypeFromName("main", "a");
+}
+
+test "ast.int_array_access" {
+    errdefer log.print();
+    const input = "fun main() void { int_array a; a = new int_array[10]; a[0] = 1; }";
+    var ast = try testMe(input);
+    _ = ast;
 }

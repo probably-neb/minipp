@@ -3,7 +3,7 @@ types -> {type-declaration}∗
 type-declaration -> 'struct' id '{' nested-decl '}' ';'
 nested-decl -> decl ';' { decl ';'}∗
 decl -> 'type' id
-type -> 'int' | 'bool' | 'struct' id
+type -> 'int' | 'bool' | 'struct' id | 'int_array'
 declarations -> {declaration}∗
 declaration -> 'type' id-list ';'
 id-list -> id {',' id}∗
@@ -30,6 +30,7 @@ simple -> term {{ '+' | '−' } term}∗
 term -> unary {{ '∗' | '/' } unary}∗
 unary -> { '!' | '−' }∗ selector
 selector -> factor {'.' id}∗
-factor -> '(' expression ')' | id {arguments}opt | number | 'true' | 'false' | 'new' id | 'null'
+factor -> '(' expression ')' | id {arguments}opt | number | 'true' |
+         | 'false' | 'new' id | 'null' | 'new' 'int_array' '[' number ']' |
 arguments -> '(' {expression { ',' expression}∗}opt ')'
 number -> {'0' | '1' | ... | '9'}{ '0' | '1' | ... | '9'}∗
