@@ -186,7 +186,7 @@ pub const Parser = struct {
 
     pub fn isCurrentTokenAType(self: *Parser) !bool {
         switch ((try self.currentToken()).kind) {
-            TokenKind.KeywordInt, TokenKind.KeywordBool, TokenKind.KeywordStruct => {
+            TokenKind.KeywordInt, TokenKind.KeywordBool, TokenKind.KeywordStruct, TokenKind.KeywordIntArray => {
                 return true;
             },
             else => {
@@ -428,7 +428,7 @@ pub const Parser = struct {
         return declIndex;
     }
 
-    // Type = "int" | "bool" | "struct" Identifier
+    // Type = "int" | "bool" | "struct" Identifier | "int_array"
     pub fn parseType(self: *Parser) !usize {
         errdefer {
             if (self.showParseTree) {
@@ -446,6 +446,7 @@ pub const Parser = struct {
         const token = try self.consumeToken();
 
         // Expect int | bool | struct (id)
+        // FIXME: SPENCER PUT THE ARRAY TYPE HERE AS A VALID TYPE
         switch (token.kind) {
             TokenKind.KeywordInt => {
                 const kind = NodeKind.IntType;
@@ -457,6 +458,9 @@ pub const Parser = struct {
             TokenKind.KeywordStruct => {
                 kindIndex = try self.astAppend(NodeKind.StructType, token);
                 structIdentifierIndex = try self.astAppendNode(try self.expectIdentifier());
+            },
+            TokenKind.KeywordIntArray => {
+                kindIndex = try self.astAppend(NodeKind.IntArrayType, token);
             },
             else => {
                 // TODO: make this error like the others
@@ -1497,17 +1501,18 @@ pub const Parser = struct {
         var startTok = try self.currentToken();
         const peekKind = (try self.peekToken()).kind;
 
-        if ((startTok.kind == .Identifier) and (peekKind == .LParen or peekKind == .Dot)) {
+        if ((startTok.kind == .Identifier) and (peekKind == .LParen or peekKind == .Dot or peekKind == .LBracket)) {
             // skipping all tokens for function call `id '(' {args},* ')'` is functionally the same as skipping all tokens in a parenthized as expression
             // skipping the id token makes it so they can be handled in the same switch arm in the
             // following switch statement
             _ = try self.consumeToken();
             startTok = try self.currentToken();
-            if (peekKind == .LParen) {
+            if (peekKind == .LParen or peekKind == .LBracket) {
                 // Dot `numTokens` calculation is harder when we increment
                 // in both cases here
                 numTokens += 1;
             }
+            // TODO: SPENCER Possibly do a simmilar thing to the LParen case for LBracket
             // skipping on `.` however just makes it so identifier is easier in the next switch
         }
         switch (startTok.kind) {
@@ -1538,20 +1543,96 @@ pub const Parser = struct {
                     utils.assert(final.kind == .RParen, "final token not RParen, is: {}\n", .{final});
                 }
             },
+            .LBracket => {
+                // keep "stack" of paren count to find the last one
+                var count: u32 = 1;
+                // std.debug.print("LBracket I Am HEREERERERERERE\n", .{});
+                _ = try self.consumeToken();
+                while (count != 0) {
+                    numTokens += 1;
+                    const tok = try self.consumeToken();
+                    if (tok.kind == .Eof) {
+                        // TODO: handle
+                        return error.NotEnoughTokens;
+                    }
+                    if (tok.kind == .LBracket) {
+                        count += 1;
+                    } else if (tok.kind == .RBracket) {
+                        count -= 1;
+                    }
+                }
+                const current = try self.currentToken();
+                if (current.kind == .Dot) {
+                    _ = try self.consumeToken();
+                    try self.expectToken(.Identifier);
+                    numTokens += 2;
+                } else {
+                    const final = self.tokens[self.pos - 1];
+                    utils.assert(final.kind == .RBracket, "final token not RBracket, is: {}\n", .{final});
+                }
+            },
             .KeywordNew => {
+                // FIXME: SPENCER PUT SOME CHECKS HERE TO CHECK FOR THE int_array after new AND EXPECT
+                // THE BRACKET, NUMBER, BRACKET tokens (making sure to update numTokens accordingly)
                 _ = try self.expectToken(.KeywordNew);
                 // Note - leaving checking if the thing after new is right until it's parsed later...
                 // this is probably a badddd idea (malformed expressions like what! (with the lights on!!??))
                 // FIXME: NOTE: for the introductoin of array_list this will have to be changed
-                _ = try self.expectToken(.Identifier);
-                numTokens += 1;
-                utils.assert(numTokens == 2, "New token has more than 2 tokens\n", .{});
+                const nextToken = try self.currentToken();
+
+                if (nextToken.kind == .Identifier) {
+                    _ = try self.expectToken(.Identifier);
+                    numTokens += 1;
+                    utils.assert(numTokens == 2, "New token has more than 2 tokens\n", .{});
+                } else if (nextToken.kind == .KeywordIntArray) {
+                    _ = try self.expectToken(.KeywordIntArray);
+                    _ = try self.expectToken(.LBracket);
+                    _ = self.expectToken(.Number) catch {
+                        log.err("Expected a number after new int[]\n", .{});
+                        return error.InvalidToken;
+                    };
+                    _ = try self.expectToken(.RBracket);
+
+                    numTokens += 4;
+                    // log.info("numTokens: {d}\n", .{numTokens});
+                    utils.assert(numTokens == 5, "New token has more than 4 tokens\n", .{});
+                }
             },
             .Dot => {
                 while ((try self.currentToken()).kind == .Dot) {
                     _ = try self.consumeToken();
                     try self.expectToken(.Identifier);
                     numTokens += 2;
+
+                    var nextToken = try self.currentToken();
+                    if (nextToken.kind == .LBracket) {
+                        numTokens += 1;
+                        var count: u32 = 1;
+                        // std.debug.print("LBracket I Am HEREERERERERERE\n", .{});
+                        _ = try self.consumeToken();
+                        while (count != 0) {
+                            numTokens += 1;
+                            const tok = try self.consumeToken();
+                            if (tok.kind == .Eof) {
+                                // TODO: handle
+                                return error.NotEnoughTokens;
+                            }
+                            if (tok.kind == .LBracket) {
+                                count += 1;
+                            } else if (tok.kind == .RBracket) {
+                                count -= 1;
+                            }
+                        }
+                        const current = try self.currentToken();
+                        if (current.kind == .Dot) {
+                            _ = try self.consumeToken();
+                            try self.expectToken(.Identifier);
+                            numTokens += 2;
+                        } else {
+                            const final = self.tokens[self.pos - 1];
+                            utils.assert(final.kind == .RBracket, "final token not RBracket, is: {}\n", .{final});
+                        }
+                    }
                 }
             },
             .Number, .KeywordTrue, .KeywordFalse, .KeywordNull, .Identifier => {
@@ -1596,7 +1677,7 @@ pub const Parser = struct {
     }
 
     /// Parses a chain of selectors
-    /// `{ "." Identifier }*`
+    /// `{ "." Identifier }*{ "[" Expression "]" }?`
     /// expects caller to parse first item in chain
     /// i.e. Factor for `Selector` and `Identifier` for `LValue`
     pub fn parseSelectorChain(self: *Parser) !?usize {
@@ -1605,18 +1686,37 @@ pub const Parser = struct {
         var curChainIndex: ?usize = null;
 
         // Expect ("." Identifier)*
-        while ((try self.currentToken()).kind == TokenKind.Dot) {
+        while ((try self.currentToken()).kind == TokenKind.Dot or (try self.currentToken()).kind == TokenKind.LBracket) {
             const chainNodeIndex = try self.reserve();
             if (chainIndex == null) {
                 chainIndex = chainNodeIndex;
             }
-            // Expect .
-            const dotToken = try self.expectAndYeildToken(TokenKind.Dot);
-            // Expect Identifier
-            const identIndex = try self.astAppendNode(try self.expectIdentifier());
+
+            const curToken = try self.currentToken();
+
+            const identIndex = switch (curToken.kind) {
+                TokenKind.Dot => blk: {
+                    // Expect .
+                    _ = try self.expectAndYeildToken(TokenKind.Dot);
+                    // Expect Identifier
+                    const identIndex = try self.astAppendNode(try self.expectIdentifier());
+                    break :blk identIndex;
+                },
+                TokenKind.LBracket => blk: {
+                    _ = try self.expectAndYeildToken(TokenKind.LBracket);
+                    const expresion = try self.parseExpression();
+                    _ = try self.expectAndYeildToken(TokenKind.RBracket);
+                    break :blk expresion;
+                },
+                else => {
+                    log.err("Expected a dot or but got {s}.\n", .{@tagName(curToken.kind)});
+                    return error.InvalidToken;
+                },
+            };
+
             const chainNode = Node{
                 .kind = .{ .SelectorChain = .{ .ident = identIndex, .next = null } },
-                .token = dotToken,
+                .token = curToken,
             };
             try self.set(chainNodeIndex, chainNode);
 
@@ -1654,6 +1754,14 @@ pub const Parser = struct {
                 // Expect )
                 try self.expectToken(TokenKind.RParen);
             },
+            // TokenKind.LBracket => {
+            // Expect [
+            // try self.expectToken(TokenKind.LBracket);
+            // // Expect Expression
+            // lhsIndex = try self.parseExpression();
+            // // Expect ]
+            // try self.expectToken(TokenKind.RBracket);
+            // },
             TokenKind.Identifier => {
                 const peekTokenKind = (try self.peekToken()).kind;
                 if (peekTokenKind == .LParen) {
@@ -1705,6 +1813,7 @@ pub const Parser = struct {
                 const falseToken = try self.expectAndYeildToken(TokenKind.KeywordFalse);
                 const falseNode = Node{
                     .kind = .False,
+
                     .token = falseToken,
                 };
                 lhsIndex = try self.astAppendNode(falseNode);
@@ -1718,19 +1827,47 @@ pub const Parser = struct {
                 lhsIndex = try self.astAppendNode(nullNode);
             },
             TokenKind.KeywordNew => {
+                // FIXME: SPENCER HAVE THE SAME EXPECT LOGIC YOU HAD IN `extractAtom` HERE
+                // BUT ACTUALLY CREATE THE AST NODES THIS TIME. TALK TO ME IF YOU ARE CONFUSED
+                // MAKE SURE TO RETURN error.InvalidToken IF THERE IS an int_array NOT FOLLOWED BY
+                // BRACKET NUMBER BRACKET
+
                 // Expect new
                 const newToken = try self.expectAndYeildToken(.KeywordNew);
                 const newIndex = try self.reserve();
 
-                // Expect Identifier
-                const identIndex = try self.astAppendNode(try self.expectIdentifier());
+                // const currentToken = try self.expect(.TypeIntArray);
+                if ((try self.currentToken()).kind == .KeywordIntArray) {
+                    _ = try self.consumeToken();
 
-                const newNode = Node{
-                    .kind = .{ .New = .{ .ident = identIndex } },
-                    .token = newToken,
-                };
-                try self.set(newIndex, newNode);
-                lhsIndex = newIndex;
+                    _ = try self.expectToken(.LBracket);
+                    const numberToken = try self.expectAndYeildToken(.Number);
+                    _ = try self.expectToken(.RBracket);
+
+                    const newNumberNode = Node{
+                        .kind = .Number,
+                        .token = numberToken,
+                    };
+
+                    const identNewNumberNode = try self.astAppendNode(newNumberNode);
+
+                    const newNode = Node{
+                        .kind = .{ .NewIntArray = .{ .length = identNewNumberNode } },
+                        .token = newToken,
+                    };
+                    try self.set(newIndex, newNode);
+                    lhsIndex = newIndex;
+                } else {
+                    // Expect Identifier
+                    const identIndex = try self.astAppendNode(try self.expectIdentifier());
+
+                    const newNode = Node{
+                        .kind = .{ .New = .{ .ident = identIndex } },
+                        .token = newToken,
+                    };
+                    try self.set(newIndex, newNode);
+                    lhsIndex = newIndex;
+                }
             },
             else => {
                 // TODO: make this error like the others
@@ -1855,6 +1992,16 @@ test "program declarations indices null for no types" {
     }
 }
 
+test "create int array" {
+    const source = "new int_array[5]";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 5;
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
 test "extractAtom.Num" {
     var parser = try testMe("123");
     const atom = try parser.extractAtom();
@@ -1947,6 +2094,34 @@ test "extractAtom.new_in_fkncall" {
     try ting.expectEqual(len, atom.len);
 }
 
+test "extractAtom.access_int_array" {
+    const source = "foo[1]";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 4;
+    // std.debug.print("parsed: {any}\n", .{parser.tokens[atom.start..(atom.start + atom.len)]});
+    // try parser.prettyPrintAst();
+    const tokenKinds = [_]TokenKind{ .Identifier, .LBracket, .Number, .RBracket };
+    try expectAtomSliceTokenKinds(&parser, atom, &tokenKinds);
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
+test "extractAtom.access_int_array2" {
+    const source = "bar[foo(1+2) + 1]";
+    var parser = try testMe(source);
+    const atom = try parser.extractAtom();
+    const start: usize = 0;
+    const len: usize = 11;
+    // std.debug.print("parsed: {any}\n", .{parser.tokens[atom.start..(atom.start + atom.len)]});
+    // try parser.prettyPrintAst();
+    // const tokenKinds = [_]TokenKind{ .Identifier, .LBracket, .Number, .RBracket };
+    // try expectAtomSliceTokenKinds(&parser, atom, &tokenKinds);
+    try ting.expectEqual(start, atom.start);
+    try ting.expectEqual(len, atom.len);
+}
+
 test "pratt.simple_pemdas" {
     var parser = try testMe("1 + 2 * 3");
     const expr = try parser.prattParseExpression(debugAlloc, 0);
@@ -1963,6 +2138,7 @@ test "pratt.simple_pemdas" {
 }
 
 // FIXME:
+//
 test "pratt.funcall" {
     var parser = try testMe("foo(1, 2, 3)");
     const expr = try parser.prattParseExpression(debugAlloc, 0);
@@ -2052,4 +2228,14 @@ test "fun.with_locals" {
     const funNode = try expectHasNodeWithKind(nodes, .Function);
     try ting.expect(nodes[funNode.kind.Function.proto].kind == .FunctionProto);
     // TODO: add more checks for function subtree structure
+}
+test "parser.1checkArrayAccess" {
+    const source = "int_array a; fun main() void{ a = new int_array[10];}";
+    _ = try parseMe(source);
+}
+
+test "parser.checkArrayAccess" {
+    const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
+
+    _ = try parseMe(source);
 }

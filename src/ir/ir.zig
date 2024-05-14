@@ -78,6 +78,7 @@ pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
         .Bool => .bool,
         .Void => .void,
         .Null => std.debug.panic("FUCK WE HAVE TO HANDLE NULL TYPE\n", .{}),
+        .IntArray => utils.todo("Handle the array type", .{}),
         .Struct => |name| blk: {
             const structID = self.internIdent(name);
             break :blk .{ .strct = structID };
