@@ -394,7 +394,6 @@ pub const Function = struct {
                 // we have to call search CFG on the block that we are visiting
                 // FIXME
             }
-
         }
     }
 
