@@ -449,27 +449,29 @@ fn gen_statement(
             const toName = ir.internIdentNodeAt(ast, to.ident);
             // log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             // FIXME: handle selector chain
-            var assignRef = try fun.getNamedRef(ir, toName);
-            if (to.chain) |chain| {
-                const structRef = blk: {
-                    // it's a chain, so the assign must be a struct, we're in the load/store ir,
-                    // so it's got to be a %struct.{name}** (i.e. a pointer struct pointer on the stack)
-                    // so we have to load it first because gep can't do shit in this situation
-                    const loadStructInst = Inst.load(assignRef.type, assignRef);
-                    const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
-                    break :blk IR.Ref.fromReg(loadReg);
-                };
-                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, true);
-            }
+            var assignRef = try fun.getNamedRef(ir, toName, bb);
+            _ = assignRef;
 
-            // FIXME: rhs could also be a `read` handle!
-            const exprNode = ast.get(assign.rhs).*;
-            const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
-            const inst = Inst.store(
-                assignRef,
-                exprRef,
-            );
-            try fun.addAnonInst(bb, inst);
+            // if (to.chain) |chain| {
+            //     const structRef = blk: {
+            //         // it's a chain, so the assign must be a struct, we're in the load/store ir,
+            //         // so it's got to be a %struct.{name}** (i.e. a pointer struct pointer on the stack)
+            //         // so we have to load it first because gep can't do shit in this situation
+            //         const loadStructInst = Inst.load(assignRef.type, assignRef);
+            //         const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
+            //         break :blk IR.Ref.fromReg(loadReg);
+            //     };
+            //     assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, true);
+            // }
+
+            // // FIXME: rhs could also be a `read` handle!
+            // const exprNode = ast.get(assign.rhs).*;
+            // const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
+            // const inst = Inst.store(
+            //     assignRef,
+            //     exprRef,
+            // );
+            // try fun.addAnonInst(bb, inst);
         },
         .Print => |print| {
             const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(print.expr).*);

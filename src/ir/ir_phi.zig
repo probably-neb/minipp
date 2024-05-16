@@ -313,15 +313,22 @@ pub const Function = struct {
 
     pub const NotFoundError = error{UnboundIdentifier};
 
-    pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID) NotFoundError!Ref {
-        if (self.getNamedAllocaReg(name)) |reg| {
+    pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
+        // check if the register is in the current block
+        if (self.searchBBforREG(name, bb)) |reg| {
             return Ref.fromReg(reg);
         } else |_| {}
 
+        // checks the function's parameters
         if (self.params.safeIndexOf(name)) |paramID| {
             const param = self.params.entry(paramID);
             return Ref.param(paramID, param.name, param.type);
         }
+
+        // we need this to look through the cfg also
+        if (self.searchCFGforREG(name, bb)) |reg| {
+            return Ref.fromReg(reg);
+        } else |_| {}
 
         if (ir.funcs.items.safeIndexOf(name)) |funcID| {
             const func = ir.funcs.items.entry(funcID);
@@ -343,6 +350,67 @@ pub const Function = struct {
 
         return error.UnboundIdentifier;
     }
+
+    // searches the CFG (upwards) for a register with the given name
+    //
+    pub fn searchCFGforREG(self: *Function, name: StrID, bb: BasicBlock.ID) ?Register {
+        // get the current block's incoming blocks
+        // create a queue of blocks to visit
+        var queue = std.ArrayList(BasicBlock.ID).init(self.alloc);
+        var visited = std.ArrayList(BasicBlock.ID).init(self.alloc);
+        const incomers = self.bbs.get(bb).incomers.items;
+
+        // pub const PhiEntry = struct { bb: Label, ref: Ref };
+        // need to create a list of phi entries, add self within the loop
+        // FIXME: above
+        var phiEntries = std.ArrayList(PhiEntry).init(self.alloc);
+        // FIXME this seems so wrong lol
+        phiEntries.append(.{ .bb = bb, .ref = Ref.local(0, InternPool.NULL, .void) });
+
+        visited.append(bb);
+        var queue_len = 0;
+        for (incomers) |incomer| {
+            queue_len += 1;
+            try queue.append(incomer);
+        }
+
+        var queue_start = 0;
+        // while there are still blocks to visit
+        while (queue_start <= queue_len) {
+            // get the current block
+            const current = queue.items[queue_start];
+            if (visited.contains(current)) {
+                continue;
+            }
+            // mark it as visited
+            visited.append(current);
+
+            // search the block for the register
+            if (self.searchBBforREG(name, current)) |reg| {
+                // we have found one, add it to the phiEntries list
+                phiEntries.append(.{ .bb = current, .ref = Ref.fromReg(reg) });
+            } else |not_found| {
+                _ = not_found;
+                // we have to call search CFG on the block that we are visiting
+                // FIXME
+            }
+
+        }
+    }
+
+    // finds the last definition of a register with the given name in the given basic block
+    pub fn searchBBforREG(self: *Function, name: StrID, bb: BasicBlock.ID) ?Register {
+        var result: ?Register = null;
+        for (self.bbs.get(bb).insts.items()) |instID| {
+            const inst = self.insts.get(instID);
+            const res = inst.res;
+            if (res.name == name) {
+                result = self.regs.get(res.i);
+            }
+        }
+        return result;
+    }
+
     /// Gets the ID of a register created with an `alloca` in the entry
     /// based on the name of the identifier in question
     /// Returns `error.NotFound`
@@ -1165,7 +1233,7 @@ pub const Label = u32;
 
 /// TODO: this needs to hold a register ID, which, is then used as a list inside
 /// of the Inst type.
-pub const PhiEntry = struct { label: Label };
+pub const PhiEntry = struct { bb: Label, ref: Ref };
 
 pub const Inst = struct {
     op: Op,
