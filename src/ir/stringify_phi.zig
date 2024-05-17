@@ -499,9 +499,13 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                     });
                 },
                 // `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
-                .Phi => |phi| {
-                    _ = phi;
-                    utils.todo("phi", .{});
+                .Phi => {
+                    const phi = IR.Inst.Phi.get(inst);
+                    try buf.fmt("{} = phi {} {}", .{
+                        stringify_ref(ir, fun, phi.res),
+                        stringify_type(ir, phi.type),
+                        try stringify_phi_entries(ir, fun, phi.entries),
+                    });
                 },
             }
             try buf.write("\n");
@@ -510,6 +514,17 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
     }
 
     return buf.str.items;
+}
+pub fn bufToRope(buf: Buf) Rope {
+    // Assume the entire Buf content is a single string segment for the Rope
+    const content = buf.str.items; // Get the slice of the stored string
+    return Rope{
+        .a = content,
+        .b = "", // No additional string segment
+        .num = null, // No numeric value included
+        .num_before_b = false, // No ordering needed as num is null
+        .is_ptr = false, // Not a pointer type, just plain text
+    };
 }
 
 pub fn stringify_type(ir: *const IR, ty: IR.Type) Rope {
@@ -539,6 +554,22 @@ pub fn stringify_type(ir: *const IR, ty: IR.Type) Rope {
         //     return buf;
         // }
     }
+}
+
+pub fn stringify_phi_entries(ir: *const IR, fun: *const IR.Function, entries: std.ArrayList(IR.PhiEntry)) !Rope {
+    var buf = Buf.init(ir.alloc);
+    var i: u32 = 0;
+    for (entries.items) |entry| {
+        try buf.fmt("[ {}, {} ]", .{
+            stringify_ref(ir, fun, entry.ref),
+            stringify_label_phi(fun, entry.bb),
+        });
+        if (i + 1 != entries.items.len) {
+            try buf.write(", ");
+        }
+        i += 1;
+    }
+    return bufToRope(buf);
 }
 
 pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
@@ -582,4 +613,14 @@ pub fn stringify_label_ref(fun: *const IR.Function, label: IR.BasicBlock.ID) Rop
     }
     const name = fun.bbs.get(label).name;
     return Rope.str_str_num("label %", name, label - 1);
+}
+
+pub fn stringify_label_phi(fun: *const IR.Function, label: IR.BasicBlock.ID) Rope {
+    if (label == IR.Function.entryBBID) {
+        return Rope.just("%entry");
+    } else if (label == IR.Function.exitBBID) {
+        return Rope.just("%exit");
+    }
+    const name = fun.bbs.get(label).name;
+    return Rope.str_str_num("%", name, label - 1);
 }

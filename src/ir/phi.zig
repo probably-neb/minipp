@@ -5,6 +5,12 @@
 //
 //  ACTIVE{
 //  - do a pre pass to create the full bb heirarchy before its filled. I think this will be fundementally easier to reason about
+//  -- while loops should work in the manner
+//  --- cond
+//  --- body
+//  --- cond2
+//  ---- back edge
+//  --- exit
 //  -- in this pass add in the phi nodes for the entry blocks
 //  - create the phi noes for the entry block
 //  // on creation of every new block, push down all of the values that were defined from the parent.
@@ -227,8 +233,6 @@ pub fn gen_functions(ir: *IR, ast: *const Ast) ![]IR.Function {
         funcs[fi] = fun;
     }
 
-    // NOTE: identical to phi above this point
-
     ir.funcs.fill(funcs);
     fi = 0;
 
@@ -275,17 +279,28 @@ pub fn gen_function(
         fun.setReturnReg(retReg.id);
     }
 
+    // TODO: rv1 implement the walking of the functinos to generate all of the
+    //       desired BasicBlocks before they are needed
+    // FIXME: make them not allocas but rather phi accesses
     // add allocas for all local variables
     var declsIter = funBody.iterLocalDecls(ast);
     while (declsIter.next()) |declNode| {
         const decl = declNode.kind.TypedIdentifier;
         const declName = ir.internIdent(decl.getName(ast));
         const declType = ir.astTypeToIRType(decl.getType(ast));
+        // add a phi instruction to the entryBB, then edit it afterwords
+        var phiEntries = std.ArrayList(IR.PhiEntry).init(fun.alloc);
+        const selfEntry = IR.PhiEntry{ .bb = entryBB, .ref = IR.Ref.default };
+        try phiEntries.append(selfEntry);
+        const phi = Inst.phi(IR.Ref.default, declType, phiEntries);
 
-        const alloca = Inst.alloca(declType);
-        _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
+        const phiID = try fun.addNamedInst(entryBB, phi, declName, declType);
+        const phiInstID = phiID.inst;
+        const phiInst = fun.insts.get(phiInstID);
+        phiInst.extra.phi.items[0] = IR.PhiEntry{ .bb = entryBB, .ref = IR.Ref.fromReg(phiID) };
     }
 
+    // FIXME: also do this as phis instead of allocas, allocas should only be used for structs and the like
     // add allocas for all function parameters
     // and store the params into them
     // this is necessary to allow for mutating params
@@ -294,14 +309,19 @@ pub fn gen_function(
     for (fun.params.items, 0..) |item, ID| {
         const name = item.name;
         const typ = item.type;
-        const alloca = Inst.alloca(typ);
-        const allocaReg = try fun.addNamedInst(entryBB, alloca, name, typ);
-        const storeInst = Inst.store(IR.Ref.fromReg(allocaReg), IR.Ref.param(@intCast(ID), name, typ));
-        _ = try fun.addAnonInst(entryBB, storeInst);
+        const parRef = IR.Ref.param(@intCast(ID), name, typ);
+        var phiEntries = std.ArrayList(IR.PhiEntry).init(fun.alloc);
+        const selfEntry = IR.PhiEntry{ .bb = entryBB, .ref = parRef };
+        try phiEntries.append(selfEntry);
+        const phi = Inst.phi(IR.Ref.default, typ, phiEntries);
+
+        _ = try fun.addNamedInst(entryBB, phi, name, typ);
     }
 
     const bodyBB = try fun.newBBWithParent(entryBB, "body");
     try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(bodyBB)));
+
+    // pre generate the IR for the body
 
     // generate IR for the function body
     const lastBB = try gen_block(ir, ast, fun, bodyBB, ast.get(funNode.body).*);
@@ -522,28 +542,27 @@ fn gen_statement(
             // log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             // FIXME: handle selector chain
             var assignRef = try fun.getNamedRef(ir, toName, bb);
-            _ = assignRef;
 
-            // if (to.chain) |chain| {
-            //     const structRef = blk: {
-            //         // it's a chain, so the assign must be a struct, we're in the load/store ir,
-            //         // so it's got to be a %struct.{name}** (i.e. a pointer struct pointer on the stack)
-            //         // so we have to load it first because gep can't do shit in this situation
-            //         const loadStructInst = Inst.load(assignRef.type, assignRef);
-            //         const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
-            //         break :blk IR.Ref.fromReg(loadReg);
-            //     };
-            //     assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, true);
-            // }
+            if (to.chain) |chain| {
+                const structRef = blk: {
+                    // it's a chain, so the assign must be a struct, we're in the load/store ir,
+                    // so it's got to be a %struct.{name}** (i.e. a pointer struct pointer on the stack)
+                    // so we have to load it first because gep can't do shit in this situation
+                    const loadStructInst = Inst.load(assignRef.type, assignRef);
+                    const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
+                    break :blk IR.Ref.fromReg(loadReg);
+                };
+                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, true);
+            }
 
-            // // FIXME: rhs could also be a `read` handle!
-            // const exprNode = ast.get(assign.rhs).*;
-            // const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
-            // const inst = Inst.store(
-            //     assignRef,
-            //     exprRef,
-            // );
-            // try fun.addAnonInst(bb, inst);
+            // FIXME: rhs could also be a `read` handle!
+            const exprNode = ast.get(assign.rhs).*;
+            const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
+            const inst = Inst.store(
+                assignRef,
+                exprRef,
+            );
+            try fun.addAnonInst(bb, inst);
         },
         .Print => |print| {
             const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(print.expr).*);
@@ -634,7 +653,7 @@ fn gen_expression(
             var resultRef = switch (atom.kind) {
                 .Identifier => ident: {
                     const identID = ir.internToken(ast, atom.token);
-                    const ref = try fun.getNamedRef(ir, identID);
+                    const ref = try fun.getNamedRef(ir, identID, bb);
                     if (ref.kind == .param) {
                         break :ident ref;
                     }
@@ -752,7 +771,7 @@ fn gen_expression(
 fn gen_invocation(ir: *IR, fun: *IR.Function, ast: *const Ast, bb: IR.BasicBlock.ID, node: *const Ast.Node) !IR.Register {
     const invoc = node.*.kind.Invocation;
     const funNameID = ir.internIdentNodeAt(ast, invoc.funcName);
-    const funRef = try fun.getNamedRef(ir, funNameID);
+    const funRef = try fun.getNamedRef(ir, funNameID, bb);
 
     var args: []IR.Ref = undefined;
     if (invoc.args) |argsIndex| {
