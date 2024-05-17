@@ -311,13 +311,14 @@ pub const Function = struct {
         try self.bbs.get(bb).insts.append(instID);
     }
 
-    pub const NotFoundError = error{UnboundIdentifier};
+    pub const NotFoundError = error{ UnboundIdentifier, AllocFailed };
 
     pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
         // check if the register is in the current block
-        if (self.searchBBforREG(name, bb)) |reg| {
-            return Ref.fromReg(reg);
-        } else |_| {}
+        const regBB = try self.searchBBforREG(name, bb);
+        if (regBB != null) {
+            return Ref.fromReg(regBB.?);
+        }
 
         // checks the function's parameters
         if (self.params.safeIndexOf(name)) |paramID| {
@@ -326,9 +327,10 @@ pub const Function = struct {
         }
 
         // we need this to look through the cfg also
-        if (self.searchCFGforREG(name, bb)) |reg| {
-            return Ref.fromReg(reg);
-        } else |_| {}
+        const cfgReg = self.searchCFGforREG(name, bb) catch return NotFoundError.AllocFailed;
+        if (cfgReg != null) {
+            return Ref.fromReg(cfgReg.?);
+        }
 
         if (ir.funcs.items.safeIndexOf(name)) |funcID| {
             const func = ir.funcs.items.entry(funcID);
@@ -353,7 +355,7 @@ pub const Function = struct {
 
     // searches the CFG (upwards) for a register with the given name
     //
-    pub fn searchCFGforREG(self: *Function, name: StrID, bb: BasicBlock.ID) ?Register {
+    pub fn searchCFGforREG(self: *Function, name: StrID, bb: BasicBlock.ID) !?Register {
         // get the current block's incoming blocks
         // create a queue of blocks to visit
         var queue = std.ArrayList(BasicBlock.ID).init(self.alloc);
@@ -365,40 +367,65 @@ pub const Function = struct {
         // FIXME: above
         var phiEntries = std.ArrayList(PhiEntry).init(self.alloc);
         // FIXME this seems so wrong lol
-        phiEntries.append(.{ .bb = bb, .ref = Ref.local(0, InternPool.NULL, .void) });
+        try phiEntries.append(.{ .bb = bb, .ref = Ref.local(0, InternPool.NULL, .void) });
 
-        visited.append(bb);
-        var queue_len = 0;
+        try visited.append(bb);
+        var queue_len: u64 = 0;
         for (incomers) |incomer| {
             queue_len += 1;
             try queue.append(incomer);
         }
 
-        var queue_start = 0;
+        var queue_start: u64 = 0;
         // while there are still blocks to visit
         while (queue_start <= queue_len) {
             // get the current block
             const current = queue.items[queue_start];
-            if (visited.contains(current)) {
+            // for all items in visited , check if the current is there
+            var flag_v: bool = false;
+            for (visited.items) |v| {
+                if (v == current) {
+                    flag_v = true;
+                    break;
+                }
+            }
+            if (flag_v) {
+                queue_start += 1;
                 continue;
             }
             // mark it as visited
-            visited.append(current);
+            try visited.append(current);
 
             // search the block for the register
-            if (self.searchBBforREG(name, current)) |reg| {
+            const bbReg = try self.searchBBforREG(name, current);
+            if (bbReg != null) {
                 // we have found one, add it to the phiEntries list
-                phiEntries.append(.{ .bb = current, .ref = Ref.fromReg(reg) });
-            } else |not_found| {
-                _ = not_found;
-                // we have to call search CFG on the block that we are visiting
-                // FIXME
+                // phiEntries.append(.{ .bb = current, .ref = Ref.fromReg(reg) });
+                return bbReg;
+            } else {
+                // add the parents to the queue
+                const p_in = self.bbs.get(current).incomers.items;
+                for (p_in) |in| {
+                    queue_len += 1;
+                    flag_v = false;
+                    for (visited.items) |v| {
+                        if (v == in) {
+                            flag_v = true;
+                            break;
+                        }
+                    }
+                    if (!flag_v) {
+                        try queue.append(in);
+                    }
+                }
             }
+            queue_start += 1;
         }
+        return null;
     }
 
     // finds the last definition of a register with the given name in the given basic block
-    pub fn searchBBforREG(self: *Function, name: StrID, bb: BasicBlock.ID) ?Register {
+    pub fn searchBBforREG(self: *Function, name: StrID, bb: BasicBlock.ID) !?Register {
         var result: ?Register = null;
         for (self.bbs.get(bb).insts.items()) |instID| {
             const inst = self.insts.get(instID);
@@ -1090,6 +1117,7 @@ pub const Ref = struct {
     kind: Kind,
     type: Type,
     /// Ref used when no ref needed
+    /// FIXME: add deadbeef here too
     pub const default = Ref.local(69420, InternPool.NULL, .void);
 
     pub const Kind = enum {
