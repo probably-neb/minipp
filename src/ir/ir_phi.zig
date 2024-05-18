@@ -789,11 +789,12 @@ pub const CfgFunction = struct {
         self: *CfgFunction,
         ast: *const Ast,
         ir: *IR,
-        statIter: Ast.NodeIter(.Statement),
+        _statIter: Ast.NodeIter(.Statement),
         _edge: Edge,
     ) !void {
         var edge = _edge;
         var cBlock = edge.src;
+        var statIter = _statIter;
         // to pass onto exiting child statIter must be update to be at the end of the code within the control flow
         // the edge must be updated such that the src is the exiting child, and that the dest is the block that follows top level this should alway be pointing to exit
         while (statIter.next()) |c_stat| {
@@ -866,28 +867,39 @@ pub const CfgFunction = struct {
                         var thenBodyID = try self.addBlockOnEdge(thenBody, ed);
                         ed.src = thenBodyID;
                         const body_range = as_ifBlock.range(ast);
+                        var ifThenEdge = ed;
 
                         // then.exit
                         var thenExit = try CfgBlock.init(self.alloc);
                         var thenExitID = try self.addBlockOnEdge(thenExit, ed);
                         ed.src = thenExitID;
+                        ifThenEdge.src = thenBodyID;
+                        ifThenEdge.dest = thenExitID;
 
                         // if.exit
                         var ifExit = try CfgBlock.init(self.alloc);
                         var ifExitID = try self.addBlockOnEdge(ifExit, ed);
                         ed.src = ifExitID;
-                        
-                        edge = ed; /
 
-        q               finish the intilization, call the new function to do thebody
-                        continue the loop with the if stuff
-                        if(body_range != null){
-                            const ifThenEdge = ed;
-                            const ifBody_iter = Ast.NodeList(.Statement).init(ast,body_range[0],body_range[1]);
+                        edge = ed;
+
+                        if (body_range != null) {
+                            const ifBody_iter = Ast.NodeList(.Statement).init(ast, body_range[0], body_range[1]);
+                            self.generateStatements(ast, ir, ifBody_iter, ifThenEdge);
+                            statIter.skipTo(body_range[1]);
+                        } else {
+                            statIter.skipTo(_if.block);
                         }
-
                     } else {
                         // else block
+                        // create 6 new blocks
+                        // ifcond
+                        //  then body
+                        // then exit
+                        // else body
+                        // else exit
+                        // if exit
+                        //
 
                     }
 
