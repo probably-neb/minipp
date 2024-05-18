@@ -204,7 +204,15 @@ pub const Parser = struct {
             const token = node.token;
             const tokenStr = token._range.getSubStrFromStr(self.input);
             const kind = @tagName(node.kind);
-            log.info("{s}: {s}\n", .{ kind, tokenStr });
+            log.info("[{any}]{s}: {s}", .{ i, kind, tokenStr });
+            switch (node.kind) {
+                .Expression => {
+                    log.info(" | last {} \n", .{node.kind.Expression.last});
+                },
+                else => {
+                    log.info("\n", .{});
+                },
+            }
             i += 1;
         }
         log.info("}}\n", .{});
@@ -1427,8 +1435,8 @@ pub const Parser = struct {
         var arena = arenaAlloc.allocator();
 
         const expr = try self.prattParseExpression(arena, 0);
-        const last = self.ast.items.len;
         const treeIndex = try self.reconstructTree(expr);
+        const last = self.ast.items.len;
 
         // NOTE: unessary?
         const node = Node{
@@ -2239,3 +2247,10 @@ test "parser.checkArrayAccess" {
 
     _ = try parseMe(source);
 }
+
+// test "parser.printast_simple_expression" {
+//     const source = "fun main() void {int a; a =1 + 2 * 3; if (a) { while(a > 2) { if (a) {}else{a = 29 - 42 * main();}}}}";
+//     const parser = try parseMe(source);
+//     try parser.prettyPrintAst();
+//     // print out the log
+// }

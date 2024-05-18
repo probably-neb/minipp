@@ -11,7 +11,7 @@ const files = [_]SourceFile{
     .{ .path = "src/sema.zig", .name = "sema" },
     .{ .path = "src/utils.zig", .name = "utils" },
     .{ .path = "src/ir/ir.zig", .name = "ir" },
-    .{ .path = "src/ir/phi.zig", .name = "ir-phi" },
+    // .{ .path = "src/ir/phi.zig", .name = "ir-phi" },
 };
 
 pub fn build(b: *std.Build) void {
