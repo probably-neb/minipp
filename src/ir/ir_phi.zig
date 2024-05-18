@@ -166,6 +166,7 @@ pub const Function = struct {
     returnType: Type,
     bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
+    cfg: CfgFunction,
 
     /// a list of the instructions that are within the fuction
     /// the basic blocks have a list of instructions that they use,
@@ -202,6 +203,7 @@ pub const Function = struct {
             .regs = LookupTable(Register.ID, Register, Register.getID).init(alloc),
             .params = ParamsList.init(params),
             .insts = OrderedList(Inst).init(alloc),
+            .cfg = try CfgFunction.init(alloc),
         };
     }
 
@@ -566,6 +568,320 @@ pub const Register = struct {
 
     pub fn getID(self: Register) ID {
         return self.id;
+    }
+};
+
+pub const Edge = struct {
+    src: CfgBlock.ID,
+    dest: CfgBlock.ID,
+    ID: u32,
+    pub const ID = u32;
+};
+
+pub const CfgBlock = struct {
+    alloc: std.mem.Allocator,
+    statements: std.ArrayList(Ast.Node),
+    typedIdents: std.ArrayList(StrID),
+    incomers: std.ArrayList(Edge.ID),
+    outgoers: [2]?Edge.ID,
+    ID: u32,
+    pub const ID = u32;
+
+    pub fn init(alloc: std.mem.Allocator) !CfgBlock {
+        return .{
+            .alloc = alloc,
+            .astNode = null,
+            .decls = try std.ArrayList(StrID).init(alloc),
+            .incomers = try std.ArrayList(Edge.ID).init(alloc),
+            .statements = try std.ArrayList(Ast.Node).init(alloc),
+            .outgoers = [2]?Edge.ID{ null, null },
+            .ID = 0,
+        };
+    }
+
+    pub fn addIdentsFromStatement(self: *CfgBlock, ir: *IR, ast: *const Ast, node: Ast.Node) !void {
+        const stat = node.kind.Statement;
+        const final = stat.finalIndex;
+        const start = stat.statement;
+        // from start to end find any typed identifiers
+        for (start..final) |idx| {
+            const c_node = ast.get(idx).*;
+            // check if it's a typed identifier
+            switch (c_node.kind) {
+                .TypedIdentifier => {
+                    const typedIdent = c_node.kind.TypedIdentifier;
+                    const ident = typedIdent.getName(ast);
+                    const name = ir.internIdent(ident);
+                    try self.typedIdents.append(name);
+                },
+                else => {},
+            }
+        }
+    }
+
+    pub fn addIncomer(self: *CfgBlock, fun: *CfgFunction, incomer: CfgBlock.ID) !void {
+        // see if the incommer already has an outgoer to this block
+        for (fun.blocks[incomer].outgoers) |outgoer| {
+            if (outgoer.dest == self.ID) {
+                return;
+            }
+        }
+        // create a new edge
+        const edge = Edge{ .src = incomer, .dest = self.ID, .ID = fun.edges.items.len };
+        try fun.edges.append(edge);
+        try self.incomers.append(edge.ID);
+        try fun.blocks[incomer].addOutgoerEdge(edge.ID);
+    }
+
+    pub fn addOutgoer(self: *CfgBlock, fun: *CfgFunction, outgoer: CfgBlock.ID) !void {
+        // check if we already outgo to this block
+        // if we do, return
+        for (self.outgoers) |out| {
+            if (out.dest == outgoer) {
+                return;
+            }
+        }
+        // add ourselves as a incomer to the outgoer
+        try fun.blocks[outgoer].addIncomer(self.ID);
+    }
+
+    pub fn addOutgoerEdge(self: *CfgBlock, outgoer: Edge.ID) !void {
+        // see the comment in `addOutgoer` for why this is done
+        // alternative is to just ignore duplicates while actually
+        // using the cfg, but that seems kinda annoying ngl
+        if (self.outgoers[0] == null or self.outgoers[0] == outgoer) {
+            self.outgoers[0] = outgoer;
+        } else if (self.outgoers[1] == null or self.outgoers[1] == outgoer) {
+            self.outgoers[1] = outgoer;
+        } else {
+            return error.TooManyOutgoers;
+        }
+    }
+
+    // returns false if no edge was added(could not be found)
+    pub fn updateEdge(self: *CfgBlock, old_edge: Edge.ID, new_edge: Edge.ID) !bool {
+        // check if its in the incomers
+        for (self.incomers.items) |incomer| {
+            if (incomer == old_edge) {
+                incomer = new_edge;
+                return true;
+            }
+        }
+        // check if its in the outgoers
+        if (self.outgoers[0] != null) {
+            if (self.outgoers[0] == old_edge) {
+                self.outgoers[0] = new_edge;
+                return true;
+            }
+        }
+        if (self.outgoers[1] != null) {
+            if (self.outgoers[1] == old_edge) {
+                self.outgoers[1] = new_edge;
+                return true;
+            }
+        }
+
+        return error.CfgEdgeNotFound;
+    }
+};
+
+pub const CfgFunction = struct {
+    pub const ID = u32;
+    blocks: std.ArrayList(CfgBlock),
+    edges: std.ArrayList(Edge),
+    alloc: std.mem.Allocator,
+    params: std.ArrayList(StrID),
+    decls: std.ArrayList(StrID),
+    declsUsed: std.AutoHashMap(StrID, bool),
+    paramsUsed: std.ArrayList(StrID),
+    statements: std.ArrayList(Ast.Node),
+    funNode: Ast.Node.Kind.FunctionType,
+    exitID: CfgBlock.ID,
+
+    pub fn init(alloc: std.mem.Allocator) !CfgFunction {
+        return .{
+            .blocks = try std.ArrayList(CfgBlock).init(alloc),
+            .edges = try std.ArrayList(Edge).init(alloc),
+            .params = try std.ArrayList(StrID).init(alloc),
+            .decls = try std.ArrayList(StrID).init(alloc),
+            .declsUsed = try std.AutoHashMap(StrID, bool).init(alloc),
+            .paramsUsed = try std.ArrayList(StrID).init(alloc),
+            .statements = try std.ArrayList(Ast.Node).init(alloc),
+            .funNode = null,
+            .alloc = alloc,
+        };
+    }
+
+    pub fn generate(
+        func: *Function,
+        ast: *const Ast,
+        funNode: Ast.Node.Kind.FunctionType,
+        ir: *IR,
+    ) !CfgFunction {
+        var self = CfgFunction.init(func.alloc);
+        // fill the params and the decls
+        for (func.params.items) |param| {
+            try self.params.append(param.name);
+        }
+
+        const funBody = funNode.getBody(ast);
+        var declsIter = funBody.iterLocalDecls(ast);
+        while (declsIter.next()) |decl| {
+            const declNode = decl.kind.TypedIdentifier;
+            const declName = ir.internIdent(declNode.getName(ast));
+            try self.decls.append(declName);
+        }
+
+        // pre init body and exit blocks
+        const bodyInit = try CfgBlock.init(func.alloc);
+        const exitInit = try CfgBlock.init(func.alloc);
+        const the_edge = try self.addBlocksWithEdge(bodyInit, exitInit);
+        self.exitID = exitInit.ID;
+
+        // get the statement from the function body
+        var statIter = funBody.iterStatements(ast);
+        try self.generateStatements(ast, ir, statIter, the_edge);
+
+        return self;
+    }
+
+    pub fn generateStatements(
+        self: *CfgFunction,
+        ast: *const Ast,
+        ir: *IR,
+        statIter: Ast.NodeIter(.Statement),
+        edge: Edge,
+    ) !void {
+        var cBlock = edge.src;
+        // to pass onto exiting child statIter must be update to be at the end of the code within the control flow
+        // the edge must be updated such that the src is the exiting child, and that the dest is the block that follows top level this should alway be pointing to exit
+        while (statIter.next()) |c_stat| {
+            const statementIndex = c_stat.kind.Statement.statement;
+            const statementNode = c_stat.kind.Statement;
+            const innerNode = ast.get(statementIndex);
+            const kind = innerNode.kind;
+            const finalIndex = c_stat.kind.Statement.finalIndex;
+            _ = finalIndex;
+
+            // if not control flow
+            if (!statementNode.isControlFlow()) {
+                // add all the idents in the statement to the block
+                try self.blocks[cBlock].addIdentsFromStatement(ir, ast, innerNode);
+                // add the statement to the block
+                try self.blocks[cBlock].statements.append(innerNode);
+                continue;
+            }
+
+            // add all the idents in the block (that we will now be leaving)
+            // to the declsUsed
+            for (self.blocks[cBlock].typedIdents.items) |ident| {
+                try self.declsUsed.put(ident, true);
+            }
+
+            switch (kind) {
+                // early optimization of removing all code that is after a return
+                .Return => {
+                    // add all the idents in the statement to the block
+                    try self.blocks[cBlock].addIdentsFromStatement(ir, ast, innerNode);
+
+                    // add the statement to the block
+                    try self.blocks[cBlock].statements.append(innerNode);
+
+                    // if this is a return in the body, we are done
+                    if (self.exitID == edge.dest) {
+                        // add all the idents in the block (that we will now be leaving)
+                        // to the declsUsed
+                        for (self.blocks[cBlock].typedIdents.items) |ident| {
+                            try self.declsUsed.put(ident, true);
+                        }
+                        return;
+                    }
+
+                    // add an edge between this block and the true exit, there is no children to add, so we are done after that
+                    try self.blocks[cBlock].addOutgoer(self, self.exitID);
+                    return;
+                },
+                .ConditionalIf => |_if| {
+                    const isIfElse = _if.isIfElse(ast);
+                    if (!isIfElse) {
+                        // if block
+                        // create 4 new blocks
+                        // if.cond
+                        // then.body
+                        // then.exit
+                        // if.exit
+
+                    } else {
+                        // else block
+
+                    }
+
+                    utils.todo("Handle if statement", .{});
+                },
+                .ConditionalIfElse => {
+                    utils.todo("Handle if else statement", .{});
+                },
+                .While => {
+                    utils.todo("Handle while statement", .{});
+                },
+                else => {
+                    unreachable;
+                },
+            }
+
+            break;
+        }
+    }
+
+    pub fn addBlocksWithEdge(self: *CfgFunction, blockSrc: CfgBlock, blockDest: CfgBlock) !Edge {
+        const srcID = self.blocks.items.len;
+        const destID = self.blocks.items.len + 1;
+        blockSrc.ID = srcID;
+        blockDest.ID = destID;
+        try self.blocks.append(blockSrc);
+        try self.blocks.append(blockDest);
+
+        const edge = Edge{ .src = srcID, .dest = destID, .ID = self.edges.items.len };
+        try self.edges.append(edge);
+
+        blockSrc.outgoers[0] = edge.ID;
+        try blockDest.incomers.append(edge.ID);
+
+        return edge;
+    }
+
+    pub fn addBlock(self: *CfgFunction, block: CfgBlock) !CfgBlock.ID {
+        const id = self.blocks.items.len;
+        block.ID = id;
+        try self.blocks.append(block);
+        return id;
+    }
+
+    pub fn addBlockOnEdge(self: *CfgFunction, block: CfgBlock, edge: Edge.ID) !CfgBlock.ID {
+        const id = self.blocks.items.len;
+        block.ID = id;
+        try self.blocks.append(block);
+
+        return try self.insertBlockOnEdge(id, edge);
+    }
+
+    pub fn insertBlockOnEdge(self: *CfgFunction, blockID: CfgBlock.ID, edge: Edge.ID) !CfgBlock.ID {
+        // find the edge
+        const e = self.edges.items[edge];
+
+        // new edge between old source and new block
+        const newEdge = Edge{ .src = e.src, .dest = blockID, .ID = self.edges.items.len };
+        try self.edges.append(newEdge);
+
+        try self.blocks.items[edge.src].updateEdge(edge.ID, newEdge.ID);
+
+        // update the old edge to point from the new block to the old
+        self.edges[edge].src = blockID;
+        return blockID;
+    }
+
+    pub fn getBlock(self: *CfgFunction, id: CfgBlock.ID) CfgBlock {
+        return self.blocks.items[id];
     }
 };
 

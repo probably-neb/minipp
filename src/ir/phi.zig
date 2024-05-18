@@ -3,82 +3,6 @@
 // PHI ssa
 // v1: Dylan Leifer-Ives 6/24
 //
-//  ACTIVE{
-//  - do a pre pass to create the full bb heirarchy before its filled. I think this will be fundementally easier to reason about
-//  -- while loops should work in the manner
-//  --- cond
-//  --- body
-//  --- cond2
-//  ---- back edge
-//  --- exit
-//  -- in this pass add in the phi nodes for the entry blocks
-//  - create the phi noes for the entry block
-//  // on creation of every new block, push down all of the values that were defined from the parent.
-//  // so this means for every single block after entry, they should have all of the values, both the params and the
-//  // declarations
-//  -- possibly split out the phi nodes into their own part of the basic block
-//
-//  - On iteration through the statements, there will always be a parent block's value to phi off of (after entry)
-//  this means that there will always be a reference.
-//  -- therefore on the branching back to things is where the important updates to the phi values will occur
-//
-//
-//  define dso_local i32 @if3_square(i32 %num) {
-//  entry:
-//          %num0 = phi i32 [%num, %entry]
-//          %b0 = phi i32 [0, %entry]
-//          ; cmp to see if num is > 0
-//          %cmp0 = icmp sgt i32 %num0, 0
-//          br i1 %cmp0, label %if.then, label %if.end
-//  if.then:
-//          %b1 = phi i32 [%b0, %entry]
-//          %num1 = phi i32 [%num0, %entry]
-//          br label %while.cond
-
-//  if.end:
-//          %b2 = phi i32 [%b0, %entry], [%b6, %while.end]
-//          %num2 = phi i32 [%num0, %entry]
-//          br label %exit
-
-//  while.cond:
-//          %b3 = phi i32 [%b1, %if.then], [%b5, %while.body]
-//          %num3 = phi i32 [%num1, %if.then], [%num5, %while.body]
-//          ; while num < 4
-//          %cmp1 = icmp slt i32 %num3, 4
-//          br i1 %cmp1, label %while.body, label %while.end
-
-//  exit:
-//          %b4 = phi i32 [%b2, %if.end]
-//          ret i32 %b4
-
-//  while.body:
-//          %b5 = phi i32 [%b3, %while.cond]
-//          %num4 = phi i32 [%num3, %while.cond]
-//          ;num += b
-//          %num5 = add i32 %num4, %b5
-//          br label %while.cond ;-> update while cond's phi nodes
-
-//  while.end:
-//          %b6 = phi i32 [%b5, %while.cond]
-//          %num6 = phi i32 [%num3, %while.cond]
-//          br label %if.end
-
-//  }
-// }
-//  BROKEN{
-//          gen_stateent
-//          searchCFGforREG -> should wait a bit longer on this
-//  }
-//  HOLD{
-//          PHI -> CFG upsearch
-//          - searchCFGforREG fixme on the cfg upsearch, this will create a loop I recon, so i need to be careful with how I write this
-//          - make sure that the phi that will be created (if needed), has a reference to this block just in case
-//          Done{
-//                  - check that vars can be the same name of different types
-//                  - be able to get the type of an ast node
-//                  - update the search BB for reg so that it is the proper type
-//          } we do not need to check the type we are not allowed to name multiple vals the same name in the same scope
-//  } Need to implement the phi creation for every block foremost,
 
 const std = @import("std");
 
@@ -278,6 +202,8 @@ pub fn gen_function(
         // save it in the function for easy access later
         fun.setReturnReg(retReg.id);
     }
+
+    fun.cfg = try IR.CfgFunction.generate(fun, ast, funNode, ir);
 
     // TODO: rv1 implement the walking of the functinos to generate all of the
     //       desired BasicBlocks before they are needed
