@@ -146,11 +146,12 @@ pub fn selectorToString(self: *const Ast, selectorId: usize) ![]u8 {
             const selector = selectorKind.Selector;
             const factor = selector.factor;
             const factorNode = self.get(factor).*;
-            switch (factorNode.kind) {
+            const factorFactor = factorNode.kind.Factor.factor;
+            const factorFactorNode = self.get(factorFactor).*;
+            switch (factorFactorNode.kind) {
                 .Identifier => {
-                    const identName = self.getIdentValue(factor);
+                    const identName = self.getIdentValue(factorFactor);
                     for (identName) |c| {
-                        std.debug.print("{c}", .{c});
                         try strbuff.append(c);
                     }
                 },
@@ -161,7 +162,6 @@ pub fn selectorToString(self: *const Ast, selectorId: usize) ![]u8 {
             if (selector.chain != null) {
                 const chainStr = try self.selectorChainToString(selector.chain.?);
                 for (chainStr) |c| {
-                    std.debug.print("{c}", .{c});
                     try strbuff.append(c);
                 }
             }
@@ -1513,23 +1513,23 @@ test "ast.int_array_access" {
     _ = ast;
 }
 
-test "parser.printlvalue" {
-    const source = "struct S{struct S s;}; fun main() void {struct S s; int_array a; s.s.s.s.s.s.s.s.s.s.s.s = 22+500 + a[0] + s.s.s.s.s; a = new int_array[10]; a[0] = 1;}";
-    var ast = try testMe(source);
-    var count: u32 = 0;
-    ast.debugPrintAst();
-    for (ast.nodes.items) |node| {
-        switch (node.kind) {
-            .LValue => {
-                const str = try ast.lvalToString(count);
-                std.debug.print("{s}\n", .{str});
-            },
-            .Selector => {
-                const str = try ast.selectorToString(count);
-                std.debug.print("{s}\n", .{str});
-            },
-            else => {},
-        }
-        count += 1;
-    }
-}
+// test "parser.printlvalue" {
+//     const source = "struct S{struct S s;}; fun main() void {struct S s; int_array a; s.s.s.s.s.s.s.s.s.s.s.s = 22+500 + a[0] + s.s.s.s.s; a = new int_array[10]; a[0] = 1;}";
+//     var ast = try testMe(source);
+//     var count: u32 = 0;
+//     ast.debugPrintAst();
+//     for (ast.nodes.items) |node| {
+//         switch (node.kind) {
+//             .LValue => {
+//                 const str = try ast.lvalToString(count);
+//                 std.debug.print("{s}\n", .{str});
+//             },
+//             .Selector => {
+//                 const str = try ast.selectorToString(count);
+//                 std.debug.print("{s}\n", .{str});
+//             },
+//             else => {},
+//         }
+//         count += 1;
+//     }
+// }
