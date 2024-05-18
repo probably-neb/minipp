@@ -659,7 +659,7 @@ pub const CfgBlock = struct {
         }
     }
 
-    pub fn addIncomer(self: *CfgBlock, fun: *CfgFunction, incomer: CfgBlock.ID) !void {
+    pub fn addIncomer(self: *CfgBlock, fun: *CfgFunction, incomer: CfgBlock.ID) !Edge {
         // see if the incommer already has an outgoer to this block
         for (fun.blocks[incomer].outgoers) |outgoer| {
             if (outgoer.dest == self.ID) {
@@ -670,10 +670,10 @@ pub const CfgBlock = struct {
         const edge = Edge{ .src = incomer, .dest = self.ID, .ID = fun.edges.items.len };
         try fun.edges.append(edge);
         try self.incomers.append(edge.ID);
-        try fun.blocks[incomer].addOutgoerEdge(edge.ID);
+        return try fun.blocks[incomer].addOutgoerEdge(edge.ID);
     }
 
-    pub fn addOutgoer(self: *CfgBlock, fun: *CfgFunction, outgoer: CfgBlock.ID) !void {
+    pub fn addOutgoer(self: *CfgBlock, fun: *CfgFunction, outgoer: CfgBlock.ID) !Edge {
         // check if we already outgo to this block
         // if we do, return
         for (self.outgoers) |out| {
@@ -682,17 +682,19 @@ pub const CfgBlock = struct {
             }
         }
         // add ourselves as a incomer to the outgoer
-        try fun.blocks[outgoer].addIncomer(self.ID);
+        return try fun.blocks[outgoer].addIncomer(self.ID);
     }
 
-    pub fn addOutgoerEdge(self: *CfgBlock, outgoer: Edge.ID) !void {
+    pub fn addOutgoerEdge(self: *CfgBlock, outgoer: Edge.ID) !Edge {
         // see the comment in `addOutgoer` for why this is done
         // alternative is to just ignore duplicates while actually
         // using the cfg, but that seems kinda annoying ngl
         if (self.outgoers[0] == null or self.outgoers[0] == outgoer) {
             self.outgoers[0] = outgoer;
+            return outgoer;
         } else if (self.outgoers[1] == null or self.outgoers[1] == outgoer) {
             self.outgoers[1] = outgoer;
+            return outgoer;
         } else {
             return error.TooManyOutgoers;
         }
@@ -781,7 +783,6 @@ pub const CfgFunction = struct {
         // get the statement from the function body
         var statIter = funBody.iterStatements(ast);
         try self.generateStatements(ast, ir, statIter, the_edge);
-
         return self;
     }
 
@@ -795,6 +796,7 @@ pub const CfgFunction = struct {
         var edge = _edge;
         var cBlock = edge.src;
         var statIter = _statIter;
+
         // to pass onto exiting child statIter must be update to be at the end of the code within the control flow
         // the edge must be updated such that the src is the exiting child, and that the dest is the block that follows top level this should alway be pointing to exit
         while (statIter.next()) |c_stat| {
@@ -846,61 +848,79 @@ pub const CfgFunction = struct {
                 .ConditionalIf => |_if| {
                     const isIfElse = _if.isIfElse(ast);
                     const as_ifCond = ast.get(_if.cond);
+                    var as_thenBlock: Ast.Kind.Block = undefined;
+                    var as_elseBlock: ?Ast.Kind.Block = undefined;
+                    var as_elseBlockID: ?usize = undefined;
+
                     if (!isIfElse) {
-                        var ed = edge;
-                        const as_ifBlock = ast.get(_if.block).kind.Block;
-                        // if block
-                        // create 4 new blocks
-                        // if.cond
-                        var ifCond = try CfgBlock.init(self.alloc);
-                        ifCond.addIdentsFromExpression(ir, ast, as_ifCond);
-                        ifCond.statements.append(as_ifCond);
-                        for (ifCond.typedIdents.items) |ident| {
-                            try self.declsUsed.put(ident, true);
-                        }
-                        var ifCondID = try self.addBlockOnEdge(ifCond, ed);
-                        ed.src = ifCondID;
-
-                        // then.body
-                        // will add the idents and such after
-                        var thenBody = try CfgBlock.init(self.alloc);
-                        var thenBodyID = try self.addBlockOnEdge(thenBody, ed);
-                        ed.src = thenBodyID;
-                        const body_range = as_ifBlock.range(ast);
-                        var ifThenEdge = ed;
-
-                        // then.exit
-                        var thenExit = try CfgBlock.init(self.alloc);
-                        var thenExitID = try self.addBlockOnEdge(thenExit, ed);
-                        ed.src = thenExitID;
-                        ifThenEdge.src = thenBodyID;
-                        ifThenEdge.dest = thenExitID;
-
-                        // if.exit
-                        var ifExit = try CfgBlock.init(self.alloc);
-                        var ifExitID = try self.addBlockOnEdge(ifExit, ed);
-                        ed.src = ifExitID;
-
-                        edge = ed;
-
-                        if (body_range != null) {
-                            const ifBody_iter = Ast.NodeList(.Statement).init(ast, body_range[0], body_range[1]);
-                            self.generateStatements(ast, ir, ifBody_iter, ifThenEdge);
-                            statIter.skipTo(body_range[1]);
-                        } else {
-                            statIter.skipTo(_if.block);
-                        }
+                        as_thenBlock = ast.get(_if.block).kind.Block;
                     } else {
-                        // else block
-                        // create 6 new blocks
-                        // ifcond
-                        //  then body
-                        // then exit
-                        // else body
-                        // else exit
-                        // if exit
-                        //
+                        const condife = ast.get(_if.block).kind.ConditionalIfElse;
+                        as_thenBlock = ast.get(condife.ifBlock).kind.Block;
+                        as_elseBlockID = condife.elseBlock;
+                        as_elseBlock = ast.get(condife.elseBlock).kind.Block;
+                    }
+                    var ed = edge;
+                    // if block
+                    // create 4 new blocks
+                    // if.cond
+                    var ifCond = try CfgBlock.init(self.alloc);
+                    ifCond.addIdentsFromExpression(ir, ast, as_ifCond);
+                    ifCond.statements.append(as_ifCond);
+                    for (ifCond.typedIdents.items) |ident| {
+                        try self.declsUsed.put(ident, true);
+                    }
+                    var ifCondID = try self.addBlockOnEdge(ifCond, ed);
+                    ed.src = ifCondID;
 
+                    // then.body
+                    // will add the idents and such after
+                    var thenBody = try CfgBlock.init(self.alloc);
+                    var thenBodyID = try self.addBlockOnEdge(thenBody, ed);
+                    ed.src = thenBodyID;
+                    const body_range = as_thenBlock.range(ast);
+                    var ifThenEdge = ed;
+
+                    // then.exit
+                    var thenExit = try CfgBlock.init(self.alloc);
+                    var thenExitID = try self.addBlockOnEdge(thenExit, ed);
+                    ed.src = thenExitID;
+                    ifThenEdge.src = thenBodyID;
+                    ifThenEdge.dest = thenExitID;
+
+                    // if.exit
+                    var ifExit = try CfgBlock.init(self.alloc);
+                    var ifExitID = try self.addBlockOnEdge(ifExit, ed);
+                    ed.src = ifExitID;
+
+                    edge = ed;
+
+                    if (body_range != null) {
+                        const ifBody_iter = Ast.NodeList(.Statement).init(ast, body_range[0], body_range[1]);
+                        self.generateStatements(ast, ir, ifBody_iter, ifThenEdge);
+                        statIter.skipTo(body_range[1]);
+                    } else {
+                        statIter.skipTo(_if.block);
+                    }
+
+                    if (isIfElse) {
+                        // else block
+                        // else.body
+                        var elseBody = try CfgBlock.init(self.alloc);
+                        var elseExit = try CfgBlock.init(self.alloc);
+                        var elseEdge = self.addBlocksWithEdge(elseBody, elseExit);
+                        try self.blocks.items[ifCondID].addOutgoer(self, elseEdge.src);
+                        try self.blocks.items[elseEdge.dest].addOutgoer(self, ifExitID);
+
+                        const else_range = as_elseBlock.?.range(ast);
+                        if (else_range != null) {
+                            var erage = else_range.?;
+                            const elseBody_iter = Ast.NodeList(.Statement).init(ast, erage[0], erage[1]);
+                            self.generateStatements(ast, ir, elseBody_iter, elseEdge);
+                            statIter.skipTo(erage[1]);
+                        } else {
+                            statIter.skipTo(as_elseBlockID);
+                        }
                     }
 
                     utils.todo("Handle if statement", .{});
@@ -915,8 +935,6 @@ pub const CfgFunction = struct {
                     unreachable;
                 },
             }
-
-            break;
         }
     }
 
