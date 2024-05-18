@@ -928,7 +928,37 @@ pub const CfgFunction = struct {
                 .ConditionalIfElse => {
                     utils.todo("Handle if else statement", .{});
                 },
-                .While => {
+                .While =>  |_while| {
+                    var ed = edge;
+                    const w_cond_ast = _while.cond;
+                    const as_wCond = ast.get(w_cond_ast);
+                    const w_block_ast = _while.block;
+
+                    // while loop
+                    var wCond = try CfgBlock.init(self.alloc);
+                    wCond.addIdentsFromExpression(ir, ast, as_wCond);
+                    wCond.statements.append(as_wCond);
+                    for (wCond.typedIdents.items) |ident| {
+                        try self.declsUsed.put(ident, true);
+                    }
+                    var wCondID = try self.addBlockOnEdge(wCond, ed);
+                    ed.src = wCondID;
+
+                    need to link w cond and wcond2
+                    var wCond = try CfgBlock.init(self.alloc);
+                    wCond.addIdentsFromExpression(ir, ast, as_wCond);
+                    wCond.statements.append(as_wCond);
+                    for (wCond.typedIdents.items) |ident| {
+                        try self.declsUsed.put(ident, true);
+                    }
+                    var wCondID = try self.addBlockOnEdge(wCond, ed);
+                    ed.src = wCondID;
+
+                    // while cond 1
+                    // while cond 2
+                    // while body
+                    // while bt
+                    // while exit
                     utils.todo("Handle while statement", .{});
                 },
                 else => {
