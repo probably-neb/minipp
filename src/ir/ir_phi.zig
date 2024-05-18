@@ -614,6 +614,46 @@ pub const CfgBlock = struct {
                     const name = ir.internIdent(ident);
                     try self.typedIdents.append(name);
                 },
+                .Selector => {
+                    const ident = ast.selectorToString(idx);
+                    const name = ir.internIdent(ident);
+                    try self.typedIdents.append(name);
+                },
+                .LValue => {
+                    const ident = ast.lvalueToString(idx);
+                    const name = ir.internIdent(ident);
+                    try self.typedIdents.append(name);
+                },
+                else => {},
+            }
+        }
+    }
+
+    pub fn addIdentsFromExpression(self: *CfgBlock, ir: *IR, ast: *const Ast, node: Ast.Node) !void {
+        const expr = node.kind.Expression;
+        const final = expr.last - 1;
+        const start = expr.expr;
+        // from start to end find any typed identifiers
+        for (start..final) |idx| {
+            const c_node = ast.get(idx).*;
+            // check if it's a typed identifier
+            switch (c_node.kind) {
+                .TypedIdentifier => {
+                    const typedIdent = c_node.kind.TypedIdentifier;
+                    const ident = typedIdent.getName(ast);
+                    const name = ir.internIdent(ident);
+                    try self.typedIdents.append(name);
+                },
+                .Selector => {
+                    const ident = ast.selectorToString(idx);
+                    const name = ir.internIdent(ident);
+                    try self.typedIdents.append(name);
+                },
+                .LValue => {
+                    const ident = ast.lvalueToString(idx);
+                    const name = ir.internIdent(ident);
+                    try self.typedIdents.append(name);
+                },
                 else => {},
             }
         }
@@ -750,8 +790,9 @@ pub const CfgFunction = struct {
         ast: *const Ast,
         ir: *IR,
         statIter: Ast.NodeIter(.Statement),
-        edge: Edge,
+        _edge: Edge,
     ) !void {
+        var edge = _edge;
         var cBlock = edge.src;
         // to pass onto exiting child statIter must be update to be at the end of the code within the control flow
         // the edge must be updated such that the src is the exiting child, and that the dest is the block that follows top level this should alway be pointing to exit
@@ -803,13 +844,47 @@ pub const CfgFunction = struct {
                 },
                 .ConditionalIf => |_if| {
                     const isIfElse = _if.isIfElse(ast);
+                    const as_ifCond = ast.get(_if.cond);
                     if (!isIfElse) {
+                        var ed = edge;
+                        const as_ifBlock = ast.get(_if.block).kind.Block;
                         // if block
                         // create 4 new blocks
                         // if.cond
+                        var ifCond = try CfgBlock.init(self.alloc);
+                        ifCond.addIdentsFromExpression(ir, ast, as_ifCond);
+                        ifCond.statements.append(as_ifCond);
+                        for (ifCond.typedIdents.items) |ident| {
+                            try self.declsUsed.put(ident, true);
+                        }
+                        var ifCondID = try self.addBlockOnEdge(ifCond, ed);
+                        ed.src = ifCondID;
+
                         // then.body
+                        // will add the idents and such after
+                        var thenBody = try CfgBlock.init(self.alloc);
+                        var thenBodyID = try self.addBlockOnEdge(thenBody, ed);
+                        ed.src = thenBodyID;
+                        const body_range = as_ifBlock.range(ast);
+
                         // then.exit
+                        var thenExit = try CfgBlock.init(self.alloc);
+                        var thenExitID = try self.addBlockOnEdge(thenExit, ed);
+                        ed.src = thenExitID;
+
                         // if.exit
+                        var ifExit = try CfgBlock.init(self.alloc);
+                        var ifExitID = try self.addBlockOnEdge(ifExit, ed);
+                        ed.src = ifExitID;
+                        
+                        edge = ed; /
+
+        q               finish the intilization, call the new function to do thebody
+                        continue the loop with the if stuff
+                        if(body_range != null){
+                            const ifThenEdge = ed;
+                            const ifBody_iter = Ast.NodeList(.Statement).init(ast,body_range[0],body_range[1]);
+                        }
 
                     } else {
                         // else block
@@ -861,6 +936,7 @@ pub const CfgFunction = struct {
         const id = self.blocks.items.len;
         block.ID = id;
         try self.blocks.append(block);
+        // try (self.blocks.items[edge.dest]).addIncomer(id);
 
         return try self.insertBlockOnEdge(id, edge);
     }
@@ -873,7 +949,10 @@ pub const CfgFunction = struct {
         const newEdge = Edge{ .src = e.src, .dest = blockID, .ID = self.edges.items.len };
         try self.edges.append(newEdge);
 
-        try self.blocks.items[edge.src].updateEdge(edge.ID, newEdge.ID);
+        try (self.blocks.items[edge.src]).updateEdge(edge.ID, newEdge.ID);
+
+        self.blocks.items[blockID].outgoers[0] = edge;
+        try (self.blocks[blockID].incomers).append(newEdge.ID);
 
         // update the old edge to point from the new block to the old
         self.edges[edge].src = blockID;
