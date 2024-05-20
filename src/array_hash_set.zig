@@ -28,7 +28,7 @@ pub fn Set(comptime E: type) type {
     return struct {
         pub const Map = std.AutoArrayHashMapUnmanaged(E, void);
 
-        const Self = @This();
+        pub const Self = @This();
         unmanaged: Map,
         pub const Size = usize;
 
@@ -53,14 +53,14 @@ pub fn Set(comptime E: type) type {
             }
         };
 
-        pub fn init() void {
+        pub fn init() Self {
             return .{
-                .unmmanged = Map{},
+                .unmanaged = Map{},
             };
         }
 
-        pub fn deinit(self: *Self) void {
-            self.unmanaged.deinit();
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            self.unmanaged.deinit(allocator);
             self.* = undefined;
         }
 

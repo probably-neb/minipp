@@ -29,8 +29,8 @@ pub const ALIGN = 8;
 pub fn chainToStrIdList(self: *IR, chain: StrID) !std.ArrayList(StrID) {
     var list = std.ArrayList(StrID).init(self.alloc);
     defer list.deinit();
-    var chain_long = self.getName(chain);
-    var tokenizer = std.mem.tokenize(chain_long, ".");
+    var chain_long = self.getIdent(chain);
+    var tokenizer = std.mem.tokenize(u8, chain_long, ".");
     while (tokenizer.next()) |piece| {
         try list.append(self.internIdent(piece));
     }
@@ -813,20 +813,21 @@ pub const CfgFunction = struct {
     paramsUsed: std.ArrayList(StrID),
     statements: std.ArrayList(Ast.Node),
     funNode: Ast.Node.Kind.FunctionType,
-    dominators: std.ArrayList(Set.Set(.CfgBlock.ID_t)),
+    dominators: std.ArrayList(Set.Set(CfgBlock.ID_t)),
+    idoms: std.AutoHashMap(CfgBlock.ID_t, CfgBlock.ID_t),
+    domChildren: std.AutoHashMap(CfgBlock.ID_t, std.ArrayList(CfgBlock.ID_t)),
+    domFront: std.AutoHashMap(CfgBlock.ID_t, std.ArrayList(CfgBlock.ID_t)),
     exitID: CfgBlock.ID_t,
 
-    pub fn getBlockIncomerIDs(self: *CfgFunction, blockID: CfgBlock.ID_t) ![]CfgBlock.ID_t {
+    pub const BSet = Set.Set(CfgBlock.ID_t);
+
+    pub fn getBlockIncomerIDs(self: *CfgFunction, blockID: CfgBlock.ID_t) !std.ArrayList(CfgBlock.ID_t) {
         const block = self.blocks.items[blockID];
-        var incomers = try std.ArrayList(CfgBlock.ID_t).init(self.alloc);
+        var result = std.ArrayList(CfgBlock.ID_t).init(self.alloc);
         for (block.incomers.items) |incomer| {
-            // incomer is the edge ID
-            // get the edge
-            const edge = self.edges.items[incomer];
-            try incomers.append(edge.src);
+            try result.append(self.edges.items[incomer].src);
         }
-        defer incomers.deinit();
-        return try incomers.toOwnedSlice();
+        return result;
     }
 
     pub fn getPostID(self: *CfgFunction, postID: usize) CfgBlock.ID_t {
@@ -844,10 +845,10 @@ pub const CfgFunction = struct {
     //         Dom(n) = {n} union with intersection over Dom(p) for all p in pred(n)
     // return Dom
     pub fn generateDominators(self: *CfgFunction) !void {
-        var result = std.ArrayList(Set.Set(.CfgBlock.ID_t)).initCapacity(self.alloc, self.postOrder.len);
+        var result = try std.ArrayList(Set.Set(CfgBlock.ID_t)).initCapacity(self.alloc, self.postOrder.items.len);
         // fill all the dominators with empty
         for (self.postOrder.items) |_| {
-            result.append(Set.Set(.CfgBlock.ID_t).init(self.alloc));
+            try result.append(BSet.init());
         }
 
         // // dominator of the start node is the start itself
@@ -858,12 +859,12 @@ pub const CfgFunction = struct {
         // initialize the dominator sets
         for (self.postOrder.items, 0..) |block, i| {
             if (i == 0) {
-                try result.items[self.getPostID(block)].add(self.getPostID(block));
+                _ = try result.items[self.getPostID(block)].add(self.alloc, self.getPostID(block));
                 continue;
             }
 
             for (self.postOrder.items) |block2| {
-                try result.items[self.getPostID(block)].add(self.getPostID(block2));
+                _ = try result.items[self.getPostID(block)].add(self.alloc, self.getPostID(block2));
             }
         }
 
@@ -874,35 +875,171 @@ pub const CfgFunction = struct {
         var changes = true;
         while (changes) {
             changes = false;
-            for (self.postOrder.items, 1..) |block, i| {
+            for (self.postOrder.items, 0..) |block, i| {
                 if (i == 0) continue;
 
                 // get the predecessors for this block
                 const preds = try self.getBlockIncomerIDs(block);
-                for (preds) |pred| {
+                for (preds.items) |pred| {
                     // get the intersection of the dominators of the predecessors
                     // get Dom(p)
-                    const predDom = result.items[pred];
-                    const blockDom = result.items[self.getPostID(block)];
-                    const intersection = blockDom.intersectionOf(self.alloc, predDom);
+                    var predDom = result.items[pred];
+                    var blockDom = result.items[self.getPostID(block)];
+                    var intersection = try blockDom.intersectionOf(self.alloc, predDom);
                     var changedInter = intersection.eql(blockDom);
                     if (!changedInter) {
-                        result.items[self.getPostID(block)] = intersection.clone(self.alloc);
-                        result.items[pred] = predDom.clone(self.alloc);
-                        predDom.deinit();
-                        blockDom.deinit();
-                        intersection.deinit();
+                        result.items[self.getPostID(block)].deinit(self.alloc);
+                        result.items[self.getPostID(block)] = try intersection.clone(self.alloc);
                         changes = true;
-                    } else {
-                        result.items[pred] = predDom.clone(self.alloc);
-                        result.items[self.getPostID(block)] = blockDom.clone(self.alloc);
-                        predDom.deinit();
-                        blockDom.deinit();
-                        intersection.deinit();
+                    } else {}
+                    intersection.deinit(self.alloc);
+                }
+                preds.deinit();
+                // FIXME: memory leak from preds lol
+            }
+        }
+        self.dominators = result;
+    }
+
+    // // Initialize the immediate dominators map to be empty
+    // idom = {}
+
+    // // For each node n in the set of all nodes N
+    // for each n in N:
+    //     // Exclude the node itself from its set of dominators to find possible idoms
+    //     PossibleIdoms = Dom(n) - {n}
+
+    //     // The idom of node n is the unique dominator d in PossibleIdoms such that
+    //     // every other dominator in PossibleIdoms is also dominated by d
+    //     for each d in PossibleIdoms:
+    //         if ∀d' ∈ PossibleIdoms - {d} : d' ∈ Dom(d)
+    //             idom[n] = d
+    //             break
+    // // Return the map of immediate dominators
+    // return idom
+    pub fn computeIdoms(self: *CfgFunction) !void {
+        // for each n in N;
+        for (self.postOrder.items) |block| {
+            // Exclude the node itself from its set of dominators to find possible idoms
+            var blockDom = self.dominators.items[self.getPostID(block)];
+            var possibleIdoms = try blockDom.clone(self.alloc);
+            _ = possibleIdoms.remove(self.getPostID(block));
+
+            // The idom of node n is the unique dominator d in PossibleIdoms such that
+            // every other dominator in PossibleIdoms is also dominated by d
+            var posIter = possibleIdoms.iterator();
+            while (posIter.next()) |d| {
+                var doms_all = true;
+                // // Check if d dominates all other elements in PossibleIdoms
+                // for each d' in PossibleIdoms:
+                //     if d != d' and d' not in Dom(d):
+                //         dominates_all = false
+                //         break
+                var posIter2 = possibleIdoms.iterator();
+                while (posIter2.next()) |d2| {
+                    if (d.key_ptr.* == d2.key_ptr.*) {
+                        continue;
                     }
+                    if (!self.dominators.items[d.key_ptr.*].contains(d2.key_ptr.*)) {
+                        doms_all = false;
+                        break;
+                    }
+                }
+
+                if (doms_all) {
+                    _ = try self.idoms.put(self.getPostID(block), d.key_ptr.*);
+                    break;
+                }
+            }
+            possibleIdoms.deinit(self.alloc);
+        }
+    }
+
+    // finds the children for a node
+    // function find_children(idom, all_nodes, target_node):
+    //     children = []
+
+    //     // Iterate over all nodes in the graph
+    //     for each node in all_nodes:
+    //         // Check if the immediate dominator of the current node is the target_node
+    //         if idom[node] == target_node:
+    //             // If so, add the node to the children list
+    //             children.append(node)
+
+    //     // Return the list of children nodes
+    //     return children
+    pub fn findChildren(self: *CfgFunction, target_node: CfgBlock.ID_t) !std.ArrayList(CfgBlock.ID_t) {
+        var children = std.ArrayList(CfgBlock.ID_t).init(self.alloc);
+        for (self.postOrder.items) |node| {
+            if (self.idoms.get(self.getPostID(node)) == target_node) {
+                try children.append(self.getPostID(node));
+            }
+        }
+        return children;
+    }
+
+    pub fn generateDomChildren(self: *CfgFunction) !void {
+        for (self.postOrder.items) |node| {
+            const nodeID = self.getPostID(node);
+            try self.domChildren.put(nodeID, try self.findChildren(nodeID));
+        }
+    }
+
+    //computeDF[n]:
+    //    S = {}
+    //    for each node y in succ[n]:
+    //      if idom(y) != n:
+    //         S = S U {y}
+    //    for each child c of n in the dom-tree:
+    //      computeDF[c]
+    //      for each w that is in the set DF[c]
+    //         if n does not dom w, or n = w:
+    //            S = S U {w}
+    //    DF[n] = S
+    pub fn computeDomFront(self: *CfgFunction, postNode: CfgBlock.ID_t) !void {
+        const nodeID = self.getPostID(postNode);
+        const node = self.blocks.items[nodeID];
+        var S = std.ArrayList(CfgBlock.ID_t).init(self.alloc);
+        // for each node y in succ[n]:
+        for (node.outgoers) |outgoer| {
+            if (outgoer == null) {
+                continue;
+            }
+            const edge = self.edges.items[outgoer.?];
+            if (self.idoms.get(edge.dest) != nodeID) {
+                try S.append(edge.dest);
+            }
+        }
+        // for each child c of n in the dom-tree:
+        var children = self.domChildren.get(nodeID);
+        if (children == null) {
+            return;
+        }
+        for (self.domChildren.get(nodeID).?.items) |child| {
+            try self.computeDomFront(child);
+            const DF = self.domFront.get(child);
+            if (DF == null) continue;
+            for (DF.?.items) |w| {
+                if (!self.dominators.items[nodeID].contains(w) or nodeID == w) {
+                    try S.append(w);
                 }
             }
         }
+        try self.domFront.put(nodeID, S);
+    }
+
+    /// just do it for all of them
+    pub fn computeAllDomFronts(self: *CfgFunction) !void {
+        for (self.postOrder.items) |node| {
+            try self.computeDomFront(node);
+        }
+    }
+
+    pub fn genDominance(self: *CfgFunction) !void {
+        try self.generateDominators();
+        try self.computeIdoms();
+        try self.generateDomChildren();
+        try self.computeAllDomFronts();
     }
 
     pub fn init(alloc: std.mem.Allocator) CfgFunction {
@@ -915,9 +1052,10 @@ pub const CfgFunction = struct {
             .paramsUsed = std.ArrayList(StrID).init(alloc),
             .statements = std.ArrayList(Ast.Node).init(alloc),
             .postOrder = std.ArrayList(CfgBlock.ID_t).init(alloc),
-            .domFrontier = std.ArrayList(std.ArrayList(CfgBlock.ID_t)).init(alloc),
-            .idom = std.ArrayList(?CfgBlock.ID_t).init(alloc),
-            .dominators = std.ArrayList(std.ArrayList(CfgBlock.ID_t)).init(alloc),
+            .idoms = std.AutoHashMap(CfgBlock.ID_t, CfgBlock.ID_t).init(alloc),
+            .domChildren = std.AutoHashMap(CfgBlock.ID_t, std.ArrayList(CfgBlock.ID_t)).init(alloc),
+            .domFront = std.AutoHashMap(CfgBlock.ID_t, std.ArrayList(CfgBlock.ID_t)).init(alloc),
+            .dominators = std.ArrayList(Set.Set(CfgBlock.ID_t)).init(alloc),
             .funNode = undefined,
             .exitID = 1,
             .alloc = alloc,
@@ -1132,7 +1270,7 @@ pub const CfgFunction = struct {
         var statIter = funBody.iterStatements(ast);
         try self.generateStatements(ast, ir, statIter, the_edge);
         try self.reversePostOrderComp();
-        try self.computeDomianance();
+        try self.genDominance();
         self.printOutFunAsDot(ir);
         return self;
     }
@@ -1493,6 +1631,8 @@ pub const BasicBlock = struct {
             .incomers = std.ArrayList(Label).init(alloc),
             .outgoers = [2]?Label{ null, null },
             .insts = List.init(alloc),
+            .phiInsts = std.ArrayList(Function.InstID).init(alloc),
+            .phiMap = std.AutoHashMap(StrID, Function.InstID).init(alloc),
             .name = name,
         };
     }

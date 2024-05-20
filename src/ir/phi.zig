@@ -213,23 +213,24 @@ pub fn gen_function(
         const decl = declNode.kind.TypedIdentifier;
         const declName = ir.internIdent(decl.getName(ast));
         const declType = ir.astTypeToIRType(decl.getType(ast));
-        tmpTypesMap.put(declName, declType);
+        try tmpTypesMap.put(declName, declType);
     }
 
     for (fun.params.items) |item| {
         const name = item.name;
         const typ = item.type;
-        tmpTypesMap.put(name, typ);
+        try tmpTypesMap.put(name, typ);
     }
 
     // convert the used decls into types
     // iterate over the decls iside the cfg
     var cfgDeclsIter = fun.cfg.declsUsed.keyIterator();
-    while (cfgDeclsIter.next()) |declNode| {
+    while (cfgDeclsIter.next()) |declNode_| {
+        var declNode = declNode_.*;
         var preType = tmpTypesMap.get(declNode);
         if (preType == null) {
-            var str_name = ir.getIdent(declNode);
-            var list = ir.chainToStrIdList(str_name);
+            // var str_name = ir.getIdent(declNode);
+            var list = try ir.chainToStrIdList(declNode);
             if (list.items.len == 0) {
                 return error.DeclNotFound;
             }
@@ -237,9 +238,9 @@ pub fn gen_function(
             if (preType == null) {
                 return error.DeclNotFound;
             }
-            fun.typesMap.put(declNode, preType);
+            try fun.typesMap.put(declNode, preType.?);
         } else {
-            fun.typesMap.put(declNode, preType);
+            try fun.typesMap.put(declNode, preType.?);
         }
     }
 
