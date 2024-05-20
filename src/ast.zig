@@ -41,15 +41,21 @@ pub fn debugPrintAst(self: *const Ast) void {
     for (nodes) |node| {
         const kind = node.kind;
         const token = node.token;
-        std.debug.print("{d}: {s} {s}\n", .{ i, @tagName(kind), token._range.getSubStrFromStr(self.input) });
+        std.debug.print("{d}: {s} {s}", .{ i, @tagName(kind), token._range.getSubStrFromStr(self.input) });
         switch (kind) {
             .BinaryOperation => {
                 const binOp = node.kind.BinaryOperation;
                 std.debug.print(" lhs: {any}\n", .{binOp.lhs});
                 std.debug.print(" rhs: {any}\n", .{binOp.rhs});
             },
+            .Expression => {
+                const expr = node.kind.Expression;
+                const last = expr.last;
+                std.debug.print(" last: {d}", .{last});
+            },
             else => {},
         }
+        std.debug.print("\n", .{});
         i += 1;
     }
     std.debug.print("AST PRINT END\n", .{});
@@ -1086,7 +1092,7 @@ pub fn generateTypeInt() Type {
 // '<,'>g/: struct/norm f:dt{da{
 // '<,'>g://:d
 // '<,'>g:^\s*$:d
-const KindTagDupe = enum {
+pub const KindTagDupe = enum {
     Program,
     ProgramDeclarations,
     Types,
@@ -1293,6 +1299,20 @@ pub fn NodeIter(comptime tag: NodeKindTag) type {
             }
             // PERF: use a hashmap to store the indexes of the functions
             const nodeIndex = self.ast.findIndex(tag, self.i);
+            if (nodeIndex) |i| {
+                self.i = i + 1;
+                const n = self.ast.nodes.items[i];
+                return n;
+            }
+            self.i = self.last + 1;
+            return null;
+        }
+        pub fn nextInc(self: *Self) ?Node {
+            if (self.i > self.last) {
+                return null;
+            }
+            // PERF: use a hashmap to store the indexes of the functions
+            const nodeIndex = self.ast.findIndexWithin(tag, self.i, self.last + 1);
             if (nodeIndex) |i| {
                 self.i = i + 1;
                 const n = self.ast.nodes.items[i];
