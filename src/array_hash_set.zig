@@ -53,6 +53,16 @@ pub fn Set(comptime E: type) type {
             }
         };
 
+        pub fn print(self: Self) void {
+            std.debug.print("Set (", .{});
+            var iter = self.iterator();
+            while (iter.next()) |entry| {
+                std.debug.print("{any}", .{entry.key_ptr.*});
+                std.debug.print(", ", .{});
+            }
+            std.debug.print(")", .{});
+        }
+
         pub fn init() Self {
             return .{
                 .unmanaged = Map{},
