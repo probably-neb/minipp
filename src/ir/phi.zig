@@ -239,6 +239,7 @@ pub fn gen_function(
                 return error.DeclNotFound;
             }
             try fun.typesMap.put(declNode, preType.?);
+            list.deinit();
         } else {
             try fun.typesMap.put(declNode, preType.?);
         }
