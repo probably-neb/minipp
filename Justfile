@@ -77,3 +77,6 @@ build-suite-test name *BUILD_ARGS: build
     dir="{{TEST_SUITE}}/{{name}}"
     {{minipp}} -i "$dir/${name}.mini" -o "$dir/{{name}}.ll" {{BUILD_ARGS}}
     clang "$dir/{{name}}.ll" -o "$dir/{{name}}"
+
+nix:
+    sudo nix develop --extra-experimental-features nix-command --extra-experimental-features flakes
