@@ -204,7 +204,11 @@ pub fn gen_function(
     var declsIter = funBody.iterLocalDecls(ast);
     while (declsIter.next()) |declNode| {
         const decl = declNode.kind.TypedIdentifier;
-        const declName = ir.internIdent(decl.getName(ast));
+        const declName = ir.internIdent(blk: {
+            const name = decl.getName(ast);
+            std.debug.print("declName: {s}\n", .{name});
+            break :blk name;
+        });
         const declType = ir.astTypeToIRType(decl.getType(ast));
 
         const alloca = Inst.alloca(declType);
@@ -217,6 +221,7 @@ pub fn gen_function(
     // PERF: identify params that are stored to and gen alloca/store
     // for them only
     for (fun.params.items, 0..) |item, ID| {
+        std.debug.print("param: {s} :: {d}\n", .{ ir.getIdent(item.name), ID });
         const name = item.name;
         const typ = item.type;
         const alloca = Inst.alloca(typ);
