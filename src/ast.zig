@@ -6,6 +6,7 @@ const std = @import("std");
 pub const Token = @import("lexer.zig").Token;
 const log = @import("log.zig");
 const utils = @import("utils.zig");
+pub const stringify = @import("./ast/stringify.zig");
 
 nodes: NodeList,
 allocator: std.mem.Allocator,
