@@ -54,7 +54,8 @@ run-suite-test name: ensure-test-suite
 
 
     echo "Checking Normal Input..."
-    diff <($bin < "$dir/input") "$dir/output.expected"
+    $bin < "$dir/input" > "$dir/output"
+    diff "$dir/output" "$dir/output.expected"
     if [ $? -eq 0 ]; then
       echo -e "${GREEN}SUCCESS${NC}"
     else
@@ -64,15 +65,16 @@ run-suite-test name: ensure-test-suite
     echo "Checking Longer Input..."
     longer="$dir/input.longer"
     if [ -f "$longer" ]; then
-      echo "Longer Input Found"
-      echo -e "${GREEN}SUCCESS${NC}"
-    else
-        diff <($bin < "$longer") "$dir/output.longer.expected"
+        $bin < "$longer" > "$dir/output.longer"
+        diff "$dir/output.longer" "$dir/output.longer.expected"
         if [ $? -eq 0 ]; then
           echo -e "${GREEN}SUCCESS${NC}"
         else
           echo -e "${RED}FAIL${NC}"
         fi
+    else
+      echo "Longer Input Not Found"
+      echo -e "${GREEN}SUCCESS${NC}"
     fi
 
 build-suite-test name: build
