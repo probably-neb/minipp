@@ -1,4 +1,4 @@
-name: Tests (zig files)
+name: ZIG TEST
 on:
   push:
     branches:
