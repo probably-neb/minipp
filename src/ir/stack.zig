@@ -887,7 +887,7 @@ fn gen_selector_chain(
         reg = try fun.addNamedInst(bb, inst, field.name, field.type);
         ref = IR.Ref.fromReg(reg);
     }
-    if (ref.type == .strct and selectorType == .Assignment) {
+    if (ref.type == .strct and selectorType == .Usage) {
         // if the final field being accessed in the struct, we are polite
         // and return a pointer to the struct instead of the pointer to the pointer to the struct
         // because that is (certainly?) what the consumer expects
