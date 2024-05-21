@@ -251,14 +251,10 @@ pub fn typeCheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
 pub fn typeCheckStatementList(ast: *const Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer if (statementListn) |lst| ast.printNodeLine(ast.get(lst).*);
     // log.trace("statementListn: {d}\n", .{statementListn.?});
-    const list = try StatemenListgetList(statementListn, ast);
-    if (list == null) {
-        return;
-    }
-    for (list.?) |statement| {
-        // log.trace("Statement {any}\n", .{statement});
-        const statNode = ast.get(statement).*;
-        try typeCheckStatement(ast, statNode, fName, returnType);
+    var iter = ast.get(statementListn.?).kind.StatementList.iter(ast);
+    while (iter.next()) |statement| {
+        const stmtInner = ast.get(statement.kind.Statement.statement).*;
+        try typeCheckStatement(ast, stmtInner, fName, returnType);
     }
 }
 
@@ -1045,29 +1041,6 @@ pub fn LValuegetType(this: ?usize, ast: *const Ast, fName: []const u8) !?Ast.Typ
     }
 }
 
-pub fn StatemenListgetList(this: ?usize, ast: *const Ast) TypeError!?[]usize {
-    if (this == null) {
-        return null;
-    }
-    // errdefer ast.printNodeLine(ast.get(this.?).*);
-    const self = ast.get(this.?).kind.StatementList;
-    var list = std.ArrayList(usize).init(ast.allocator);
-    const last = self.lastStatement orelse self.firstStatement + 1;
-    var iter: ?usize = self.firstStatement;
-    while (iter != null) {
-        if (iter.? > last) {
-            break;
-        }
-
-        const stmt = ast.get(iter.?).kind.Statement;
-
-        try list.append(stmt.statement);
-        iter = stmt.finalIndex;
-    }
-    const res = try list.toOwnedSlice();
-    list.deinit();
-    return res;
-}
 ///////////
 // TESTS //
 ///////////

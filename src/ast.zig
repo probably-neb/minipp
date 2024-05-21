@@ -475,6 +475,72 @@ pub const Node = struct {
             /// Pointer to `Statement`
             /// null if only one statement
             lastStatement: ?Ref(.Statement) = null,
+
+            pub const StatementsIter = struct {
+                first: usize,
+                last: usize,
+                i: usize,
+                ast: *const Ast,
+
+                pub fn init(ast: *const Ast, firstStmt: usize, lastStmt: ?usize) StatementsIter {
+                    const last: usize = lastStmt orelse firstStmt + 1;
+                    const i: usize = firstStmt;
+
+                    return .{
+                        .first = i,
+                        .last = last,
+                        .i = i,
+                        .ast = ast,
+                    };
+                }
+                pub fn next(self: *StatementsIter) ?Ast.Node {
+                    if (self.i > self.last) {
+                        return null;
+                    }
+                    const stmt = self.ast.get(self.i).*;
+                    // Move to the next argument, considering nested Arguments and ArgumentEnds
+                    var cursor = self.i + 1;
+                    while (cursor <= self.last) : (cursor += 1) {
+                        const node = self.ast.get(cursor).*;
+                        const statementsList = switch (node.kind) {
+                            .Statement => break,
+                            .ConditionalIf => |condIf| switch (self.ast.get(condIf.block).*.kind) {
+                                .Block => |block| if (block.statements) |stmts| self.ast.get(stmts).kind.StatementList else continue,
+                                .ConditionalIfElse => |condIfElse| self.ast.get(if (self.ast.get(condIfElse.elseBlock).*.kind.Block.statements) |stmts| stmts else continue).*.kind.StatementList,
+                                else => unreachable,
+                            },
+                            .While => |whileNode| self.ast.get(if (self.ast.get(whileNode.block).*.kind.Block.statements) |stmts| stmts else continue).*.kind.StatementList,
+                            else => continue,
+                        };
+                        cursor = statementsList.lastStatement orelse statementsList.firstStatement + 1;
+                    }
+
+                    self.i = if (cursor == self.last) cursor + 1 else cursor;
+
+                    return stmt;
+                }
+
+                pub fn calculateLen(self: StatementsIter) usize {
+                    // create a copy of the iterator with the initial state
+                    // (i == first) so we do not mutate the original iterator
+                    var copy = StatementsIter{ .ast = self.ast, .i = self.first, .first = self.first, .last = self.last };
+                    var length: usize = 0;
+                    // the |_| is needed so zig realizes I want them to go until
+                    // next is null, otherwise get `expected bool` compile error
+                    while (copy.next()) |_| : (length += 1) {
+                        // do nothing
+                    }
+                    return length;
+                }
+            };
+
+            pub fn iter(self: @This(), ast: *const Ast) StatementsIter {
+                return StatementsIter.init(
+                    ast,
+                    self.firstStatement,
+                    self.lastStatement,
+                );
+            }
         },
         /// Statement holds only one field, the index of the actual statement
         /// it is still usefull, however, as the possible statements are vast,
