@@ -396,7 +396,6 @@ pub const Function = struct {
     }
 
     // searches the CFG (upwards) for a register with the given name
-    //
     pub fn searchCFGforREG(self: *Function, name: StrID, bb: BasicBlock.ID) !?Register {
         // get the current block's incoming blocks
         // create a queue of blocks to visit
@@ -628,6 +627,23 @@ pub const CfgBlock = struct {
     name: []const u8,
     pub const ID_t = usize;
 
+    pub fn print(self: *CfgBlock) void {
+        std.debug.print("Block: {d}\n", .{self.ID});
+        std.debug.print("Incomers: ", .{});
+        for (self.incomers.items) |incomer| {
+            std.debug.print("{d} ", .{incomer});
+        }
+        std.debug.print("\n", .{});
+        std.debug.print("Outgoers: ", .{});
+        for (self.outgoers) |outgoer| {
+            if (outgoer == null) {
+                continue;
+            }
+            std.debug.print("{d} ", .{outgoer.?});
+        }
+        std.debug.print("\n", .{});
+    }
+
     pub fn init(alloc: std.mem.Allocator, name: []const u8) CfgBlock {
         return .{
             .alloc = alloc,
@@ -731,7 +747,9 @@ pub const CfgBlock = struct {
         const edge = Edge{ .src = incomer, .dest = self.ID, .ID = fun.edges.items.len };
         try fun.edges.append(edge);
         try fun.blocks.items[self.ID].incomers.append(edge.ID);
-        return try fun.blocks.items[incomer].addOutgoerEdge(fun, edge.ID);
+        var edge_res = try fun.blocks.items[incomer].addOutgoerEdge(fun, edge.ID);
+        try fun.assertEdgeBothSides(edge_res.ID);
+        return edge_res;
     }
 
     pub fn addOutgoer(self: *CfgBlock, fun: *CfgFunction, outgoer: CfgBlock.ID_t) !Edge {
@@ -746,7 +764,9 @@ pub const CfgBlock = struct {
             }
         }
         // add ourselves as a incomer to the outgoer
-        return try fun.blocks.items[outgoer].addIncomer(fun, self.ID);
+        var edge_res = try fun.blocks.items[outgoer].addIncomer(fun, self.ID);
+        try fun.assertEdgeBothSides(edge_res.ID);
+        return edge_res;
     }
 
     pub fn addOutgoerEdge(self: *CfgBlock, fun: *CfgFunction, outgoer: Edge.ID_t) !Edge {
@@ -1032,7 +1052,7 @@ pub const CfgFunction = struct {
             const DF = self.domFront.get(child);
             if (DF == null) continue;
             for (DF.?.items) |w| {
-                if (!self.dominators.items[nodeID].contains(w) or nodeID == w) {
+                if (!self.dominators.items[w].contains(nodeID) or nodeID == w) {
                     try S.append(w);
                 }
             }
@@ -1044,6 +1064,7 @@ pub const CfgFunction = struct {
     pub fn computeAllDomFronts(self: *CfgFunction) !void {
         for (self.postOrder.items) |node| {
             try self.computeDomFront(node);
+            break;
         }
     }
 
@@ -1077,6 +1098,43 @@ pub const CfgFunction = struct {
     pub fn printBlockName(self: *CfgFunction, id: CfgBlock.ID_t) void {
         const block = self.blocks.items[id];
         std.debug.print("\"{s}_{d}\"", .{ block.name, id });
+    }
+
+    pub fn assertEdgeBothSides(self: *CfgFunction, edgeID: Edge.ID_t) !void {
+        // get the edge
+        const edge = self.edges.items[edgeID];
+        // get the src and dest
+        const src = edge.src;
+        const dest = edge.dest;
+        var destIncomers = self.blocks.items[dest].incomers;
+        var outgoers = self.blocks.items[src].outgoers;
+        var outGoList = std.ArrayList(Edge.ID_t).init(self.alloc);
+        defer outGoList.deinit();
+        for (outgoers) |outgoer| {
+            if (outgoer == null) {
+                continue;
+            }
+            try outGoList.append(outgoer.?);
+        }
+        // check that the src has this edge
+        var srcFlag: bool = false;
+        var destFlag: bool = false;
+        for (outGoList.items) |out| {
+            if (out == edgeID) {
+                srcFlag = true;
+            }
+        }
+        // check that the dest has this edge
+        for (destIncomers.items) |incomer| {
+            if (incomer == edgeID) {
+                destFlag = true;
+            }
+        }
+
+        if (destFlag and srcFlag) {
+            return;
+        }
+        unreachable;
     }
 
     pub fn printBlockOutEdges(self: *CfgFunction, id: CfgBlock.ID_t) !void {
@@ -1178,6 +1236,7 @@ pub const CfgFunction = struct {
 
         // add the incomer to the dest block
         try self.blocks.items[dest].incomers.append(edge.ID);
+        try self.assertEdgeBothSides(edge.ID);
 
         return edge;
     }
@@ -1316,6 +1375,52 @@ pub const CfgFunction = struct {
         return self;
     }
 
+    pub fn cleanseOutgersRec(self: *CfgFunction, blockID: CfgBlock.ID_t) !void {
+        var outIDArr = std.ArrayList(CfgBlock.ID_t).init(self.alloc);
+        for (self.blocks.items[blockID].outgoers, 0..) |out, i| {
+            if (out != null) {
+                try self.assertEdgeBothSides(out.?);
+                // get the edge
+                var outEdge = self.edges.items[out.?];
+                if (outEdge.dest == self.exitID) {
+                    continue;
+                }
+
+                try outIDArr.append(self.edges.items[out.?].dest);
+
+                self.blocks.items[blockID].outgoers[i] = null;
+            }
+        }
+        for (outIDArr.items) |outID| {
+            if (outID == self.exitID) {
+                // self.blocks.items[blockID].outgoers[i] = outID;
+                continue;
+            }
+            var succIncomers = self.blocks.items[outID].incomers;
+            var newSuccIncomers = std.ArrayList(Edge.ID_t).init(self.alloc);
+            for (succIncomers.items) |incomer| {
+                var succInEdge = self.edges.items[incomer];
+                if (succInEdge.src == blockID) {
+                    continue;
+                }
+                if (succInEdge.dest != outID) {
+                    utils.todo("This edge has been inproperly configed fix it\n", .{});
+                }
+                try newSuccIncomers.append(incomer);
+            }
+            self.blocks.items[outID].incomers.deinit();
+            self.blocks.items[outID].incomers = newSuccIncomers;
+        }
+
+        for (outIDArr.items) |outID| {
+            if (self.blocks.items[outID].incomers.items.len == 0) {
+                try self.cleanseOutgersRec(outID);
+            }
+        }
+
+        outIDArr.deinit();
+    }
+
     pub fn generateStatements(
         self: *CfgFunction,
         ast: *const Ast,
@@ -1370,42 +1475,13 @@ pub const CfgFunction = struct {
                         }
                         return;
                     }
-                    this is where the error is, the return is not cleaning the then.exit properly
+                    try self.cleanseOutgersRec(cBlock);
+                    var exitEdge = try self.addEdgeBetween(cBlock, self.exitID);
+                    _ = exitEdge;
 
-                    // add an edge between this block and the true exit, there is no children to add, so we are done after that
-                    var exitEdge = Edge{ .src = cBlock, .dest = self.exitID, .ID = self.edges.items.len };
-                    try self.edges.append(exitEdge);
-                    if (self.blocks.items[cBlock].outgoers[0] != null) {
-                        var cleanupReturnEdge = self.edges.items[self.blocks.items[cBlock].outgoers[0].?];
-                        var incomeToClean = self.blocks.items[cleanupReturnEdge.dest].incomers;
-                        for (incomeToClean.items, 0..) |incomer, i| {
-                            if (incomer == cleanupReturnEdge.ID) {
-                                _ = self.blocks.items[cleanupReturnEdge.dest].incomers.swapRemove(i);
-                            }
-                        }
-                        if (self.blocks.items[cleanupReturnEdge.dest].incomers.items.len == 0) {
-                            self.blocks.items[cleanupReturnEdge.dest].outgoers[0] = null;
-                            self.blocks.items[cleanupReturnEdge.dest].outgoers[1] = null;
-                        }
-                    }
-                    if (self.blocks.items[cBlock].outgoers[1] != null) {
-                        var cleanupReturnEdge = self.edges.items[self.blocks.items[cBlock].outgoers[1].?];
-                        var incomeToClean = self.blocks.items[cleanupReturnEdge.dest].incomers;
-                        for (incomeToClean.items, 0..) |incomer, i| {
-                            if (incomer == cleanupReturnEdge.ID) {
-                                _ = self.blocks.items[cleanupReturnEdge.dest].incomers.swapRemove(i);
-                            }
-                        }
-                        if (self.blocks.items[cleanupReturnEdge.dest].incomers.items.len == 0) {
-                            self.blocks.items[cleanupReturnEdge.dest].outgoers[0] = null;
-                            self.blocks.items[cleanupReturnEdge.dest].outgoers[1] = null;
-                        }
-                    }
                     for (self.blocks.items[cBlock].typedIdents.items) |ident| {
                         try self.declsUsed.put(ident, true);
                     }
-                    self.blocks.items[cBlock].outgoers[0] = exitEdge.ID;
-                    try self.blocks.items[self.exitID].incomers.append(exitEdge.ID);
                     return;
                 },
                 .ConditionalIf => |_if| {
@@ -1450,6 +1526,7 @@ pub const CfgFunction = struct {
                     ed.src = thenExitID;
 
                     ifThenEdge = self.edges.items[self.blocks.items[thenBodyID].outgoers[0].?];
+                    try self.assertEdgeBothSides(ifThenEdge.ID);
 
                     // if.exit
                     var ifExit = CfgBlock.init(self.alloc, "if.exit");
@@ -1457,6 +1534,9 @@ pub const CfgFunction = struct {
                     ed.src = ifExitID;
 
                     edge = ed;
+                    if (!isIfElse) {
+                        _ = try self.addEdgeBetween(ifCondID, ifExitID);
+                    }
 
                     if (body_range != null) {
                         // var ifBody_iter: Ast.NodeList(.Statement) = undefined;
@@ -1487,8 +1567,6 @@ pub const CfgFunction = struct {
                         } else {
                             statIter.skipTo(as_elseBlockID.?);
                         }
-                    } else {
-                        _ = try self.addEdgeBetween(ifCondID, ifExitID);
                     }
                     cBlock = ifExitID;
                 },
@@ -1532,6 +1610,7 @@ pub const CfgFunction = struct {
                     try self.edges.append(fbEdge);
                     self.blocks.items[wCondID2].outgoers[1] = fbEdge.ID;
                     try self.blocks.items[wBodyID].incomers.append(fbEdge.ID);
+                    try self.assertEdgeBothSides(fbEdge.ID);
 
                     var wFillbackID = try self.addBlockOnEdge(wFillback, fbEdge);
 
@@ -1597,6 +1676,7 @@ pub const CfgFunction = struct {
 
         self.blocks.items[srcID].outgoers[0] = edge.ID;
         try (self.blocks.items[destID].incomers).append(edge.ID);
+        try self.assertEdgeBothSides(edge.ID);
         return edge;
     }
 
@@ -1634,6 +1714,8 @@ pub const CfgFunction = struct {
 
         // update the old edge to point from the new block to the old
         self.edges.items[edge].src = blockID;
+        try self.assertEdgeBothSides(newEdge.ID);
+        try self.assertEdgeBothSides(edge);
         return blockID;
     }
 
