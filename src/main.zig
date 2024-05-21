@@ -127,7 +127,12 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
                     .header = true,
                 });
             },
-            .phi => utils.todo("SSA IR generation", .{}),
+            .phi => {
+                const phi = try @import("ir/phi.zig").generate(backendAlloc, &ast);
+                break :ir try phi.stringify_cfg(backendAlloc, .{
+                    .header = true,
+                });
+            },
             .dot => utils.todo("Dot generation", .{}),
             // TODO: should probably break sooner than this instead
             // of blue-balling the user
