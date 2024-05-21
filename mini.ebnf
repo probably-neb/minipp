@@ -29,7 +29,7 @@ relterm -> simple {{ '<' | '>' | '<=' | '>=' } simple}∗
 simple -> term {{ '+' | '−' } term}∗
 term -> unary {{ '∗' | '/' } unary}∗
 unary -> { '!' | '−' }∗ selector
-selector -> factor {'.' id}∗
+selector -> factor {{'.' id} | '[' number ']'}∗
 factor -> '(' expression ')' | id {arguments}opt | number | 'true' |
          | 'false' | 'new' id | 'null' | 'new' 'int_array' '[' number ']' |
 arguments -> '(' {expression { ',' expression}∗}opt ')'
