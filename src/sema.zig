@@ -879,6 +879,7 @@ pub fn TypedIdentifergetType(tid: Ast.Node, ast: *const Ast) !Ast.Type {
         .IntType => return Ast.Type.Int,
         .BoolType => return Ast.Type.Bool,
         .Void => return Ast.Type.Void,
+        .IntArrayType => return Ast.Type.IntArray,
         .StructType => {
             const ident = ast.get(ty.structIdentifier.?).*.token._range.getSubStrFromStr(ast.input);
             // identifier to name
