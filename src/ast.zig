@@ -476,6 +476,11 @@ pub const Node = struct {
             /// null if only one statement
             lastStatement: ?Ref(.Statement) = null,
 
+            pub const EmptyStatementIter = StatementsIter.init(
+                undefined,
+                1,
+                0,
+            );
             pub const StatementsIter = struct {
                 first: usize,
                 last: usize,
@@ -1182,8 +1187,8 @@ pub const KindTagDupe = enum {
     ReturnType,
     FunctionBody,
     LocalDeclarations,
-    ReturnTypedIdentifier,
     TypedIdentifier,
+    ReturnTypedIdentifier,
     StatementList,
     Statement,
     Block,
@@ -1207,6 +1212,7 @@ pub const KindTagDupe = enum {
     True,
     False,
     New,
+    NewIntArray,
     Null,
     BackfillReserve,
 };
@@ -1229,6 +1235,10 @@ fn RefOneOf(comptime tags: anytype) type {
 /////////////
 
 const NodeKindTag = @typeInfo(Node.Kind).Union.tag_type.?;
+
+pub fn NodeKindType(comptime tag: NodeKindTag) type {
+    return @typeInfo(Node.Kind).Union.fields[@intFromEnum(tag)].type;
+}
 
 fn cmpNodeKindAndTag(node: Node, nkTag: NodeKindTag) bool {
     return @intFromEnum(node.kind) == @intFromEnum(nkTag);
