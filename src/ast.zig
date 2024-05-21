@@ -1292,7 +1292,7 @@ pub fn findIndexWithin(ast: *const Ast, nodeKind: NodeKindTag, start: usize, end
     if (start >= ast.nodes.items.len) {
         return null;
     }
-    for (ast.nodes.items[start..end], start..) |node, i| {
+    for (ast.nodes.items[start..@min(end, ast.nodes.items.len)], start..) |node, i| {
         if (cmpNodeKindAndTag(node, nodeKind)) {
             return i;
         }
@@ -1374,7 +1374,7 @@ pub fn NodeIter(comptime tag: NodeKindTag) type {
                 return null;
             }
             // PERF: use a hashmap to store the indexes of the functions
-            const nodeIndex = self.ast.findIndex(tag, self.i);
+            const nodeIndex = self.ast.findIndexWithin(tag, self.i, self.last + 1);
             if (nodeIndex) |i| {
                 self.i = i + 1;
                 const n = self.ast.nodes.items[i];
