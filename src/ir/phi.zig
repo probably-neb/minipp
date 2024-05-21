@@ -218,17 +218,39 @@ pub fn gen_function(
         }
     }
     //
-    var entryBB = fun.addBB("entry");
+    var entryBB = try fun.newBB("entry");
     // generate all of the basic blocks
     for (fun.cfg.postOrder.items) |cfgBlockID| {
         const cfgBlock = fun.cfg.blocks.items[cfgBlockID];
+        // check if the block is the exit block
         var bb = try fun.newBB(cfgBlock.name);
         try fun.bbsToCFG.put(bb, cfgBlockID);
         try fun.cfgToBBs.put(cfgBlockID, bb);
+        // assing the exit block if we are there
+        if (cfgBlockID == fun.cfg.exitID) {
+            fun.exitBBID = bb;
+        }
     }
 
     // link them all together
     try fun.linkBBsFromCFG();
+
+    // fill in the entry block with all used decls
+    var defined = std.AutoHashMap(IR.StrID, bool).init(ir.alloc);
+    var declsKeyIter = fun.cfg.declsUsed.keyIterator();
+    while (declsKeyIter.next()) |declNode| {
+        const declName = ir.reduceChainToFirstIdent(declNode.*);
+        if (defined.contains(declName)) {
+            continue;
+        }
+        const declType = fun.typesMap.get(declName).?;
+        const alloca = Inst.alloca(declType);
+        _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
+        try defined.put(declName, true);
+    }
+
+
+     do new phi generation
 
     // (should) only used if the function returns a value
     var retReg = IR.Register.default;
