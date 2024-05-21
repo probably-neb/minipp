@@ -177,6 +177,13 @@ fn expr_into_treenode(alloc: std.mem.Allocator, ast: *const Ast, node: Ast.Node)
                 try node_t.add_node(params_t);
             }
         },
+        .Parameters => |params| {
+            var iter = params.iter(ast);
+            while (iter.next()) |param| {
+                const param_t = try expr_into_treenode(alloc, ast, param);
+                try node_t.add_node(param_t);
+            }
+        },
         .Invocation => |funCall| {
             if (funCall.args) |args| {
                 const arg_node = ast.get(args).*.kind.Arguments;
@@ -284,10 +291,22 @@ fn expr_into_treenode(alloc: std.mem.Allocator, ast: *const Ast, node: Ast.Node)
                 try node_t.add_node(expr_t);
             }
         },
+        .NewIntArray => |newIntArray| {
+            const expr_t = try expr_into_treenode(alloc, ast, ast.get(newIntArray.length).*);
+            try node_t.add_node(expr_t);
+        },
+        .Print => |print| {
+            const expr_t = try expr_into_treenode(alloc, ast, ast.get(print.expr).*);
+            try node_t.add_node(expr_t);
+            if (print.hasEndl) {
+                const endl_t = TreeNode.init(alloc, "endl");
+                try node_t.add_node(endl_t);
+            }
+        },
         // base nodes with no children
         // typed Identifier has children but we display it as `{type} {name}`
         // for simplicity's sake
-        .TypedIdentifier, .Number, .Identifier, .True, .False => {},
+        .TypedIdentifier, .Number, .Identifier, .True, .False, .Read => {},
         else => utils.todo("expr_into_treenode: {s}", .{@tagName(node.kind)}),
     }
     return node_t;
