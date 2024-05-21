@@ -529,6 +529,7 @@ pub fn stringify_type(ir: *const IR, ty: IR.Type) Rope {
             };
             return Rope.str_num_str(prefix, arr.len, postfix);
         },
+        .int_arr => return Rope.just("i64").ptr(),
         .null_ => std.debug.panic("null type in stringify", .{}),
         //     const name = ir.getIdent(nameID);
         //     const strct = "struct ";

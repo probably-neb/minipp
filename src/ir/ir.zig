@@ -79,7 +79,7 @@ pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
         .Bool => .bool,
         .Void => .void,
         .Null => std.debug.panic("FUCK WE HAVE TO HANDLE NULL TYPE\n", .{}),
-        .IntArray => utils.todo("Handle the array type", .{}),
+        .IntArray => .int_arr,
         .Struct => |name| blk: {
             const structID = self.internIdent(name);
             break :blk .{ .strct = structID };
@@ -924,29 +924,34 @@ pub const Type = union(enum) {
     void,
     int,
     bool,
-    // sawy dylan
+    /// sawy dylan
     strct: StructID,
-    // only used for malloc, free, printf, read decls and args
-    // will always be a pointer to i8
+    /// only used for malloc, free, printf, read decls and args
+    /// will always be a pointer to i8
     i8,
-    // only used for args to malloc and gep as shown in the
-    // examples beard gave us
-    // could just use int but I think it being wierd helps
-    // make it stand out and that is probably a good thing
+    /// only used for args to malloc and gep as shown in the
+    /// examples beard gave us
+    /// could just use int but I think it being wierd helps
+    /// make it stand out and that is probably a good thing
     i32,
+    /// Language int_array type.
+    /// Arr is for known size arrays like the builtin printf format strings
+    /// This is for user arrays
+    int_arr,
     arr: struct {
         type: enum {
             i8,
-            // Same as Type.int, just has to be a separate thing
-            // for
-            // 1. semantics - we only have arrays of i8 (the printf inputs)
-            //    and soon int (the user arrays)
-            // 2. to avoid having the type be recursively defined
-            //    which zig likes to bitch and moan about (understandably)
+            /// Same as Type.int, just has to be a separate thing
+            /// for
+            /// 1. semantics - we only have arrays of i8 (the printf inputs)
+            ///    and soon int (the user arrays)
+            /// 2. to avoid having the type be recursively defined
+            ///    which zig likes to bitch and moan about (understandably)
             int,
         },
         len: u32,
     },
+    /// null type - note special
     null_,
     /// The type used instead of optionals
     pub const default = Type.void;
@@ -972,6 +977,9 @@ pub const Type = union(enum) {
     pub fn sizeof(self: Type) u32 {
         return switch (self) {
             .strct, .int, .null_ => 8,
+            // int_arr is just a pointer to a dynamically allocated
+            // array so it is just the size of a pointer
+            .int_arr => 8,
             .i8, .bool => 1,
             .void => 0,
             .i32 => 4,
