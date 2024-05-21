@@ -27,12 +27,12 @@ pub const ALIGN = 8;
 
 pub fn reduceChainToFirstIdent(self: *IR, chain: StrID) StrID {
     const chain_long = self.getIdent(chain);
-    const tokenizer = std.mem.tokenize(u8, chain_long, ".");
+    var tokenizer = std.mem.tokenize(u8, chain_long, ".");
     const first = tokenizer.next();
     if (!(first == null)) {
         return chain;
     }
-    return self.internIdent(first);
+    return self.internIdent(first.?);
 }
 
 pub fn isIdentChain(self: *IR, id: StrID) bool {
@@ -197,6 +197,7 @@ pub const Function = struct {
     bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
     cfg: CfgFunction,
+    exitBBID: BasicBlock.ID,
 
     /// a list of the instructions that are within the fuction
     /// the basic blocks have a list of instructions that they use,
@@ -224,10 +225,11 @@ pub const Function = struct {
                 }
                 const edge = self.cfg.edges.items[outgoer.?];
                 const bbID = self.cfgToBBs.get(edge.dest).?;
+                const bbInID = self.cfgToBBs.get(edge.src).?;
                 const bbOut = self.bbs.get(bbID);
-                const bbIn = self.bbs.get(self.cfgToBBs.get(edge.src).?);
+                const bbIn = self.bbs.get(bbInID);
                 try bbIn.addOutgoer(bbID);
-                try bbOut.addIncomer(bbIn.id);
+                try bbOut.addIncomer(bbInID);
             }
         }
     }
@@ -259,9 +261,6 @@ pub const Function = struct {
     // index into the insts array
     pub const InstID = u32;
 
-    pub const entryBBID = 0;
-    pub const exitBBID = 1;
-
     pub const ParamsList = StaticSizeLookupTable(Param.ID, Param, Param.getKey);
     pub const Param = struct {
         name: StrID,
@@ -283,6 +282,9 @@ pub const Function = struct {
             .params = ParamsList.init(params),
             .insts = OrderedList(Inst).init(alloc),
             .typesMap = std.AutoHashMap(StrID, Type).init(alloc),
+            .bbsToCFG = std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t).init(alloc),
+            .cfgToBBs = std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID).init(alloc),
+            .exitBBID = 0,
             .cfg = CfgFunction.init(alloc),
         };
     }
@@ -325,6 +327,7 @@ pub const Function = struct {
         self.regs.set(regID, reg);
         self.insts.set(instID, inst); // in the inst array update the resulting instruction
         try self.bbs.get(bb).insts.append(instID);
+        try self.bbs.get(bb).versionMap.put(name, inst.res);
         return reg;
     }
 
@@ -559,14 +562,14 @@ pub const Function = struct {
             }
             var bb = self.func.bbs.get(self.bb);
             if (self.instIndex >= bb.insts.len) {
-                if (self.bb == Function.exitBBID) {
+                if (self.bb == self.fun.exitBBID) {
                     return null;
                 }
                 if (self.bb >= self.func.bbs.len - 1) {
-                    self.bb = Function.exitBBID;
+                    self.bb = self.fun.exitBBID;
                 } else {
                     self.bb += 1;
-                    if (self.bb == Function.exitBBID) {
+                    if (self.bb == self.fun.exitBB) {
                         // skip the exit bb too
                         self.bb += 1;
                     }
@@ -1135,6 +1138,8 @@ pub const CfgFunction = struct {
             .domChildren = std.AutoHashMap(CfgBlock.ID_t, std.ArrayList(CfgBlock.ID_t)).init(alloc),
             .domFront = std.AutoHashMap(CfgBlock.ID_t, std.ArrayList(CfgBlock.ID_t)).init(alloc),
             .dominators = std.ArrayList(Set.Set(CfgBlock.ID_t)).init(alloc),
+            .postOrderMap = std.AutoHashMap(CfgBlock.ID_t, usize).init(alloc),
+            .assignments = std.AutoHashMap(StrID, bool).init(alloc),
             .funNode = undefined,
             .exitID = 1,
             .alloc = alloc,
@@ -1371,7 +1376,7 @@ pub const CfgFunction = struct {
         }
         try arrayListReverse(&reversePostOrder);
         for (reversePostOrder.items, 0..) |block, i| {
-            self.postOrderMap.put(block, i);
+            try self.postOrderMap.put(block, i);
         }
         self.postOrder = reversePostOrder;
     }
@@ -1780,6 +1785,9 @@ pub const BasicBlock = struct {
     name: []const u8,
     incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
+    defs: Set.Set(StrID),
+    uses: Set.Set(StrID),
+    versionMap: std.AutoHashMap(StrID, Ref),
     // and ORDERED list of the instruction ids of the instructions in this block
     insts: List,
     phiInsts: std.ArrayList(Function.InstID),
@@ -1805,6 +1813,9 @@ pub const BasicBlock = struct {
     pub fn init(alloc: std.mem.Allocator, name: []const u8) BasicBlock {
         return .{
             .incomers = std.ArrayList(Label).init(alloc),
+            .defs = Set.Set(StrID).init(),
+            .uses = Set.Set(StrID).init(),
+            .versionMap = std.AutoHashMap(StrID, Ref).init(alloc),
             .outgoers = [2]?Label{ null, null },
             .insts = List.init(alloc),
             .phiInsts = std.ArrayList(Function.InstID).init(alloc),
