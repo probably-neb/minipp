@@ -25,6 +25,27 @@ alloc: std.mem.Allocator,
 // for defaults this is probably the safest byte alignment
 pub const ALIGN = 8;
 
+pub fn reduceChainToFirstIdent(self: *IR, chain: StrID) StrID {
+    const chain_long = self.getIdent(chain);
+    const tokenizer = std.mem.tokenize(u8, chain_long, ".");
+    const first = tokenizer.next();
+    if (!(first == null)) {
+        return chain;
+    }
+    return self.internIdent(first);
+}
+
+pub fn isIdentChain(self: *IR, id: StrID) bool {
+    // just check if there is a . in the str
+    const str = self.getIdent(id);
+    for (str) |c| {
+        if (c == '.') {
+            return true;
+        }
+    }
+    return false;
+}
+
 // something like s.a.ass.penis -> Id{s}, Id{a},
 pub fn chainToStrIdList(self: *IR, chain: StrID) !std.ArrayList(StrID) {
     var list = std.ArrayList(StrID).init(self.alloc);
@@ -171,6 +192,8 @@ pub const Function = struct {
     alloc: std.mem.Allocator,
     name: StrID,
     returnType: Type,
+    bbsToCFG: std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t),
+    cfgToBBs: std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID),
     bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
     cfg: CfgFunction,
@@ -189,6 +212,23 @@ pub const Function = struct {
         const protoType = self.typesMap.get(ident);
         if (protoType != null) {
             return protoType;
+        }
+    }
+
+    pub fn linkBBsFromCFG(self: *Function) !void {
+        for (self.cfg.postOrder.items) |cfgBlockID| {
+            const cfgBock = self.cfg.blocks.items[cfgBlockID];
+            for (cfgBock.outgoers) |outgoer| {
+                if (outgoer == null) {
+                    continue;
+                }
+                const edge = self.cfg.edges.items[outgoer.?];
+                const bbID = self.cfgToBBs.get(edge.dest).?;
+                const bbOut = self.bbs.get(bbID);
+                const bbIn = self.bbs.get(self.cfgToBBs.get(edge.src).?);
+                try bbIn.addOutgoer(bbID);
+                try bbOut.addIncomer(bbIn.id);
+            }
         }
     }
 
@@ -621,8 +661,10 @@ pub const CfgBlock = struct {
     alloc: std.mem.Allocator,
     statements: std.ArrayList(Ast.Node),
     typedIdents: std.ArrayList(StrID),
+    assignments: std.ArrayList(StrID),
     incomers: std.ArrayList(Edge.ID_t),
     outgoers: [2]?Edge.ID_t,
+    conditional: bool = false,
     ID: usize,
     name: []const u8,
     pub const ID_t = usize;
@@ -651,6 +693,7 @@ pub const CfgBlock = struct {
             .statements = std.ArrayList(Ast.Node).init(alloc),
             .outgoers = [2]?Edge.ID_t{ null, null },
             .typedIdents = std.ArrayList(StrID).init(alloc),
+            .assignments = std.ArrayList(StrID).init(alloc),
             .name = name,
             .ID = 0,
         };
@@ -689,6 +732,7 @@ pub const CfgBlock = struct {
                     }
                     const name = ir.internIdent(ident);
                     try self.typedIdents.append(name);
+                    try self.assignments.append(name);
                 },
                 else => {},
             }
@@ -728,6 +772,7 @@ pub const CfgBlock = struct {
                     }
                     const name = ir.internIdent(ident);
                     try self.typedIdents.append(name);
+                    try self.assignments.append(name);
                 },
                 else => {},
             }
@@ -824,11 +869,13 @@ pub const CfgFunction = struct {
     pub const ID = usize;
     blocks: std.ArrayList(CfgBlock),
     postOrder: std.ArrayList(CfgBlock.ID_t),
+    postOrderMap: std.AutoHashMap(CfgBlock.ID_t, usize),
     edges: std.ArrayList(Edge),
     alloc: std.mem.Allocator,
     params: std.ArrayList(StrID),
     decls: std.ArrayList(StrID),
     declsUsed: std.AutoHashMap(StrID, bool),
+    assignments: std.AutoHashMap(StrID, bool),
     paramsUsed: std.ArrayList(StrID),
     statements: std.ArrayList(Ast.Node),
     funNode: Ast.Node.Kind.FunctionType,
@@ -1064,7 +1111,6 @@ pub const CfgFunction = struct {
     pub fn computeAllDomFronts(self: *CfgFunction) !void {
         for (self.postOrder.items) |node| {
             try self.computeDomFront(node);
-            break;
         }
     }
 
@@ -1324,6 +1370,9 @@ pub const CfgFunction = struct {
             }
         }
         try arrayListReverse(&reversePostOrder);
+        for (reversePostOrder.items, 0..) |block, i| {
+            self.postOrderMap.put(block, i);
+        }
         self.postOrder = reversePostOrder;
     }
 
@@ -1509,6 +1558,7 @@ pub const CfgFunction = struct {
                     for (ifCond.typedIdents.items) |ident| {
                         try self.declsUsed.put(ident, true);
                     }
+                    ifCond.conditional = true;
                     var ifCondID = try self.addBlockOnEdge(ifCond, ed);
                     ed.src = ifCondID;
 
@@ -1580,6 +1630,7 @@ pub const CfgFunction = struct {
 
                     // while loop
                     var wCond = CfgBlock.init(self.alloc, "while.cond1");
+                    wCond.conditional = true;
                     try wCond.addIdentsFromExpression(ir, ast, as_wCond);
                     try wCond.statements.append(as_wCond);
                     for (wCond.typedIdents.items) |ident| {
@@ -1589,6 +1640,7 @@ pub const CfgFunction = struct {
                     ed.src = wCondID;
 
                     var wCond2 = CfgBlock.init(self.alloc, "while.cond2");
+                    wCond2.conditional = true;
                     try wCond2.addIdentsFromExpression(ir, ast, as_wCond);
                     try wCond2.statements.append(as_wCond);
                     for (wCond2.typedIdents.items) |ident| {

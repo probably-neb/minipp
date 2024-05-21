@@ -175,34 +175,7 @@ pub fn gen_function(
     fun: *IR.Function,
     funNode: Ast.Node.Kind.FunctionType,
 ) !*const IR.Function {
-    // TODO: exit/entry blocks should probably be stored separately
-    // i.e. entry = bb[0], exit = bb[1], rest = bb[2..exit)
-    // possibly as fields in `struct Function` with a helper on `Function`
-    // that checks `i < 2 ? [self.entry, self.exit][i] : self.bbs[i - 2]`
-
-    // entry block is the one that holds `alloca`s
-    // separated to make it easier to just append `alloca`s
-    // to the start and maintain hoisting (all allocas are in order at start of function)
-    const entryBB = try fun.newBB("entry");
-
-    // Exit is like entryBB in that it is intentionally bare, containing only
-    // the return instruction
-    const exitBB = try fun.newBB("exit");
-    _ = exitBB;
-
     const funBody = funNode.getBody(ast);
-
-    // (should) only used if the function returns a value
-    var retReg = IR.Register.default;
-
-    // generate alloca for the return value if the function returns a value
-    // this makes it so ret reg is always `%0`
-    if (fun.returnType != .void) {
-        // allocate a stack slot for the return value in the entry
-        retReg = try fun.addInst(entryBB, Inst.alloca(fun.returnType), fun.returnType);
-        // save it in the function for easy access later
-        fun.setReturnReg(retReg.id);
-    }
 
     fun.cfg = try IR.CfgFunction.generate(fun, ast, funNode, ir);
 
@@ -244,7 +217,29 @@ pub fn gen_function(
             try fun.typesMap.put(declNode, preType.?);
         }
     }
+    //
+    var entryBB = fun.addBB("entry");
+    // generate all of the basic blocks
+    for (fun.cfg.postOrder.items) |cfgBlockID| {
+        const cfgBlock = fun.cfg.blocks.items[cfgBlockID];
+        var bb = try fun.newBB(cfgBlock.name);
+        try fun.bbsToCFG.put(bb, cfgBlockID);
+        try fun.cfgToBBs.put(cfgBlockID, bb);
+    }
 
+    // link them all together
+    try fun.linkBBsFromCFG();
+
+    // (should) only used if the function returns a value
+    var retReg = IR.Register.default;
+    // generate alloca for the return value if the function returns a value
+    // this makes it so ret reg is always `%0`
+    if (fun.returnType != .void) {
+        // allocate a stack slot for the return value in the entry
+        retReg = try fun.addInst(entryBB, Inst.alloca(fun.returnType), fun.returnType);
+        // save it in the function for easy access later
+        fun.setReturnReg(retReg.id);
+    }
     // var declsIter = funBody.iterLocalDecls(ast);
     // while (declsIter.next()) |declNode| {
     //     const decl = declNode.kind.TypedIdentifier;
