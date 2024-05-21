@@ -8,7 +8,7 @@ const Flag = struct {
 
 const FLAGS_MAP = std.ComptimeStringMap(ArgKind, .{
     .{ "-stack", .{ .mode = .stack } },
-    .{ "-ssa", .{ .mode = .ssa } },
+    .{ "-phi", .{ .mode = .phi } },
     .{ "-opt", .{ .mode = .opt } },
     .{ "-dot", .{ .mode = .dot } },
     .{ "-o", .outfile },
@@ -33,7 +33,7 @@ const Args = struct {
 
     pub const Mode = enum {
         stack,
-        ssa,
+        phi,
         opt,
         dot,
     };
@@ -127,10 +127,10 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
                     .header = true,
                 });
             },
+            .phi => utils.todo("SSA IR generation", .{}),
             .dot => utils.todo("Dot generation", .{}),
             // TODO: should probably break sooner than this instead
             // of blue-balling the user
-            .ssa => utils.todo("SSA IR generation", .{}),
             .opt => utils.todo("Optimization", .{}),
         }
     };
