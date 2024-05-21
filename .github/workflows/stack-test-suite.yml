@@ -1,4 +1,4 @@
-name: Test Suite
+name: STACK TEST SUITE
 on:
   push:
     branches:
