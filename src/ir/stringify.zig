@@ -357,7 +357,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                     // and idk what the second type is for
                     try buf.fmt("{} = load {}, {}* {}", .{
                         stringify_ref(ir, fun, load.res),
-                        stringify_type(ir, load.ty).ptr_if(load.ty == .strct),
+                        stringify_type(ir, load.ty).ptr_if(load.ty == .strct or load.ty == .int_arr),
                         stringify_type(ir, load.ty),
                         stringify_ref(ir, fun, load.ptr),
                     });
@@ -378,11 +378,12 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
                 // `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
                 .Gep => {
                     const gep = IR.Inst.Gep.get(inst);
-                    try buf.fmt("{} = getelementptr {}, {}* {}, i1 0, {} {}", .{
+                    try buf.fmt("{} = getelementptr {}, {}* {}, {s}{} {}", .{
                         stringify_ref(ir, fun, gep.res),
                         stringify_type(ir, gep.baseTy).not_ptr(),
                         stringify_type(ir, gep.ptrTy).not_ptr(),
                         stringify_ref(ir, fun, gep.ptrVal),
+                        if (gep.baseTy == .int_arr) "" else "i1 0, ",
                         stringify_type(ir, gep.index.type),
                         stringify_ref(ir, fun, gep.index),
                     });
