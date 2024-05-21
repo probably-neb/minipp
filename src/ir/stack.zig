@@ -456,7 +456,7 @@ fn gen_statement(
                     const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
                     break :blk IR.Ref.fromReg(loadReg);
                 };
-                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, true);
+                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, .Assignment);
             }
 
             // FIXME: rhs could also be a `read` handle!
@@ -584,6 +584,34 @@ fn gen_expression(
                     const memRef = try gen_malloc_struct(ir, fun, bb, s);
                     break :new memRef;
                 },
+                .NewIntArray => |newArr| newArr: {
+                    const lenStr = ast.getIdentValue(newArr.length);
+                    const len = try std.fmt.parseInt(u32, lenStr, 10);
+                    const arrType = IR.Type{
+                        .arr = .{
+                            .type = .int,
+                            .len = len,
+                        },
+                    };
+                    const alloca = alloca: {
+                        // allocate the array on the stack
+                        // yielding reference to the *array* (i.e. [int x {len}]*)
+                        const inst = Inst.alloca(arrType);
+                        const reg = try fun.addInst(bb, inst, arrType);
+                        const ref = IR.Ref.fromReg(reg);
+                        break :alloca ref;
+                    };
+                    const cast = cast: {
+                        // bitcast the array to an int* from [int x {len}]*
+                        // as int_arrays are passed around and treated as int*
+                        // (i.e. unknown length)
+                        const inst = Inst.bitcast(alloca, .int_arr);
+                        const reg = try fun.addInst(bb, inst, .int_arr);
+                        const ref = IR.Ref.fromReg(reg);
+                        break :cast ref;
+                    };
+                    break :newArr cast;
+                },
                 .Null => null: {
                     // TODO: if llvm doesn't like this, or I want to make the code pretty
                     // whichever comes first...
@@ -602,9 +630,9 @@ fn gen_expression(
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
             };
             if (sel.chain) |chain| {
-                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain, null);
+                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain, .Usage);
                 switch (resultRef.type) {
-                    .strct, .arr => {},
+                    .strct, .arr, .int_arr => {},
                     // Whenever we are accessing a field of a struct,
                     // if it isn't a struct or an array, it should be derefed
                     // so it isn't a pointer
@@ -776,6 +804,10 @@ fn gen_print(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, expr: IR.Ref, nl:
     return;
 }
 
+const SelectorType = enum {
+    Usage,
+    Assignment,
+};
 /// @param chainIndex: the `chain` field in `LValue` or `Selector`
 ///               i.e. the pointer to the `SelectorChain` node
 /// @returns the reference to the last instruction in the chain
@@ -786,10 +818,27 @@ fn gen_selector_chain(
     bb: IR.BasicBlock.ID,
     startRef: IR.Ref,
     chainIndex: usize,
-    optionallyNoDerefFinal: ?bool,
+    selectorType: SelectorType,
 ) !IR.Ref {
-    var structType = try ir.types.get(startRef.type.strct);
     var chainLink = ast.get(chainIndex).kind.SelectorChain;
+    if (startRef.type == .int_arr) {
+        // early return if the startRef is an array type as we know
+        // that the chainLink is the index into the array and the result will be an
+        // int and therefore there will be no more field accesses
+        const exprNode = ast.get(chainLink.ident).*;
+        utils.assert(exprNode.kind == .Expression, "chainLink.ident should be expression for chain off of top level int_array", .{});
+        const indexRef = try gen_expression(ir, ast, fun, bb, exprNode);
+        const inst = Inst.gep(startRef.type, startRef, indexRef);
+        var reg = try fun.addNamedInst(bb, inst, startRef.name, indexRef.type);
+        var ref = IR.Ref.fromReg(reg);
+        // if (selectorType == .Usage) {
+        //     const loadInst = Inst.load(ref.type, ref);
+        //     reg = try fun.addNamedInst(bb, loadInst, ref.name, ref.type);
+        //     ref = IR.Ref.fromReg(reg);
+        // }
+        return ref;
+    }
+    var structType = try ir.types.get(startRef.type.strct);
     var fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
     var fieldInfo = try structType.getFieldWithName(fieldNameID);
     var fieldIndex = fieldInfo.index;
@@ -804,6 +853,23 @@ fn gen_selector_chain(
     while (nextChainLink) |nextIndex| : (nextChainLink = chainLink.next) {
         chainLink = ast.get(nextIndex).kind.SelectorChain;
 
+        if (prevField.type == .int_arr) {
+            // early return if we reach a field that is an array type as we know
+            // that the chainLink is the index into the array and the result will be an
+            // int and therefore there will be no more field accesses
+            const exprNode = ast.get(chainLink.ident).*;
+            utils.assert(exprNode.kind == .Expression, "chainLink.ident should be expression for chain off of int_array field", .{});
+            const indexRef = try gen_expression(ir, ast, fun, bb, exprNode);
+            inst = Inst.gep(startRef.type, startRef, indexRef);
+            reg = try fun.addNamedInst(bb, inst, startRef.name, indexRef.type);
+            ref = IR.Ref.fromReg(reg);
+            // if (selectorType == .Usage) {
+            //     const loadInst = Inst.load(ref.type, ref);
+            //     reg = try fun.addNamedInst(bb, loadInst, ref.name, ref.type);
+            //     ref = IR.Ref.fromReg(reg);
+            // }
+            return ref;
+        }
         utils.assert(prevField.type == .strct, "prevField.type.isStruct in `gen_selector_chain`", .{});
         structType = try ir.types.get(prevField.type.strct);
         fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
@@ -821,8 +887,7 @@ fn gen_selector_chain(
         reg = try fun.addNamedInst(bb, inst, field.name, field.type);
         ref = IR.Ref.fromReg(reg);
     }
-    const okToDerefFinal = !(optionallyNoDerefFinal orelse false);
-    if (ref.type == .strct and okToDerefFinal) {
+    if (ref.type == .strct and selectorType == .Assignment) {
         // if the final field being accessed in the struct, we are polite
         // and return a pointer to the struct instead of the pointer to the pointer to the struct
         // because that is (certainly?) what the consumer expects
