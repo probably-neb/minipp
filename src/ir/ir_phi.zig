@@ -27,12 +27,16 @@ pub const ALIGN = 8;
 
 pub fn reduceChainToFirstIdent(self: *IR, chain: StrID) StrID {
     const chain_long = self.getIdent(chain);
-    var tokenizer = std.mem.tokenize(u8, chain_long, ".");
-    const first = tokenizer.next();
-    if (!(first == null)) {
-        return chain;
+    var start: usize = 0;
+    var end: usize = 0;
+    for (chain_long) |c| {
+        if (c == '.') {
+            break;
+        }
+        end += 1;
     }
-    return self.internIdent(first.?);
+    var sliced = chain_long[start..end];
+    return self.internIdent(sliced);
 }
 
 pub fn isIdentChain(self: *IR, id: StrID) bool {
@@ -194,6 +198,7 @@ pub const Function = struct {
     returnType: Type,
     bbsToCFG: std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t),
     cfgToBBs: std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID),
+    defBlocks: std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)),
     bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
     cfg: CfgFunction,
@@ -208,6 +213,7 @@ pub const Function = struct {
     returnReg: ?Register.ID = null,
     params: ParamsList,
     typesMap: std.AutoHashMap(StrID, Type),
+    pub const entryBBID: usize = 0;
 
     pub fn identToType(self: *Function, ident: StrID) !Type {
         const protoType = self.typesMap.get(ident);
@@ -285,6 +291,7 @@ pub const Function = struct {
             .bbsToCFG = std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t).init(alloc),
             .cfgToBBs = std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID).init(alloc),
             .exitBBID = 0,
+            .defBlocks = std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)).init(alloc),
             .cfg = CfgFunction.init(alloc),
         };
     }
@@ -562,14 +569,14 @@ pub const Function = struct {
             }
             var bb = self.func.bbs.get(self.bb);
             if (self.instIndex >= bb.insts.len) {
-                if (self.bb == self.fun.exitBBID) {
+                if (self.bb == self.func.exitBBID) {
                     return null;
                 }
                 if (self.bb >= self.func.bbs.len - 1) {
-                    self.bb = self.fun.exitBBID;
+                    self.bb = self.func.exitBBID;
                 } else {
                     self.bb += 1;
-                    if (self.bb == self.fun.exitBB) {
+                    if (self.bb == self.func.exitBBID) {
                         // skip the exit bb too
                         self.bb += 1;
                     }
@@ -956,11 +963,11 @@ pub const CfgFunction = struct {
                     var blockDom = result.items[block];
                     var intersection = try blockDom.intersectionOf(self.alloc, predDom);
                     _ = try intersection.add(self.alloc, block);
-                    std.debug.print("block = {any}, pred = {any}\n", .{ block, pred });
-                    predDom.print();
-                    blockDom.print();
-                    intersection.print();
-                    std.debug.print("\n", .{});
+                    // std.debug.print("block = {any}, pred = {any}\n", .{ block, pred });
+                    // predDom.print();
+                    // blockDom.print();
+                    // intersection.print();
+                    // std.debug.print("\n", .{});
                     var changedInter = intersection.eql(blockDom);
                     if (!changedInter) {
                         result.items[block].deinit(self.alloc);
@@ -973,11 +980,11 @@ pub const CfgFunction = struct {
             }
         }
         self.dominators = result;
-        for (self.postOrder.items) |block| {
-            std.debug.print("block = {any}, ", .{block});
-            self.dominators.items[block].print();
-            std.debug.print("\n", .{});
-        }
+        // for (self.postOrder.items) |block| {
+        //     // std.debug.print("block = {any}, ", .{block});
+        //     // self.dominators.items[block].print();
+        //     // std.debug.print("\n", .{});
+        // }
     }
 
     // // Initialize the immediate dominators map to be empty
@@ -1020,14 +1027,14 @@ pub const CfgFunction = struct {
                         continue;
                     }
                     if (!self.dominators.items[d.key_ptr.*].contains(d2.key_ptr.*)) {
-                        std.debug.print("block = {d}, d = {d}, d2 = {d}\n", .{ block, d.key_ptr.*, d2.key_ptr.* });
+                        // std.debug.print("block = {d}, d = {d}, d2 = {d}\n", .{ block, d.key_ptr.*, d2.key_ptr.* });
                         doms_all = false;
                         break;
                     }
                 }
 
                 if (doms_all) {
-                    std.debug.print("block = {d}, idom = {d}\n", .{ block, d.key_ptr.* });
+                    // std.debug.print("block = {d}, idom = {d}\n", .{ block, d.key_ptr.* });
 
                     _ = try self.idoms.put(block, d.key_ptr.*);
                     break;
@@ -1087,7 +1094,7 @@ pub const CfgFunction = struct {
             }
             const edge = self.edges.items[outgoer.?];
             if (self.idoms.get(edge.dest) != nodeID) {
-                std.debug.print("edge.dest = {d}, nodeID = {d}\n", .{ edge.dest, nodeID });
+                // std.debug.print("edge.dest = {d}, nodeID = {d}\n", .{ edge.dest, nodeID });
 
                 try S.append(edge.dest);
             }
@@ -1424,8 +1431,8 @@ pub const CfgFunction = struct {
         try self.generateStatements(ast, ir, statIter, the_edge);
         try self.reversePostOrderComp();
         try self.genDominance();
-        try self.printDomFront();
-        self.printOutFunAsDot(ir);
+        // try self.printDomFront();
+        // self.printOutFunAsDot(ir);
         return self;
     }
 
@@ -1793,7 +1800,64 @@ pub const BasicBlock = struct {
     phiInsts: std.ArrayList(Function.InstID),
     phiMap: std.AutoHashMap(StrID, Function.InstID),
 
-    pub fn addPhi(self: *BasicBlock, instID: Function.InstID, ident: StrID) !void {
+    // creates a new instruction phi node and adds it to the block, adds it to the phiMap
+    // and version map
+    pub fn addEmptyPhiOrClear(self: BasicBlock.ID, fun: *Function, ident: StrID) !Function.InstID {
+        const bbMap = fun.bbs.get(self).*.phiMap;
+        if (bbMap.contains(ident)) {
+            const contInst = bbMap.get(ident).?;
+            const fInst = fun.insts.get(contInst).*;
+            var phiInst = IR.Inst.Phi.get(fInst);
+            try phiInst.entries.resize(0);
+            const phiInstInst = phiInst.toInst();
+            fun.insts.set(contInst, phiInstInst);
+            return contInst;
+        }
+        const identType = fun.typesMap.get(ident).?;
+        var phiEntries = std.ArrayList(IR.PhiEntry).init(fun.alloc);
+        const phi = Inst.phi(IR.Ref.default, identType, phiEntries);
+
+        // reserve
+        const regID = try fun.regs.add(undefined);
+        const instID = try fun.insts.add(undefined);
+
+        // construct the register to be added, using the reserved IDs
+        const reg = Register{ .id = regID, .inst = instID, .name = ident, .bb = self, .type = identType };
+        var inst = phi;
+        inst.res = Ref.local(regID, ident, identType); // update the reference of the incoming instruction
+
+        // save
+        fun.regs.set(regID, reg);
+        fun.insts.set(instID, inst); // in the inst array update the resulting instruction
+        try fun.bbs.get(self).versionMap.put(ident, inst.res);
+
+        try fun.bbs.get(self).addPhiInst(instID, ident);
+        return instID;
+    }
+
+    pub fn addPhiWithPreds(bbID: BasicBlock.ID, fun: *Function, ident: StrID) !Function.InstID {
+        const bb = fun.bbs.get(bbID);
+        const currentPhiInstID = try BasicBlock.addEmptyPhiOrClear(bbID, fun, ident);
+        const bbPhiInst = fun.insts.get(currentPhiInstID).*;
+        var bbPhi = IR.Inst.Phi.get(bbPhiInst);
+
+        for (bb.incomers.items) |it| {
+            const predBB = fun.bbs.get(it);
+            const predInst = predBB.versionMap.get(ident);
+            // if there is no phi for the pred block then continue
+            if (predInst == null) {
+                try bbPhi.entries.append(IR.PhiEntry{ .ref = IR.Ref.default, .bb = it });
+                continue;
+            }
+            try bbPhi.entries.append(IR.PhiEntry{ .ref = predInst.?, .bb = it });
+        }
+
+        const phiInst = bbPhi.toInst();
+        fun.insts.set(currentPhiInstID, phiInst);
+        return currentPhiInstID;
+    }
+
+    pub fn addPhiInst(self: *BasicBlock, instID: Function.InstID, ident: StrID) !void {
         try self.phiInsts.append(instID);
         try self.phiMap.put(ident, instID);
     }

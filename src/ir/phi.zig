@@ -211,7 +211,7 @@ pub fn gen_function(
             if (preType == null) {
                 return error.DeclNotFound;
             }
-            try fun.typesMap.put(declNode, preType.?);
+            try fun.typesMap.put(list.items[0], preType.?);
             list.deinit();
         } else {
             try fun.typesMap.put(declNode, preType.?);
@@ -249,8 +249,11 @@ pub fn gen_function(
         try defined.put(declName, true);
     }
 
+    // link the entry block to the first block
+    try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(fun.cfgToBBs.get(0).?)));
 
-     do new phi generation
+    // put in the phi functions
+    try place_phi_functions(ir, ast, fun, funNode);
 
     // (should) only used if the function returns a value
     var retReg = IR.Register.default;
@@ -262,6 +265,21 @@ pub fn gen_function(
         // save it in the function for easy access later
         fun.setReturnReg(retReg.id);
     }
+
+    // go through the basic blocks and add the statements for each.
+    // update variableMap as we go
+    for (fun.cfg.postOrder.items) |cfgBlockID| {
+        const bbID = fun.cfgToBBs.get(cfgBlockID).?;
+        const cfgBlock = fun.cfg.blocks.items[cfgBlockID];
+        _ = cfgBlock;
+        const bb = fun.bbs.get(bbID);
+        _ = bb;
+    }
+
+    // relink all the phi nodes
+
+    // handle return
+
     // var declsIter = funBody.iterLocalDecls(ast);
     // while (declsIter.next()) |declNode| {
     //     const decl = declNode.kind.TypedIdentifier;
@@ -347,6 +365,98 @@ fn gen_function_params(
         };
     }
     return params;
+}
+
+//place_phi_functions[]:
+//for each node n:
+//  for each variable a that is a member of A(orig)[n]:
+//	defsites[a] = defsites[a] U [n]
+//for each variable a:
+//  W = defsites[a]
+//      while W != empty list
+//          remove some node n from W
+//          for each y in DF[n]
+// 	        if a does not belong to the set A(phi)[y]
+// 		    insert-phi(y,a)
+// 		    A(phi)[y] = A(phi)[y] U {a}
+// 		    if a does not belong to the set A(orig)[y]
+//                      W = W U {y}
+//A(orig)[n] = the set of variables defined at node n
+//A(phi)[y]  = the set of variables that have phi-functions at node y
+//
+//insert-phi(y,a):
+// insert the statement a = phi (a,a,...) at the top of the block y
+// where the phi function has as many arguments as y has predecessors
+pub fn place_phi_functions(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode: Ast.Node.Kind.FunctionType) !void {
+    _ = funNode;
+    _ = ast;
+    // for each node n:
+    for (fun.cfg.postOrder.items) |cfgBlockID| {
+        // for each variable a that is a member of A(orig)[n]:
+        for (fun.cfg.blocks.items[cfgBlockID].assignments.items) |defStrID| {
+            // create a set of defsites for each variable
+            // check if defblocks contains bb's id
+            const bbID = fun.cfgToBBs.get(cfgBlockID).?;
+            var reducdStr = ir.reduceChainToFirstIdent(defStrID);
+            std.debug.print("full {s}, reduced {s}\n", .{ ir.getIdent(defStrID), ir.getIdent(reducdStr) });
+            if (!fun.defBlocks.contains(reducdStr)) {
+                try fun.defBlocks.put(reducdStr, std.ArrayList(IR.BasicBlock.ID).init(ir.alloc));
+            }
+            // check if the bb is in the defsites
+            var inDefSites = false;
+            for (fun.defBlocks.getPtr(reducdStr).?.items) |bb| {
+                if (bb == bbID) {
+                    inDefSites = true;
+                    break;
+                }
+            }
+
+            if (inDefSites) {
+                continue;
+            }
+            try fun.defBlocks.getPtr(reducdStr).?.append(bbID);
+        }
+    }
+    // for each variable a:
+    var defBlocksIter = fun.defBlocks.keyIterator();
+    while (defBlocksIter.next()) |defStrID| {
+        const defStr = defStrID.*;
+        // W = defsites[a]
+        var W = try fun.defBlocks.get(defStr).?.clone();
+        // while W != empty list
+        while (W.items.len != 0) {
+            // remove some node n from W
+            const bbBlockID = W.pop();
+            const cfgBlockID = fun.bbsToCFG.get(bbBlockID).?;
+            // for each y in DF[n]
+            for (fun.cfg.domFront.get(cfgBlockID).?.items) |dfCfgBlockID| {
+                // get bbid
+                const dfBBID = fun.cfgToBBs.get(dfCfgBlockID).?;
+                // if y is not in A(phi)[y]
+                const assInBBPhi = fun.bbs.get(dfBBID).phiMap.contains(defStr);
+                if (!assInBBPhi) {
+                    // 		    insert-phi(y,a)
+                    // 		    A(phi)[y] = A(phi)[y] U {a}
+                    _ = try IR.BasicBlock.addPhiWithPreds(dfBBID, fun, defStr);
+
+                    // 		    if a does not belong to the set A(orig)[y]
+                    // iterate through the cfgBlock's assignments and see if any of them are the same as defStr
+                    var isDef: bool = false;
+                    for (fun.cfg.blocks.items[dfCfgBlockID].assignments.items) |yIdent| {
+                        if (ir.reduceChainToFirstIdent(yIdent) == defStr) {
+                            isDef = true;
+                            break;
+                        }
+                    }
+                    if (!isDef) {
+                        //                      W = W U {y}
+                        try W.append(dfBBID);
+                    }
+                }
+            }
+        }
+        W.deinit();
+    }
 }
 
 /// generates the IR for a block of statements, i.e. a function body or Block node
@@ -1139,6 +1249,14 @@ test "phi.print_struct_tests" {
     errdefer log.print();
     const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; a =s.s.s.s.s.s.a; if(s.s.s.s.a > 2) { s.s.s.s.s.a = 3;} return s.s.s.a; }";
 
-    const ir = try testMe(in);
-    _ = ir;
+    var str = try inputToIRString(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+}
+
+test "phi.print_struct_tests2" {
+    errdefer log.print();
+    const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; a = 5; if(a > 2) { a =2; s.s.a = a; if (s.s.a == 1) {a = 2; s.s.a = 1;} else {a = 5;}} s.s.a = 2; return s.s.s.a; }";
+
+    var str = try inputToIRString(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
 }
