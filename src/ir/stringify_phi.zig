@@ -60,19 +60,15 @@ const Buf = struct {
     }
 
     fn write(self: *Buf, str: []const u8) !void {
-        try self.str.appendSlice(str);
+        try self.fmt("{s}", .{str});
     }
 
     fn fmt(self: *Buf, comptime fmt_str: []const u8, args: anytype) !void {
-        const writer = self.str.writer();
-        try std.fmt.format(writer, fmt_str, args);
-        // const count = try std.fmt.count(fmt, args);
-        // try self.str.ensureUnusedCapacity(@intCast(count));
-        // const buf = self.str.unusedCapacitySlice();
-        // try std.fmt.bufPrint(buf, fmt, args);
-        // // see the docs, writing directly to the internal arraylist buffer does
-        // // not update the length
-        // self.str.items.len += count;
+        const string = try std.fmt.allocPrint(self.alloc, fmt_str, args);
+        defer self.alloc.free(string);
+        for (string) |c| {
+            try self.str.append(c);
+        }
     }
 };
 
@@ -260,260 +256,265 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
         }
         try buf.write(") {\n");
 
-        var iter = fun.instIter();
+        // var curBB: IR.BasicBlock.ID = 0;
+        // try buf.fmt("{}:\n", .{stringify_label(fun, curBB)});
 
-        var curBB: IR.BasicBlock.ID = IR.Function.entryBBID;
-        try buf.fmt("{}:\n", .{stringify_label(fun, curBB)});
-
-        while (iter.next()) |bbinst| {
-            const instBB = bbinst.bb;
-            const inst = bbinst.inst;
-
-            // handle printing the basic block label
-            if (instBB != curBB) {
-                curBB = instBB;
-                buf.fmt("{}:\n", .{stringify_label(fun, curBB)}) catch unreachable;
+        // print out the basic blocks in order
+        // print out phi inst then insts
+        for (fun.bbs.items(), 0..) |bb, bbID| {
+            buf.fmt("{}:\n", .{stringify_label(fun, @truncate(bbID))}) catch unreachable;
+            for (bb.phiInsts.items) |phiInstID| {
+                // print out the phi instruction
+                try stringify_inst(phiInstID, &buf, ir, fun, bb);
             }
-
-            // handle printing the instruction
-            try buf.write(INDENT);
-            switch (inst.op) {
-                // Arithmetic
-                // <result> = add <ty> <op1>, <op2>
-                // <result> = mul <ty> <op1>, <op2>
-                // <result> = sdiv <ty> <op1>, <op2>
-                // <result> = sub <ty> <op1>, <op2>
-                // Boolean
-                // <result> = and <ty> <op1>, <op2>
-                // <result> = or <ty> <opi>, <op2>
-                // <result> = xor <ty> <opl>, <op2>
-                .Binop => {
-                    const binop = IR.Inst.Binop.get(inst);
-                    const opName = switch (binop.op) {
-                        .Add => "add",
-                        .Mul => "mul",
-                        .Div => "sdiv",
-                        .Sub => "sub",
-                        .And => "and",
-                        .Or => "or",
-                        .Xor => "xor",
-                    };
-                    try buf.fmt("{any} = {s} {any} {any}, {any}", .{
-                        stringify_ref(ir, fun, binop.register),
-                        opName,
-                        stringify_type(ir, binop.returnType),
-                        stringify_ref(ir, fun, binop.lhs),
-                        stringify_ref(ir, fun, binop.rhs),
-                    });
-                    // pub const Binop = enum { Add, Mul, Div, Sub, And, Or, Xor };
-                },
-
-                // Comparison and Branching
-                // <result> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
-                .Cmp => {
-                    const cmp = IR.Inst.Cmp.get(inst);
-                    const cond = switch (cmp.cond) {
-                        .Eq => "eq",
-                        .NEq => "ne",
-                        .Gt => "sgt",
-                        .GtEq => "sge",
-                        .Lt => "slt",
-                        .LtEq => "sle",
-                    };
-                    try buf.fmt("{any} = icmp {s} {any} {any}, {any}", .{
-                        stringify_ref(ir, fun, cmp.res),
-                        cond,
-                        stringify_type(ir, cmp.opTypes),
-                        stringify_ref(ir, fun, cmp.lhs),
-                        stringify_ref(ir, fun, cmp.rhs),
-                    });
-                },
-
-                // br i1 <cond>, label <iftrue>, label <iffalse>
-                .Br => {
-                    const br = IR.Inst.Br.get(inst);
-                    try buf.fmt("br i1 {any}, {any}, {any}", .{
-                        stringify_ref(ir, fun, br.on),
-                        stringify_label_ref(fun, br.iftrue),
-                        stringify_label_ref(fun, br.iffalse),
-                    });
-                },
-                // `br label <dest>`
-                // I know I know this isn't the actual name,
-                // but this is what it means and
-                // I dislike Mr. Lattner's design decision
-                .Jmp => {
-                    const jmp = IR.Inst.Jmp.get(inst);
-                    try buf.fmt("br {}", .{stringify_label_ref(fun, jmp.dest)});
-                },
-
-                // Loads & Stores
-                // `<result> = load <ty>* <pointer>`
-                // newer:
-                // `<result> = load <ty>, <ty>* <pointer>`
-                .Load => {
-                    const load = IR.Inst.Load.get(inst);
-                    // using the old one because it's shorter
-                    // and idk what the second type is for
-                    try buf.fmt("{} = load {}, {}* {}", .{
-                        stringify_ref(ir, fun, load.res),
-                        stringify_type(ir, load.ty).ptr_if(load.ty == .strct),
-                        stringify_type(ir, load.ty),
-                        stringify_ref(ir, fun, load.ptr),
-                    });
-                },
-                // `store <ty> value, <ty>* <pointer>`
-                .Store => {
-                    const store = IR.Inst.Store.get(inst);
-                    try buf.fmt("store {} {}, {}* {}", .{
-                        stringify_type(ir, store.fromType),
-                        stringify_ref(ir, fun, store.from),
-                        stringify_type(ir, store.ty),
-                        stringify_ref(ir, fun, store.to),
-                    });
-                },
-                // GEP
-                // `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
-                // newer:
-                // `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
-                .Gep => {
-                    const gep = IR.Inst.Gep.get(inst);
-                    try buf.fmt("{} = getelementptr {}, {}* {}, i1 0, {} {}", .{
-                        stringify_ref(ir, fun, gep.res),
-                        stringify_type(ir, gep.baseTy).not_ptr(),
-                        stringify_type(ir, gep.ptrTy).not_ptr(),
-                        stringify_ref(ir, fun, gep.ptrVal),
-                        stringify_type(ir, gep.index.type),
-                        stringify_ref(ir, fun, gep.index),
-                    });
-                },
-
-                // Invocation
-                // `<result> = call <ty> <fnptrval>(<args>)`
-                // newer:
-                // `<result> = call <ty> <fnval>(<args>)`
-                .Call => {
-                    const call = IR.Inst.Call.get(inst);
-                    if (call.retTy != .void) {
-                        try buf.fmt("{} = ", .{
-                            stringify_ref(ir, fun, call.res),
-                        });
-                    }
-                    try buf.fmt("call {} (", .{
-                        stringify_type(ir, call.retTy),
-                    });
-
-                    if (C_STD_FN_ARG_SIGNATURES.get(ir.getIdent(call.fun.name))) |argSig| {
-                        try buf.write(argSig);
-                        try buf.fmt(") {}(", .{
-                            stringify_ref(ir, fun, call.fun),
-                        });
-                        for (call.args, 0..) |arg, i| {
-                            try buf.fmt("{} {}", .{
-                                stringify_type(ir, arg.type).ensure_ptr_if(arg.kind == .global),
-                                stringify_ref(ir, fun, arg),
-                            });
-                            if (i + 1 < call.args.len) {
-                                try buf.write(", ");
-                            }
-                        }
-                    } else {
-                        const callee = try ir.getFun(call.fun.name);
-                        const params = callee.params.items;
-                        for (params, 0..) |param, i| {
-                            try buf.fmt("{}", .{
-                                stringify_type(ir, param.type),
-                            });
-                            if (i + 1 < call.args.len) {
-                                try buf.write(", ");
-                            }
-                        }
-                        try buf.fmt(") {}(", .{
-                            stringify_ref(ir, fun, call.fun),
-                        });
-                        utils.assert(call.args.len == params.len, "call args and params len mismatch for {s}\nparams={any}\nargs={any}", .{ ir.getIdent(callee.name), params, call.args });
-                        for (call.args, params, 0..) |arg, param, i| {
-                            try buf.fmt("{} {}", .{
-                                stringify_type(ir, param.type).ensure_ptr_if(arg.kind == .global),
-                                stringify_ref(ir, fun, arg),
-                            });
-                            if (i + 1 < call.args.len) {
-                                try buf.write(", ");
-                            }
-                        }
-                    }
-                    try buf.write(")");
-                },
-                // `ret void`
-                // `ret <ty> <value>`
-                .Ret => {
-                    const ret = IR.Inst.Ret.get(inst);
-                    if (ret.ty == .void) {
-                        try buf.write("ret void");
-                    } else {
-                        try buf.fmt("ret {} {}", .{
-                            stringify_type(ir, ret.ty),
-                            stringify_ref(ir, fun, ret.val),
-                        });
-                    }
-                },
-                // Allocation
-                // `<result> = alloca <ty>`
-                .Alloc => {
-                    const alloca = IR.Inst.Alloc.get(inst);
-                    try buf.fmt("{} = alloca {}", .{
-                        stringify_ref(ir, fun, alloca.res),
-                        stringify_type(ir, alloca.ty),
-                    });
-                },
-
-                // Miscellaneous
-                // `<result> = bitcast <ty> <value> to <ty2> ; cast type`
-                .Bitcast => {
-                    const bitcast = IR.Inst.Misc.get(inst);
-                    try buf.fmt("{} = bitcast {} {} to {}", .{
-                        stringify_ref(ir, fun, bitcast.res),
-                        stringify_type(ir, bitcast.fromType).ptr(),
-                        stringify_ref(ir, fun, bitcast.from),
-                        stringify_type(ir, bitcast.toType).ptr(),
-                    });
-                },
-                // `<result> = trunc <ty> <value> to <ty2> ; truncate to ty2`
-                .Trunc => |trunc| {
-                    _ = trunc;
-                    utils.todo("trunc", .{});
-                },
-                // `<result> = zext <ty> <value> to <ty2> ; zero-extend to ty2`
-                .Zext => |zext| {
-                    _ = zext;
-                    utils.todo("zext", .{});
-                },
-                // `<result> = sext <ty> <value> to <ty2> ; sign-extend to ty2`
-                .Sext => {
-                    const sext = IR.Inst.Misc.get(inst);
-                    try buf.fmt("{} = sext {} {} to {}", .{
-                        stringify_ref(ir, fun, sext.res),
-                        stringify_type(ir, sext.fromType),
-                        stringify_ref(ir, fun, sext.from),
-                        stringify_type(ir, sext.toType),
-                    });
-                },
-                // `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
-                .Phi => {
-                    const phi = IR.Inst.Phi.get(inst);
-                    try buf.fmt("{} = phi {} {}", .{
-                        stringify_ref(ir, fun, phi.res),
-                        stringify_type(ir, phi.type),
-                        try stringify_phi_entries(ir, fun, phi.entries),
-                    });
-                },
+            // print out the rest of the instructions
+            for (bb.insts.items()) |instID| {
+                try stringify_inst(instID, &buf, ir, fun, bb);
             }
-            try buf.write("\n");
         }
+
         try buf.write("}\n\n");
     }
 
     return buf.str.items;
+}
+
+pub fn stringify_inst(instID: IR.Function.InstID, buf: *Buf, ir: *const IR, fun: *IR.Function, bb: IR.BasicBlock) !void {
+    _ = bb;
+    var inst = fun.insts.get(instID).*;
+    try buf.write(INDENT);
+    switch (inst.op) {
+        // Arithmetic
+        // <result> = add <ty> <op1>, <op2>
+        // <result> = mul <ty> <op1>, <op2>
+        // <result> = sdiv <ty> <op1>, <op2>
+        // <result> = sub <ty> <op1>, <op2>
+        // Boolean
+        // <result> = and <ty> <op1>, <op2>
+        // <result> = or <ty> <opi>, <op2>
+        // <result> = xor <ty> <opl>, <op2>
+        .Binop => {
+            const binop = IR.Inst.Binop.get(inst);
+            const opName = switch (binop.op) {
+                .Add => "add",
+                .Mul => "mul",
+                .Div => "sdiv",
+                .Sub => "sub",
+                .And => "and",
+                .Or => "or",
+                .Xor => "xor",
+            };
+            try buf.fmt("{any} = {s} {any} {any}, {any}", .{
+                stringify_ref(ir, fun, binop.register),
+                opName,
+                stringify_type(ir, binop.returnType),
+                stringify_ref(ir, fun, binop.lhs),
+                stringify_ref(ir, fun, binop.rhs),
+            });
+            // pub const Binop = enum { Add, Mul, Div, Sub, And, Or, Xor };
+        },
+
+        // Comparison and Branching
+        // <result> = icmp <cond> <ty> <op1>, <op2> ; @.g., <cond> = eq
+        .Cmp => {
+            const cmp = IR.Inst.Cmp.get(inst);
+            const cond = switch (cmp.cond) {
+                .Eq => "eq",
+                .NEq => "ne",
+                .Gt => "sgt",
+                .GtEq => "sge",
+                .Lt => "slt",
+                .LtEq => "sle",
+            };
+            try buf.fmt("{any} = icmp {s} {any} {any}, {any}", .{
+                stringify_ref(ir, fun, cmp.res),
+                cond,
+                stringify_type(ir, cmp.opTypes),
+                stringify_ref(ir, fun, cmp.lhs),
+                stringify_ref(ir, fun, cmp.rhs),
+            });
+        },
+
+        // br i1 <cond>, label <iftrue>, label <iffalse>
+        .Br => {
+            const br = IR.Inst.Br.get(inst);
+            try buf.fmt("br i1 {any}, {any}, {any}", .{
+                stringify_ref(ir, fun, br.on),
+                stringify_label_ref(fun, br.iftrue),
+                stringify_label_ref(fun, br.iffalse),
+            });
+        },
+        // `br label <dest>`
+        // I know I know this isn't the actual name,
+        // but this is what it means and
+        // I dislike Mr. Lattner's design decision
+        .Jmp => {
+            const jmp = IR.Inst.Jmp.get(inst);
+            try buf.fmt("br {}", .{stringify_label_ref(fun, jmp.dest)});
+        },
+
+        // Loads & Stores
+        // `<result> = load <ty>* <pointer>`
+        // newer:
+        // `<result> = load <ty>, <ty>* <pointer>`
+        .Load => {
+            const load = IR.Inst.Load.get(inst);
+            // using the old one because it's shorter
+            // and idk what the second type is for
+            try buf.fmt("{} = load {}, {}* {}", .{
+                stringify_ref(ir, fun, load.res),
+                stringify_type(ir, load.ty).ptr_if(load.ty == .strct),
+                stringify_type(ir, load.ty),
+                stringify_ref(ir, fun, load.ptr),
+            });
+        },
+        // `store <ty> value, <ty>* <pointer>`
+        .Store => {
+            const store = IR.Inst.Store.get(inst);
+            try buf.fmt("store {} {}, {}* {}", .{
+                stringify_type(ir, store.fromType),
+                stringify_ref(ir, fun, store.from),
+                stringify_type(ir, store.ty),
+                stringify_ref(ir, fun, store.to),
+            });
+        },
+        // GEP
+        // `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
+        // newer:
+        // `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
+        .Gep => {
+            const gep = IR.Inst.Gep.get(inst);
+            try buf.fmt("{} = getelementptr {}, {}* {}, i1 0, {} {}", .{
+                stringify_ref(ir, fun, gep.res),
+                stringify_type(ir, gep.baseTy).not_ptr(),
+                stringify_type(ir, gep.ptrTy).not_ptr(),
+                stringify_ref(ir, fun, gep.ptrVal),
+                stringify_type(ir, gep.index.type),
+                stringify_ref(ir, fun, gep.index),
+            });
+        },
+
+        // Invocation
+        // `<result> = call <ty> <fnptrval>(<args>)`
+        // newer:
+        // `<result> = call <ty> <fnval>(<args>)`
+        .Call => {
+            const call = IR.Inst.Call.get(inst);
+            if (call.retTy != .void) {
+                try buf.fmt("{} = ", .{
+                    stringify_ref(ir, fun, call.res),
+                });
+            }
+            try buf.fmt("call {} (", .{
+                stringify_type(ir, call.retTy),
+            });
+
+            if (C_STD_FN_ARG_SIGNATURES.get(ir.getIdent(call.fun.name))) |argSig| {
+                try buf.write(argSig);
+                try buf.fmt(") {}(", .{
+                    stringify_ref(ir, fun, call.fun),
+                });
+                for (call.args, 0..) |arg, i| {
+                    try buf.fmt("{} {}", .{
+                        stringify_type(ir, arg.type).ensure_ptr_if(arg.kind == .global),
+                        stringify_ref(ir, fun, arg),
+                    });
+                    if (i + 1 < call.args.len) {
+                        try buf.write(", ");
+                    }
+                }
+            } else {
+                const callee = try ir.getFun(call.fun.name);
+                const params = callee.params.items;
+                for (params, 0..) |param, i| {
+                    try buf.fmt("{}", .{
+                        stringify_type(ir, param.type),
+                    });
+                    if (i + 1 < call.args.len) {
+                        try buf.write(", ");
+                    }
+                }
+                try buf.fmt(") {}(", .{
+                    stringify_ref(ir, fun, call.fun),
+                });
+                utils.assert(call.args.len == params.len, "call args and params len mismatch for {s}\nparams={any}\nargs={any}", .{ ir.getIdent(callee.name), params, call.args });
+                for (call.args, params, 0..) |arg, param, i| {
+                    try buf.fmt("{} {}", .{
+                        stringify_type(ir, param.type).ensure_ptr_if(arg.kind == .global),
+                        stringify_ref(ir, fun, arg),
+                    });
+                    if (i + 1 < call.args.len) {
+                        try buf.write(", ");
+                    }
+                }
+            }
+            try buf.write(")");
+        },
+        // `ret void`
+        // `ret <ty> <value>`
+        .Ret => {
+            const ret = IR.Inst.Ret.get(inst);
+            if (ret.ty == .void) {
+                try buf.write("ret void");
+            } else {
+                try buf.fmt("ret {} {}", .{
+                    stringify_type(ir, ret.ty),
+                    stringify_ref(ir, fun, ret.val),
+                });
+            }
+        },
+        // Allocation
+        // `<result> = alloca <ty>`
+        .Alloc => {
+            const alloca = IR.Inst.Alloc.get(inst);
+            try buf.fmt("{} = alloca {}", .{
+                stringify_ref(ir, fun, alloca.res),
+                stringify_type(ir, alloca.ty),
+            });
+        },
+
+        // Miscellaneous
+        // `<result> = bitcast <ty> <value> to <ty2> ; cast type`
+        .Bitcast => {
+            const bitcast = IR.Inst.Misc.get(inst);
+            try buf.fmt("{} = bitcast {} {} to {}", .{
+                stringify_ref(ir, fun, bitcast.res),
+                stringify_type(ir, bitcast.fromType).ptr(),
+                stringify_ref(ir, fun, bitcast.from),
+                stringify_type(ir, bitcast.toType).ptr(),
+            });
+        },
+        // `<result> = trunc <ty> <value> to <ty2> ; truncate to ty2`
+        .Trunc => |trunc| {
+            _ = trunc;
+            utils.todo("trunc", .{});
+        },
+        // `<result> = zext <ty> <value> to <ty2> ; zero-extend to ty2`
+        .Zext => |zext| {
+            _ = zext;
+            utils.todo("zext", .{});
+        },
+        // `<result> = sext <ty> <value> to <ty2> ; sign-extend to ty2`
+        .Sext => {
+            const sext = IR.Inst.Misc.get(inst);
+            try buf.fmt("{} = sext {} {} to {}", .{
+                stringify_ref(ir, fun, sext.res),
+                stringify_type(ir, sext.fromType),
+                stringify_ref(ir, fun, sext.from),
+                stringify_type(ir, sext.toType),
+            });
+        },
+        // `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
+        .Phi => {
+            const phi = IR.Inst.Phi.get(inst);
+            try buf.fmt("{} = phi {} {}", .{
+                stringify_ref(ir, fun, phi.res),
+                stringify_type(ir, phi.type),
+                try stringify_phi_entries(ir, fun, phi.entries),
+            });
+        },
+    }
+    try buf.write("\n");
 }
 pub fn bufToRope(buf: Buf) Rope {
     // Assume the entire Buf content is a single string segment for the Rope
@@ -586,6 +587,9 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
 }
 
 pub fn stringify_reg(ir: *const IR, fun: *const IR.Function, regID: IR.Register.ID) Rope {
+    if (regID == 69420) {
+        return Rope.str_num("%_", 69420);
+    }
     const reg = fun.regs.get(regID);
     switch (reg.name) {
         IR.InternPool.NULL => return Rope.str_num("%_", reg.inst),
@@ -598,7 +602,7 @@ pub fn stringify_reg(ir: *const IR, fun: *const IR.Function, regID: IR.Register.
 pub fn stringify_label(fun: *const IR.Function, label: IR.BasicBlock.ID) Rope {
     if (label == IR.Function.entryBBID) {
         return Rope.just("entry");
-    } else if (label == IR.Function.exitBBID) {
+    } else if (label == fun.exitBBID) {
         return Rope.just("exit");
     }
     const name = fun.bbs.get(label).name;
@@ -608,7 +612,7 @@ pub fn stringify_label(fun: *const IR.Function, label: IR.BasicBlock.ID) Rope {
 pub fn stringify_label_ref(fun: *const IR.Function, label: IR.BasicBlock.ID) Rope {
     if (label == IR.Function.entryBBID) {
         return Rope.just("label %entry");
-    } else if (label == IR.Function.exitBBID) {
+    } else if (label == fun.exitBBID) {
         return Rope.just("label %exit");
     }
     const name = fun.bbs.get(label).name;
@@ -618,7 +622,7 @@ pub fn stringify_label_ref(fun: *const IR.Function, label: IR.BasicBlock.ID) Rop
 pub fn stringify_label_phi(fun: *const IR.Function, label: IR.BasicBlock.ID) Rope {
     if (label == IR.Function.entryBBID) {
         return Rope.just("%entry");
-    } else if (label == IR.Function.exitBBID) {
+    } else if (label == fun.exitBBID) {
         return Rope.just("%exit");
     }
     const name = fun.bbs.get(label).name;
