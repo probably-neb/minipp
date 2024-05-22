@@ -115,7 +115,7 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
             const tokens = try @import("lexer.zig").Lexer.tokenizeFromStr(input, frontendAlloc);
             const parser = try @import("parser.zig").Parser.parseTokens(tokens, input, frontendAlloc);
             const ast = try @import("ast.zig").initFromParser(parser);
-            try @import("sema.zig").typeCheck(&ast);
+            try @import("sema.zig").ensureSemanticallyValid(&ast);
 
             break :ast ast;
         };
