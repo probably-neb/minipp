@@ -1147,6 +1147,15 @@ pub const Type = union(enum) {
         // }
         // return tmp == 0;
     }
+
+    pub fn isOneOf(self: Self, comptime others: anytype) bool {
+        inline for (others) |other| {
+            if (self.equals(other)) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 pub fn generateTypeInt() Type {
