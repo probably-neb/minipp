@@ -519,7 +519,7 @@ fn gen_statement(
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).*;
             const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
-            // _ = fun.renameRef(exprRef, toName);
+            _ = fun.renameRef(exprRef, toName);
             if (exprRef.name != IR.InternPool.NULL) {
                 std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
             }
@@ -533,10 +533,12 @@ fn gen_statement(
             const lenAfter = fun.insts.len;
             log.trace("print expr: {any} :: {d} -> {d}\n", .{ exprRef, lenb4, lenAfter });
         },
+        // TODO: V5 Revs
         .Delete => |del| {
             const ptrRef = try gen_expression(ir, ast, fun, bb, ast.get(del.expr).*);
             try gen_free_struct(ir, fun, bb, ptrRef);
         },
+        // TODO V5 Revs
         .Invocation => {
             _ = try gen_invocation(ir, fun, ast, bb, node);
         },
@@ -1262,6 +1264,13 @@ test "phi.print_test_while_nested" {
 test "phi.print_test_decreasing_num" {
     errdefer log.print();
     const in = "fun main() void { int a; a = 10; while(a >= 0){ print a endl; a = a - 1;} }";
+    var str = try inputToIRStringHeader(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+}
+
+test "phi.print_first_struct" {
+    errdefer log.print();
+    const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; a = s.a; }";
     var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
