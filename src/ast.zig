@@ -507,20 +507,15 @@ pub const Node = struct {
                     var cursor = self.i + 1;
                     while (cursor <= self.last) : (cursor += 1) {
                         const node = self.ast.get(cursor).*;
-                        const statementsList = switch (node.kind) {
-                            .Statement => break,
-                            .ConditionalIf => |condIf| switch (self.ast.get(condIf.block).*.kind) {
-                                .Block => |block| if (block.statements) |stmts| self.ast.get(stmts).kind.StatementList else continue,
-                                .ConditionalIfElse => |condIfElse| self.ast.get(if (self.ast.get(condIfElse.elseBlock).*.kind.Block.statements) |stmts| stmts else continue).*.kind.StatementList,
-                                else => unreachable,
-                            },
-                            .While => |whileNode| self.ast.get(if (self.ast.get(whileNode.block).*.kind.Block.statements) |stmts| stmts else continue).*.kind.StatementList,
-                            else => continue,
-                        };
-                        cursor = statementsList.lastStatement orelse statementsList.firstStatement + 1;
+                        if (node.kind == .Statement) {
+                            break;
+                        }
+                        if (node.kind == .StatementList) {
+                            cursor = (node.kind.StatementList.lastStatement orelse node.kind.StatementList.firstStatement);
+                        }
                     }
 
-                    self.i = if (cursor == self.last) cursor + 1 else cursor;
+                    self.i = cursor;
 
                     return stmt;
                 }
