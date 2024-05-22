@@ -312,6 +312,10 @@ pub fn gen_function(
         _ = try fun.addInst(fun.exitBBID, Inst.retVoid(), .void);
     }
 
+    if (fun.retRegUsed == false and fun.returnType != .void) {
+        _ = fun.bbs.get(IR.Function.entryBBID).insts.orderedRemove(0);
+    }
+
     try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(fun.cfgToBBs.get(0).?)));
     return fun;
 }

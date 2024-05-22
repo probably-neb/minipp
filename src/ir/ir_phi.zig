@@ -203,6 +203,7 @@ pub const Function = struct {
     regs: LookupTable(Register.ID, Register, Register.getID),
     cfg: CfgFunction,
     exitBBID: BasicBlock.ID,
+    retRegUsed: bool = false,
 
     /// a list of the instructions that are within the fuction
     /// the basic blocks have a list of instructions that they use,
@@ -415,7 +416,16 @@ pub const Function = struct {
 
     pub const NotFoundError = error{ OutOfMemory, UnboundIdentifier, AllocFailed };
 
-    pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
+    pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: BasicBlock.ID) NotFoundError!Ref {
+        const namedRef = try self.getNamedRefInner(ir, name, bb);
+        if (self.returnReg == null) return namedRef;
+        if (namedRef.i == self.returnReg.?) {
+            self.retRegUsed = true;
+        }
+        return namedRef;
+    }
+
+    pub fn getNamedRefInner(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
         if (name != IR.InternPool.NULL) {
             std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
         } else {
@@ -2111,6 +2121,11 @@ pub fn OrderedList(comptime T: type) type {
         /// for when you just don't care yk?
         pub fn append(self: *Self, item: T) !void {
             _ = try self.add(item);
+        }
+
+        pub fn orderedRemove(self: *Self, idx: u32) T {
+            self.len -= 1;
+            return self.list.orderedRemove(idx);
         }
     };
 }
