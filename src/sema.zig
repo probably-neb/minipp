@@ -49,52 +49,7 @@ fn ensureHasMain(ast: *const Ast) SemaError!void {
 fn allFunctionsHaveValidReturnPaths(ast: *const Ast) !void {
     var funcs = ast.iterFuncs();
     while (funcs.next()) |func| {
-        try allReturnPathsHaveReturnType(ast, func);
         try allReturnPathsExist(ast, func);
-    }
-    return;
-}
-
-/// note that the ast must be sliced to start at some function for this function
-/// to work
-fn allReturnPathsHaveReturnType(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
-    // Get the name
-    const funcName = func.getName(ast);
-    errdefer log.err("Function: {s}\n", .{funcName});
-    // Get the return type
-    const returnType = func.getReturnType(ast).?;
-
-    // Get all return expressions
-    // This is in the form of there being the first and last expression within the statment list of the functio
-    var returnExprs = func.getBody(ast).iterReturns(ast);
-    var checked: usize = 0;
-    while (returnExprs.next()) |returnExpr| {
-        checked += 1;
-        if (returnExpr.expr == null and returnType == .Void) {
-            // void return valid for void function
-            continue;
-        }
-        // FIXME: this may or may not be invalid.
-        if (returnExpr.expr != null and returnType == .Void) {
-            // void return invalid for non-void function
-            // FIXME: determine if this an error or a warning that the returned value will not be used?
-            log.err("Expected function {s} to return `void`, but found Return expression: {any}\n", .{ funcName, returnExpr });
-            return SemaError.InvalidReturnPath;
-        }
-
-        if (returnExpr.expr == null and returnType != .Void) {
-            log.err("Expected function {s} to return {any}, but found Return type: {any}\n", .{ funcName, returnExpr, returnType });
-            return SemaError.InvalidReturnPath;
-        }
-
-        // TODO: FIXME
-        // if (returnExpr.expr) |expr| {
-        //     if (returnType) |retTy| {
-        //         _ = expr;
-        //         _ = retTy;
-        //         utils.todo("Checking expression types not implemented\n", .{});
-        //     } else unreachable;
-        // } else unreachable;
     }
     return;
 }
@@ -764,7 +719,6 @@ fn SelectorChainGetType(chainLinkIndex: usize, ast: *const Ast, ty: Ast.Type, fN
         },
     }
 
-
     const selectedType = switch (selection.kind) {
         .Identifier => structFieldAccess: {
             const structName = ty.Struct;
@@ -971,8 +925,8 @@ test "sema.not_all_return_paths_void" {
     const source = "fun main() void {if (true) {return;} else {return 1;}}";
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
-    const result = allFunctionsHaveValidReturnPaths(&ast);
-    try ting.expectError(SemaError.InvalidReturnPath, result);
+    const result = typeCheck(&ast);
+    try ting.expectError(TypeError.InvalidReturnType, result);
 }
 
 test "sema.all_return_paths_void" {
