@@ -269,6 +269,7 @@ pub fn gen_function(
 
     // go through the basic blocks and add the statements for each.
     // update variableMap as we go
+    ast.debugPrintAst();
     for (fun.cfg.postOrder.items) |cfgBlockID| {
         try generateInstsFromCfg(ir, ast, fun, cfgBlockID);
     }
@@ -350,6 +351,7 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
     const bbID = fun.cfgToBBs.get(cfgBlockID).?;
     const cfgBlock = fun.cfg.blocks.items[cfgBlockID];
     const bb = fun.bbs.get(bbID);
+
     if (cfgBlock.conditional) {
         const statments = cfgBlock.statements;
         // we know that if it is a conditional it is an expression
@@ -363,6 +365,7 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
     } else {
         for (cfgBlock.statements.items) |stmtNode| {
             const isRet = try gen_statement(ir, ast, fun, bbID, stmtNode);
+            std.debug.print("isRet: {any}\n", .{stmtNode});
             if (isRet == true) {
                 return; // we can just skip the rest
             }
@@ -1170,20 +1173,6 @@ test "phi.print_test" {
     // std.debug.print("{s}\n", .{ir_str});
 }
 
-test "phi.print_test_if" {
-    errdefer log.print();
-    const in = "fun main() void { int a,b,c; if(a == 1){ b =c;} }";
-    // print out the IR
-    const ir = try testMe(in);
-    _ = ir;
-    // var arena = std.heap.ArenaAllocator.init(ting.allocator);
-    // var alloc = arena.allocator();
-    // defer arena.deinit();
-    // const ir_str = try inputToIRString(in, alloc);
-    // // check that the IR is correct
-    // std.debug.print("{s}\n", .{ir_str});
-}
-
 // test "phi.print_test_while_nested" {
 //     errdefer log.print();
 //     const in = "fun main() void { int a,b,c; while(a){ b =c;} c=a; }";
@@ -1236,4 +1225,18 @@ test "phi.print_addition2" {
 
     var str = try inputToIRString(in, testAlloc);
     std.debug.print("{s}\n", .{str});
+}
+
+test "phi.print_test_if" {
+    errdefer log.print();
+    const in = "fun main() void { int a,b,c; if(a == 1){ b =c;} b = a; }";
+    var str = try inputToIRString(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+    // print out the IR
+    // var arena = std.heap.ArenaAllocator.init(ting.allocator);
+    // var alloc = arena.allocator();
+    // defer arena.deinit();
+    // const ir_str = try inputToIRString(in, alloc);
+    // // check that the IR is correct
+    // std.debug.print("{s}\n", .{ir_str});
 }
