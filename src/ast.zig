@@ -1434,12 +1434,16 @@ pub fn iterFuncs(ast: *const Ast) FuncIter {
 }
 
 pub fn printNodeLine(ast: *const Ast, node: Node) void {
+    printNodeLineTo(ast, node, std.debug.print);
+}
+
+pub fn printNodeLineTo(ast: *const Ast, node: Node, comptime printer: fn (comptime fmt: []const u8, args: anytype) void) void {
     const input = ast.input;
     const tok = node.token;
     const tok_start = tok._range.start;
     const tok_end = tok._range.end;
     var line_start: usize = tok_start;
-    while (line_start >= 0 and input[line_start] != '\n') : (line_start -= 1) {}
+    while (line_start > 0 and input[line_start] != '\n') : (line_start -= 1) {}
     line_start += 1;
     var line_end: usize = tok_end;
     while (line_end < input.len and input[line_end] != '\n') : (line_end += 1) {}
@@ -1452,7 +1456,7 @@ pub fn printNodeLine(ast: *const Ast, node: Node) void {
         }
     }
     const col_no = tok_start - line_start;
-    std.debug.print("LINE {d}:{d} \"{s}\"\n", .{ line_no, col_no, line });
+    @call(.auto, printer, .{ "LINE {d}:{d} \"{s}\"\n", .{ line_no, col_no, line } });
 }
 
 const ting = std.testing;
