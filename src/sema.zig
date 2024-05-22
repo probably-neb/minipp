@@ -33,6 +33,15 @@ const TypeError = error{
     FunctionParametersMustBeUnique,
 };
 
+pub fn typeCheck(ast: *const Ast) !void {
+    // get all functions out of map
+    var funcsKeys = ast.functionMap.keyIterator();
+    while (funcsKeys.next()) |key| {
+        const func = ast.getFunctionFromName(key.*).?;
+        try typeCheckFunction(ast, func.*);
+    }
+}
+
 const MAIN: []const u8 = "main";
 
 fn ensureHasMain(ast: *const Ast) SemaError!void {
@@ -148,15 +157,6 @@ fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaEr
     const ok = allReturnPathsExistInner(ast, statList, funcEnd);
     if (!ok) {
         return SemaError.InvalidReturnPath;
-    }
-}
-
-pub fn typeCheck(ast: *const Ast) !void {
-    // get all functions out of map
-    var funcsKeys = ast.functionMap.keyIterator();
-    while (funcsKeys.next()) |key| {
-        const func = ast.getFunctionFromName(key.*).?;
-        try typeCheckFunction(ast, func.*);
     }
 }
 
