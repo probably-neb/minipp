@@ -363,7 +363,7 @@ pub fn stringify_inst(instID: IR.Function.InstID, buf: *Buf, ir: *const IR, fun:
             // and idk what the second type is for
             try buf.fmt("{} = load {}, {}* {}", .{
                 stringify_ref(ir, fun, load.res),
-                stringify_type(ir, load.ty).ptr_if(load.ty == .strct),
+                stringify_type(ir, load.ty).ptr_if(load.ty == .strct or load.ty == .int_arr),
                 stringify_type(ir, load.ty),
                 stringify_ref(ir, fun, load.ptr),
             });
@@ -384,11 +384,12 @@ pub fn stringify_inst(instID: IR.Function.InstID, buf: *Buf, ir: *const IR, fun:
         // `<result> = getelementptr <ty>, <ty>* <ptrval>, i1 0, i32 <index>`
         .Gep => {
             const gep = IR.Inst.Gep.get(inst);
-            try buf.fmt("{} = getelementptr {}, {}* {}, i1 0, {} {}", .{
+            try buf.fmt("{} = getelementptr {}, {}* {}, {s}{} {}", .{
                 stringify_ref(ir, fun, gep.res),
                 stringify_type(ir, gep.baseTy).not_ptr(),
                 stringify_type(ir, gep.ptrTy).not_ptr(),
                 stringify_ref(ir, fun, gep.ptrVal),
+                if (gep.baseTy == .int_arr) "" else "i1 0, ",
                 stringify_type(ir, gep.index.type),
                 stringify_ref(ir, fun, gep.index),
             });
@@ -545,6 +546,7 @@ pub fn stringify_type(ir: *const IR, ty: IR.Type) Rope {
             };
             return Rope.str_num_str(prefix, arr.len, postfix);
         },
+        .int_arr => return Rope.just("i64").ptr(),
         .null_ => std.debug.panic("null type in stringify", .{}),
         //     const name = ir.getIdent(nameID);
         //     const strct = "struct ";
@@ -561,6 +563,7 @@ pub fn stringify_phi_entries(ir: *const IR, fun: *const IR.Function, entries: st
     var buf = Buf.init(ir.alloc);
     var i: u32 = 0;
     for (entries.items) |entry| {
+        std.debug.print("entry: {any}\n", .{entry});
         try buf.fmt("[ {}, {} ]", .{
             stringify_ref(ir, fun, entry.ref),
             stringify_label_phi(fun, entry.bb),
@@ -587,6 +590,7 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
 }
 
 pub fn stringify_reg(ir: *const IR, fun: *const IR.Function, regID: IR.Register.ID) Rope {
+    std.debug.print("regID: {d}\n", .{regID});
     if (regID == 69420) {
         return Rope.str_num("%_", 69420);
     }

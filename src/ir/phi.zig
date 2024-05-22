@@ -243,20 +243,20 @@ pub fn gen_function(
         if (defined.contains(declName)) {
             continue;
         }
-        const declType = fun.typesMap.get(declName).?;
-        const alloca = Inst.alloca(declType);
-        _ = try fun.addNamedInst(entryBB, alloca, declName, declType);
+        if (!fun.defBlocks.contains(declName)) {
+            try fun.defBlocks.put(declName, std.ArrayList(IR.BasicBlock.ID).init(ir.alloc));
+        }
+        try fun.defBlocks.getPtr(declName).?.append(entryBB);
         try defined.put(declName, true);
     }
-
-    // link the entry block to the first block
-    try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(fun.cfgToBBs.get(0).?)));
 
     // put in the phi functions
     try place_phi_functions(ir, ast, fun, funNode);
 
     // (should) only used if the function returns a value
     var retReg = IR.Register.default;
+    retReg.name = ir.internIdent("return_reg");
+    std.debug.print("return reg: {d}\n", .{retReg.name});
     // generate alloca for the return value if the function returns a value
     // this makes it so ret reg is always `%0`
     if (fun.returnType != .void) {
@@ -265,72 +265,52 @@ pub fn gen_function(
         // save it in the function for easy access later
         fun.setReturnReg(retReg.id);
     }
+    try fun.typesMap.put(retReg.name, fun.returnType);
 
     // go through the basic blocks and add the statements for each.
     // update variableMap as we go
+    ast.debugPrintAst();
     for (fun.cfg.postOrder.items) |cfgBlockID| {
-        const bbID = fun.cfgToBBs.get(cfgBlockID).?;
-        const cfgBlock = fun.cfg.blocks.items[cfgBlockID];
-        _ = cfgBlock;
-        const bb = fun.bbs.get(bbID);
-        _ = bb;
+        try generateInstsFromCfg(ir, ast, fun, cfgBlockID);
     }
+    // link the entry block to the first block
+    try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(fun.cfgToBBs.get(0).?)));
 
     // relink all the phi nodes
+    for (fun.bbs.items()) |bb| {
+        var phiIter = bb.phiMap.keyIterator();
+        while (phiIter.next()) |phiName| {
+            const phiInstID = bb.phiMap.get(phiName.*).?;
+            const phiInst = fun.insts.get(phiInstID);
+            var asPhi = IR.Inst.Phi.get(phiInst.*);
+            for (asPhi.entries.items, 0..) |asPhiEntry, idx| {
+                const currentBBID = asPhiEntry.bb;
+                const phiNameRef = asPhiEntry.ref.name;
+                std.debug.print("phiNameRef: {d}\n", .{phiNameRef});
+                std.debug.print("currentBBID: {d}\n", .{currentBBID});
+                asPhi.entries.items[idx].ref = try fun.getNamedRef(ir, phiNameRef, currentBBID);
+            }
+            const toInst = asPhi.toInst();
+            fun.insts.set(phiInstID, toInst);
+        }
+    }
 
     // handle return
+    if (fun.returnType != .void) {
+        // get the exit basic block
+        const exitBB = fun.bbs.get(fun.exitBBID).*;
+        if (exitBB.phiInsts.items.len == 0) unreachable;
+        if (exitBB.phiInsts.items.len == 1) {
+            const phiInstID = exitBB.phiInsts.items[0];
+            const phiInst = fun.insts.get(phiInstID).*;
+            std.debug.print("phiInstEntries: {any}\n", .{IR.Inst.Phi.get(phiInst).entries.items});
 
-    // var declsIter = funBody.iterLocalDecls(ast);
-    // while (declsIter.next()) |declNode| {
-    //     const decl = declNode.kind.TypedIdentifier;
-    //     const declName = ir.internIdent(decl.getName(ast));
-    //     const declType = ir.astTypeToIRType(decl.getType(ast));
-    //     // add a phi instruction to the entryBB, then edit it afterwords
-    //     var phiEntries = std.ArrayList(IR.PhiEntry).init(fun.alloc);
-    //     const selfEntry = IR.PhiEntry{ .bb = entryBB, .ref = IR.Ref.default };
-    //     try phiEntries.append(selfEntry);
-    //     const phi = Inst.phi(IR.Ref.default, declType, phiEntries);
-
-    //     const phiID = try fun.addNamedInst(entryBB, phi, declName, declType);
-    //     const phiInstID = phiID.inst;
-    //     const phiInst = fun.insts.get(phiInstID);
-    //     phiInst.extra.phi.items[0] = IR.PhiEntry{ .bb = entryBB, .ref = IR.Ref.fromReg(phiID) };
-    // }
-
-    // for (fun.params.items, 0..) |item, ID| {
-    //     const name = item.name;
-    //     const typ = item.type;
-    //     const parRef = IR.Ref.param(@intCast(ID), name, typ);
-    //     var phiEntries = std.ArrayList(IR.PhiEntry).init(fun.alloc);
-    //     const selfEntry = IR.PhiEntry{ .bb = entryBB, .ref = parRef };
-    //     try phiEntries.append(selfEntry);
-    //     const phi = Inst.phi(IR.Ref.default, typ, phiEntries);
-
-    //     _ = try fun.addNamedInst(entryBB, phi, name, typ);
-    // }
-
-    // const bodyBB = try fun.newBBWithParent(entryBB, "body");
-    // try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(bodyBB)));
-
-    // // pre generate the IR for the body
-
-    // // generate IR for the function body
-    // const lastBB = try gen_block(ir, ast, fun, bodyBB, ast.get(funNode.body).*);
-    // try fun.addCtrlFlowInst(lastBB, IR.Inst.jmp(IR.Ref.label(exitBB)));
-
-    // // generate return instruction in exit block
-    // if (fun.returnType != .void) {
-    //     // load it in the exit block
-    //     // NOTE: could use a name like anon_return or something, but that would have to go into the intern pool
-    //     const retValReg = try fun.addInst(exitBB, Inst.load(fun.returnType, IR.Ref.fromReg(retReg)), fun.returnType);
-    //     // return the loaded return value
-    //     // using addAnonInst so ctrl flow cfg construction is skipped
-    //     // as we'll hook everything up manually as we go
-    //     try fun.addAnonInst(exitBB, Inst.ret(fun.returnType, IR.Ref.fromReg(retValReg)));
-    // } else {
-    //     // void return
-    //     _ = try fun.addInst(exitBB, Inst.retVoid(), .void);
-    // }
+            var instRet = IR.Inst.ret(fun.returnType, phiInst.res);
+            _ = try fun.addInst(fun.exitBBID, instRet, fun.returnType);
+        }
+    } else {
+        _ = try fun.addInst(fun.exitBBID, Inst.retVoid(), .void);
+    }
 
     return fun;
 }
@@ -367,6 +347,37 @@ fn gen_function_params(
     return params;
 }
 
+pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBlockID: IR.CfgBlock.ID_t) !void {
+    const bbID = fun.cfgToBBs.get(cfgBlockID).?;
+    const cfgBlock = fun.cfg.blocks.items[cfgBlockID];
+    const bb = fun.bbs.get(bbID);
+
+    if (cfgBlock.conditional) {
+        const statments = cfgBlock.statements;
+        // we know that if it is a conditional it is an expression
+        if (statments.items.len > 1) unreachable;
+        var condRef = try gen_expression(ir, ast, fun, bbID, statments.items[0]);
+        //TODO generate the control flow jump
+        const brInst = Inst.br(condRef, IR.Ref.label(bb.outgoers[0].?), IR.Ref.label(bb.outgoers[1].?));
+        try fun.addCtrlFlowInst(bbID, brInst);
+
+        return;
+    } else {
+        for (cfgBlock.statements.items) |stmtNode| {
+            const isRet = try gen_statement(ir, ast, fun, bbID, stmtNode);
+            std.debug.print("isRet: {any}\n", .{stmtNode});
+            if (isRet == true) {
+                return; // we can just skip the rest
+            }
+        }
+        if (bbID == fun.exitBBID) {
+            return;
+        }
+        const nextBBID = bb.outgoers[0].?;
+        const jmpInst = Inst.jmp(IR.Ref.label(nextBBID));
+        try fun.addCtrlFlowInst(bbID, jmpInst);
+    }
+}
 //place_phi_functions[]:
 //for each node n:
 //  for each variable a that is a member of A(orig)[n]:
@@ -426,7 +437,10 @@ pub fn place_phi_functions(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode:
         // while W != empty list
         while (W.items.len != 0) {
             // remove some node n from W
-            const bbBlockID = W.pop();
+            var bbBlockID = W.pop();
+            if (bbBlockID == IR.Function.entryBBID) {
+                bbBlockID = fun.cfgToBBs.get(0).?;
+            }
             const cfgBlockID = fun.bbsToCFG.get(bbBlockID).?;
             // for each y in DF[n]
             for (fun.cfg.domFront.get(cfgBlockID).?.items) |dfCfgBlockID| {
@@ -459,154 +473,6 @@ pub fn place_phi_functions(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode:
     }
 }
 
-/// generates the IR for a block of statements, i.e. a function body or Block node
-/// returns the ID of the final basic block it generated instructions for
-/// @param initialBB: the ID of the basic block to begin generating instructions in
-/// @param node: either a FunctionBody or Block node
-/// @param parentStatementIter: the statement iterator of the parent node
-///                             this is a wierd hacky way to get around the
-///                             fact the `iterStatements` method is primitive
-///                             minded and does not skip nested statements
-///                             the simplest solution was just to pass the
-///                             parent statement iter to the child block as
-///                             needed and step it for every statement in
-///                             the child block
-fn gen_block(
-    ir: *IR,
-    ast: *const Ast,
-    fun: *IR.Function,
-    initialBB: IR.BasicBlock.ID,
-    node: Ast.Node,
-) !IR.BasicBlock.ID {
-    var curBB = initialBB;
-
-    var statementsIter = switch (node.kind) {
-        .FunctionBody => |funBody| funBody.iterStatements(ast),
-        .Block => |block| block.iterStatements(ast),
-        else => unreachable,
-    };
-
-    while (statementsIter.next()) |stmtNode| {
-        const statementIndex = stmtNode.kind.Statement.statement;
-        const innerNode = ast.get(statementIndex);
-        const kind = innerNode.kind;
-        // FIXME: check for control flow
-        switch (kind) {
-            .ConditionalIf => |_if| {
-                const condBB = curBB;
-                const condRef = try gen_expression(ir, ast, fun, condBB, ast.get(_if.cond).*);
-
-                const isIfElse = _if.isIfElse(ast);
-                var ifBlockNode = ast.get(_if.block).*;
-                var elseBlockNode: ?Ast.Node = null;
-
-                if (isIfElse) {
-                    const condIfElse = ifBlockNode.kind.ConditionalIfElse;
-                    elseBlockNode = ast.get(condIfElse.elseBlock).*;
-                    ifBlockNode = ast.get(condIfElse.ifBlock).*;
-                }
-
-                const ifBB = try fun.newBBWithParent(condBB, "if.then");
-                const ifEndBB = try gen_block(ir, ast, fun, ifBB, ifBlockNode);
-                if (ifBlockNode.kind.Block.range(ast)) |range| {
-                    statementsIter.skipTo(range[1]);
-                }
-
-                var elseBB: IR.BasicBlock.ID = undefined;
-                var endBB: IR.BasicBlock.ID = undefined;
-
-                if (elseBlockNode) |elseBlock| {
-                    elseBB = try fun.newBBWithParent(condBB, "if.else");
-                    const elseEndBB = try gen_block(ir, ast, fun, elseBB, elseBlock);
-                    if (elseBlock.kind.Block.range(ast)) |range| {
-                        statementsIter.skipTo(range[1]);
-                    }
-                    // now that we've created elseBB we can create
-                    // endBB while maintaining order
-                    endBB = try fun.newBB("if.end");
-                    // need to handle this inside here because
-                    // this scope is the only one that knows the else
-                    // block exists and where it ended
-                    const jmpEndInst = Inst.jmp(IR.Ref.label(endBB));
-                    fun.addCtrlFlowInst(elseEndBB, jmpEndInst) catch |err| {
-                        if (err != error.ConflictingControlFlowInstructions) {
-                            return err;
-                        }
-                        // assume the conflicting control flow is a jmp to ret
-                        // and ignore it
-                    };
-                } else {
-                    endBB = try fun.newBBWithParent(condBB, "if.end");
-                    // this makes it so we can make the branch outside
-                    // of this (zig not mini) if/else block
-                    // and point it to ifBB and elseBB
-                    // and have it pointing to the endBB if
-                    // there was no else
-                    // pretty nifty if you ask me
-                    elseBB = endBB;
-                }
-                // there will always be a jmp from the end of the
-                // if to the end
-                const ifJmpEndInst = Inst.jmp(IR.Ref.label(endBB));
-                fun.addCtrlFlowInst(ifEndBB, ifJmpEndInst) catch |err| {
-                    if (err != error.ConflictingControlFlowInstructions) {
-                        return err;
-                    }
-                    // assume the conflicting control flow is a jmp to ret
-                    // and ignore it
-                };
-
-                const brInst = Inst.br(condRef, IR.Ref.label(ifBB), IR.Ref.label(elseBB));
-                try fun.addCtrlFlowInst(condBB, brInst);
-                curBB = endBB;
-            },
-            .ConditionalIfElse => unreachable,
-            .While => |whil| {
-                const startBB = curBB;
-                const condExpr = ast.get(whil.cond).*;
-                const initialCondRef = try gen_expression(ir, ast, fun, curBB, condExpr);
-
-                const bodyBB = try fun.newBBWithParent(curBB, "while.body");
-                const whileBlockNode = ast.get(whil.block).*;
-                const endBodyBB = try gen_block(ir, ast, fun, bodyBB, whileBlockNode);
-                if (whileBlockNode.kind.Block.range(ast)) |range| {
-                    statementsIter.skipTo(range[1]);
-                }
-                const endCondRef = try gen_expression(ir, ast, fun, endBodyBB, condExpr);
-
-                const endBB = try fun.newBB("while.end");
-
-                const startBr = Inst.br(initialCondRef, IR.Ref.label(bodyBB), IR.Ref.label(endBB));
-                try fun.addCtrlFlowInst(startBB, startBr);
-
-                const endBr = Inst.br(endCondRef, IR.Ref.label(bodyBB), IR.Ref.label(endBB));
-                try fun.addCtrlFlowInst(endBodyBB, endBr);
-
-                curBB = endBB;
-            },
-            .Return => |ret| {
-                if (ret.expr) |retExpr| {
-                    const retExprRef = try gen_expression(ir, ast, fun, curBB, ast.get(retExpr).*);
-                    const returnRegID = fun.returnReg.?;
-                    const returnReg = fun.regs.get(returnRegID);
-                    const returnRef = IR.Ref.fromReg(returnReg);
-                    utils.assert(returnReg.type.eq(fun.returnType), "returnReg.type == fun.returnType", .{});
-                    const inst = Inst.store(
-                        returnRef,
-                        retExprRef,
-                    );
-                    try fun.addAnonInst(curBB, inst);
-                }
-                try fun.addCtrlFlowInst(curBB, Inst.jmp(IR.Ref.label(IR.Function.exitBBID)));
-                return curBB;
-            },
-            else => try gen_statement(ir, ast, fun, curBB, stmtNode),
-        }
-    }
-
-    return curBB;
-}
-
 /// Generates the IR for a statement. NOTE: not supposed to handle control flow
 fn gen_statement(
     ir: *IR,
@@ -614,7 +480,7 @@ fn gen_statement(
     fun: *IR.Function,
     bb: IR.BasicBlock.ID,
     statementNode: Ast.Node,
-) !void {
+) !bool {
     const node = ast.get(statementNode.kind.Statement.statement);
     const kind = node.kind;
 
@@ -622,11 +488,12 @@ fn gen_statement(
         .Assignment => |assign| {
             const to = ast.get(assign.lhs).kind.LValue;
             const toName = ir.internIdentNodeAt(ast, to.ident);
-            // log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
-            // FIXME: handle selector chain
-            var assignRef = try fun.getNamedRef(ir, toName, bb);
+            log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
+            var name = toName;
 
+            // FIXME: handle selector chain
             if (to.chain) |chain| {
+                var assignRef = try fun.getNamedRef(ir, toName, bb);
                 const structRef = blk: {
                     // it's a chain, so the assign must be a struct, we're in the load/store ir,
                     // so it's got to be a %struct.{name}** (i.e. a pointer struct pointer on the stack)
@@ -635,17 +502,15 @@ fn gen_statement(
                     const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
                     break :blk IR.Ref.fromReg(loadReg);
                 };
-                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, true);
+                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, .Assignment);
+                name = assignRef.name;
             }
 
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).*;
             const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
-            const inst = Inst.store(
-                assignRef,
-                exprRef,
-            );
-            try fun.addAnonInst(bb, inst);
+            _ = fun.renameRef(exprRef, toName);
+            try fun.bbs.get(bb).versionMap.put(name, exprRef);
         },
         .Print => |print| {
             const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(print.expr).*);
@@ -661,10 +526,32 @@ fn gen_statement(
         .Invocation => {
             _ = try gen_invocation(ir, fun, ast, bb, node);
         },
+        .Return => |ret| {
+            if (ret.expr == null) {
+                try fun.addCtrlFlowInst(bb, Inst.jmp(IR.Ref.label(fun.exitBBID)));
+                return true;
+            }
+            var exprRef = try gen_expression(ir, ast, fun, bb, ast.get(ret.expr.?).*);
+            var returnRegName = ir.internIdent("return_reg");
+            if (fun.returnReg == null) {
+                std.debug.print("returnReg is null\n", .{});
+                unreachable;
+            }
+            exprRef.type = fun.returnType;
+            exprRef.name = returnRegName;
+            try fun.typesMap.put(returnRegName, fun.returnType);
+            try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
+            std.debug.print("returnRegName: {d}\n", .{returnRegName});
+            std.debug.print("bb {d} exitBB {d}\n", .{ bb, fun.exitBBID });
+            _ = try IR.BasicBlock.addRefToPhi(fun.exitBBID, fun, exprRef, bb, returnRegName);
+            // add jmp to exitBB
+            try fun.addCtrlFlowInst(bb, Inst.jmp(IR.Ref.label(fun.exitBBID)));
+        },
         // control flow should be handled by the caller
         .ConditionalIf, .ConditionalIfElse, .While => unreachable,
         else => utils.todo("gen_statement {any}\n", .{kind}),
     }
+    return false;
 }
 
 fn gen_expression(
@@ -726,6 +613,7 @@ fn gen_expression(
             };
             const name = join_names(lhsRef.name, rhsRef.name);
             const res = try fun.addNamedInst(bb, inst, name, ty);
+            std.debug.print("res id: {d}\n", .{res.id});
             return IR.Ref.fromReg(res);
         },
         .Selector => |sel| {
@@ -737,23 +625,35 @@ fn gen_expression(
                 .Identifier => ident: {
                     const identID = ir.internToken(ast, atom.token);
                     const ref = try fun.getNamedRef(ir, identID, bb);
-                    if (ref.kind == .param) {
-                        break :ident ref;
-                    }
-                    const inst = Inst.load(ref.type, ref);
-                    const res = try fun.addNamedInst(bb, inst, ref.name, ref.type);
-                    break :ident IR.Ref.fromReg(res);
+                    break :ident ref;
                 },
                 .False => false: {
-                    break :false IR.Ref.immFalse();
+                    const trueRef = IR.Ref.immFalse();
+                    const falseRef = IR.Ref.immFalse();
+                    const orInst = Inst.or_(trueRef, falseRef);
+                    const name = ir.internIdent("imm_false");
+                    const res = try fun.addNamedInst(bb, orInst, name, .bool);
+                    break :false IR.Ref.fromReg(res);
                 },
                 .True => true: {
-                    break :true IR.Ref.immTrue();
+                    const trueRef = IR.Ref.immTrue();
+                    const falseRef = IR.Ref.immFalse();
+                    const orInst = Inst.or_(trueRef, falseRef);
+                    const name = ir.internIdent("imm_true");
+                    const res = try fun.addNamedInst(bb, orInst, name, .bool);
+                    break :true IR.Ref.fromReg(res);
                 },
                 .Number => num: {
                     const tok = atom.token;
                     const num = ir.internToken(ast, tok);
-                    break :num IR.Ref.immediate(num, .int);
+                    const immRef = IR.Ref.immediate(num, .int);
+                    // number must be an int
+                    const immRef2 = IR.Ref.immediate(0, .int);
+                    // do add instruction
+                    const inst = Inst.add(immRef, immRef2);
+                    const name = ir.internIdent("imm_store");
+                    const res = try fun.addNamedInst(bb, inst, name, .int);
+                    break :num IR.Ref.fromReg(res);
                 },
                 .New => |new| new: {
                     const structName = ir.internIdentNodeAt(ast, new.ident);
@@ -762,6 +662,34 @@ fn gen_expression(
 
                     const memRef = try gen_malloc_struct(ir, fun, bb, s);
                     break :new memRef;
+                },
+                .NewIntArray => |newArr| newArr: {
+                    const lenStr = ast.getIdentValue(newArr.length);
+                    const len = try std.fmt.parseInt(u32, lenStr, 10);
+                    const arrType = IR.Type{
+                        .arr = .{
+                            .type = .int,
+                            .len = len,
+                        },
+                    };
+                    const alloca = alloca: {
+                        // allocate the array on the stack
+                        // yielding reference to the *array* (i.e. [int x {len}]*)
+                        const inst = Inst.alloca(arrType);
+                        const reg = try fun.addInst(bb, inst, arrType);
+                        const ref = IR.Ref.fromReg(reg);
+                        break :alloca ref;
+                    };
+                    const cast = cast: {
+                        // bitcast the array to an int* from [int x {len}]*
+                        // as int_arrays are passed around and treated as int*
+                        // (i.e. unknown length)
+                        const inst = Inst.bitcast(alloca, .int_arr);
+                        const reg = try fun.addInst(bb, inst, .int_arr);
+                        const ref = IR.Ref.fromReg(reg);
+                        break :cast ref;
+                    };
+                    break :newArr cast;
                 },
                 .Null => null: {
                     // TODO: if llvm doesn't like this, or I want to make the code pretty
@@ -781,9 +709,9 @@ fn gen_expression(
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
             };
             if (sel.chain) |chain| {
-                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain, null);
+                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain, .Usage);
                 switch (resultRef.type) {
-                    .strct, .arr => {},
+                    .strct, .arr, .int_arr => {},
                     // Whenever we are accessing a field of a struct,
                     // if it isn't a struct or an array, it should be derefed
                     // so it isn't a pointer
@@ -955,6 +883,10 @@ fn gen_print(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, expr: IR.Ref, nl:
     return;
 }
 
+const SelectorType = enum {
+    Usage,
+    Assignment,
+};
 /// @param chainIndex: the `chain` field in `LValue` or `Selector`
 ///               i.e. the pointer to the `SelectorChain` node
 /// @returns the reference to the last instruction in the chain
@@ -965,10 +897,27 @@ fn gen_selector_chain(
     bb: IR.BasicBlock.ID,
     startRef: IR.Ref,
     chainIndex: usize,
-    optionallyNoDerefFinal: ?bool,
+    selectorType: SelectorType,
 ) !IR.Ref {
-    var structType = try ir.types.get(startRef.type.strct);
     var chainLink = ast.get(chainIndex).kind.SelectorChain;
+    if (startRef.type == .int_arr) {
+        // early return if the startRef is an array type as we know
+        // that the chainLink is the index into the array and the result will be an
+        // int and therefore there will be no more field accesses
+        const exprNode = ast.get(chainLink.ident).*;
+        utils.assert(exprNode.kind == .Expression, "chainLink.ident should be expression for chain off of top level int_array", .{});
+        const indexRef = try gen_expression(ir, ast, fun, bb, exprNode);
+        const inst = Inst.gep(startRef.type, startRef, indexRef);
+        var reg = try fun.addNamedInst(bb, inst, startRef.name, indexRef.type);
+        var ref = IR.Ref.fromReg(reg);
+        // if (selectorType == .Usage) {
+        //     const loadInst = Inst.load(ref.type, ref);
+        //     reg = try fun.addNamedInst(bb, loadInst, ref.name, ref.type);
+        //     ref = IR.Ref.fromReg(reg);
+        // }
+        return ref;
+    }
+    var structType = try ir.types.get(startRef.type.strct);
     var fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
     var fieldInfo = try structType.getFieldWithName(fieldNameID);
     var fieldIndex = fieldInfo.index;
@@ -983,6 +932,23 @@ fn gen_selector_chain(
     while (nextChainLink) |nextIndex| : (nextChainLink = chainLink.next) {
         chainLink = ast.get(nextIndex).kind.SelectorChain;
 
+        if (prevField.type == .int_arr) {
+            // early return if we reach a field that is an array type as we know
+            // that the chainLink is the index into the array and the result will be an
+            // int and therefore there will be no more field accesses
+            const exprNode = ast.get(chainLink.ident).*;
+            utils.assert(exprNode.kind == .Expression, "chainLink.ident should be expression for chain off of int_array field", .{});
+            const indexRef = try gen_expression(ir, ast, fun, bb, exprNode);
+            inst = Inst.gep(startRef.type, startRef, indexRef);
+            reg = try fun.addNamedInst(bb, inst, startRef.name, indexRef.type);
+            ref = IR.Ref.fromReg(reg);
+            // if (selectorType == .Usage) {
+            //     const loadInst = Inst.load(ref.type, ref);
+            //     reg = try fun.addNamedInst(bb, loadInst, ref.name, ref.type);
+            //     ref = IR.Ref.fromReg(reg);
+            // }
+            return ref;
+        }
         utils.assert(prevField.type == .strct, "prevField.type.isStruct in `gen_selector_chain`", .{});
         structType = try ir.types.get(prevField.type.strct);
         fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
@@ -1000,8 +966,7 @@ fn gen_selector_chain(
         reg = try fun.addNamedInst(bb, inst, field.name, field.type);
         ref = IR.Ref.fromReg(reg);
     }
-    const okToDerefFinal = !(optionallyNoDerefFinal orelse false);
-    if (ref.type == .strct and okToDerefFinal) {
+    if (ref.type == .strct and selectorType == .Usage) {
         // if the final field being accessed in the struct, we are polite
         // and return a pointer to the struct instead of the pointer to the pointer to the struct
         // because that is (certainly?) what the consumer expects
@@ -1208,55 +1173,70 @@ test "phi.print_test" {
     // std.debug.print("{s}\n", .{ir_str});
 }
 
+// test "phi.print_test_while_nested" {
+//     errdefer log.print();
+//     const in = "fun main() void { int a,b,c; while(a){ b =c;} c=a; }";
+//     // print out the IR
+//     const ir = try testMe(in);
+//     _ = ir;
+// }
+
+// test "phi.print_test_while" {
+//     errdefer log.print();
+//     const in = "fun test() int {int a; a =5; return a;} fun main() void { int a,b,c,d,e;a = 5+2; while(a != 2){ b =c; if (c < test()){while(b >2 ) {d =55;}}} c=a+e; }";
+//     // print out the IR
+//     const ir = try testMe(in);
+//     _ = ir;
+// }
+
+// test "phi.print_test_while_if_else_params" {
+//     errdefer log.print();
+//     const in = "fun test(int c, int d) int {int a,b; a =5; if(c > 5) { while(a > 0){ a = a -1;} return a;} else { a = 20; if(a < 20){return d;}}  return a;} fun main() void { int a; a = test(); }";
+//     const ir = try testMe(in);
+//     _ = ir;
+// }
+
+// test "phi.print_struct_tests" {
+//     errdefer log.print();
+//     const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; a =s.s.s.s.s.s.a; if(s.s.s.s.a > 2) { s.s.s.s.s.a = 3;} return s.s.s.a; }";
+
+//     var str = try inputToIRString(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+
+// test "phi.print_struct_tests2" {
+//     errdefer log.print();
+//     const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; a = 5; if(a > 2) { a =2; s.s.a = a; if (s.s.a == 1) {a = 2; s.s.a = 1;} else {a = 5;}} s.s.a = 2; return;  }";
+
+//     var str = try inputToIRString(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+test "phi.print_addition" {
+    errdefer log.print();
+    const in = " fun main() void { int a,b;  a = 5; b = a + 2; a = b + 4;   }";
+
+    var str = try inputToIRString(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+}
+
+test "phi.print_addition2" {
+    errdefer log.print();
+    const in = " fun main() int { int a,b;  a = 5; b = a + 2; a = b + 4; return a;  }";
+
+    var str = try inputToIRString(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+}
+
 test "phi.print_test_if" {
     errdefer log.print();
-    const in = "fun main() void { int a,b,c; if(a){ b =c;} }";
+    const in = "fun main() void { int a,b,c; if(a == 1){ b =c;} b = a; }";
+    var str = try inputToIRString(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
     // print out the IR
-    const ir = try testMe(in);
-    _ = ir;
     // var arena = std.heap.ArenaAllocator.init(ting.allocator);
     // var alloc = arena.allocator();
     // defer arena.deinit();
     // const ir_str = try inputToIRString(in, alloc);
     // // check that the IR is correct
     // std.debug.print("{s}\n", .{ir_str});
-}
-
-test "phi.print_test_while_nested" {
-    errdefer log.print();
-    const in = "fun main() void { int a,b,c; while(a){ b =c;} c=a; }";
-    // print out the IR
-    const ir = try testMe(in);
-    _ = ir;
-}
-
-test "phi.print_test_while" {
-    errdefer log.print();
-    const in = "fun test() int {int a; a =5; return a;} fun main() void { int a,b,c,d,e;a = 5+2; while(a){ b =c; if (c < test()){while(b >2 ) {d =55;}}} c=a+e; }";
-    // print out the IR
-    const ir = try testMe(in);
-    _ = ir;
-}
-
-test "phi.print_test_while_if_else_params" {
-    errdefer log.print();
-    const in = "fun test(int c, int d) int {int a,b; a =5; if(c > 5) { while(a > 0){ a = a -1;} return a;} else { a = 20; if(a < 20){return d;}}  return a;} fun main() void { int a; a = test(); }";
-    const ir = try testMe(in);
-    _ = ir;
-}
-
-test "phi.print_struct_tests" {
-    errdefer log.print();
-    const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; a =s.s.s.s.s.s.a; if(s.s.s.s.a > 2) { s.s.s.s.s.a = 3;} return s.s.s.a; }";
-
-    var str = try inputToIRString(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
-}
-
-test "phi.print_struct_tests2" {
-    errdefer log.print();
-    const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; a = 5; if(a > 2) { a =2; s.s.a = a; if (s.s.a == 1) {a = 2; s.s.a = 1;} else {a = 5;}} s.s.a = 2; return s.s.s.a; }";
-
-    var str = try inputToIRString(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
 }
