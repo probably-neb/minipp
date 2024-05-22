@@ -87,8 +87,8 @@ pub fn empty() void {
 /// clears all allocated messages and empties the list
 /// but does not destroy the list itself
 fn clear() void {
-    for (msgs.items()) |msg| {
-        alloc.destroy(msg.msg);
+    for (msgs.items) |msg| {
+        alloc.free(msg.msg);
     }
     msgs.clearAndFree();
 }
