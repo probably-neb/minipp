@@ -75,6 +75,15 @@ pub fn print() void {
 pub fn printWithPrefix(comptime prefix: []const u8) void {
     print_inner("[" ++ prefix ++ "] ");
 }
+
+pub fn empty() void {
+    for (msgs.items) |msg| {
+        alloc.free(msg.msg);
+    }
+
+    msgs.clearRetainingCapacity();
+}
+
 /// clears all allocated messages and empties the list
 /// but does not destroy the list itself
 fn clear() void {
