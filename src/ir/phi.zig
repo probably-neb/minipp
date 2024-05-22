@@ -1144,6 +1144,10 @@ fn inputToIRString(input: []const u8, alloc: std.mem.Allocator) ![]const u8 {
     const ir = try testMe(input);
     return try ir.stringify(alloc);
 }
+fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u8 {
+    const ir = try testMe(input);
+    return try ir.stringifyWithHeader(alloc);
+}
 
 // test "stack.fun.empty" {
 //     errdefer log.print();
@@ -1187,14 +1191,6 @@ test "phi.print_test" {
     // // check that the IR is correct
     // std.debug.print("{s}\n", .{ir_str});
 }
-
-// test "phi.print_test_while_nested" {
-//     errdefer log.print();
-//     const in = "fun main() void { int a,b,c; while(a){ b =c;} c=a; }";
-//     // print out the IR
-//     const ir = try testMe(in);
-//     _ = ir;
-// }
 
 // test "phi.print_test_while" {
 //     errdefer log.print();
@@ -1254,4 +1250,18 @@ test "phi.print_test_if" {
     // const ir_str = try inputToIRString(in, alloc);
     // // check that the IR is correct
     // std.debug.print("{s}\n", .{ir_str});
+}
+
+test "phi.print_test_while_nested" {
+    errdefer log.print();
+    const in = "fun main() void { int a,b,c; a = 1;while(a == 2){ b =c;} c=a; print c endl; }";
+    var str = try inputToIRStringHeader(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+}
+
+test "phi.print_test_decreasing_num" {
+    errdefer log.print();
+    const in = "fun main() void { int a; a = 10; while(a >= 0){ print a endl; a = a - 1;} }";
+    var str = try inputToIRStringHeader(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
 }

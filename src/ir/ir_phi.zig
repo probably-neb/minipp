@@ -80,6 +80,11 @@ pub fn stringify(self: *const IR, alloc: std.mem.Allocator) ![]const u8 {
         .header = false,
     });
 }
+pub fn stringifyWithHeader(self: *const IR, alloc: std.mem.Allocator) ![]const u8 {
+    return self.stringify_cfg(alloc, .{
+        .header = true,
+    });
+}
 
 pub fn stringify_cfg(self: *const IR, alloc: std.mem.Allocator, cfg: Stringify.Config) ![]const u8 {
     return Stringify.stringify(self, alloc, cfg);
@@ -1665,6 +1670,11 @@ pub const CfgFunction = struct {
                     var wExit = CfgBlock.init(self.alloc, "while.exit");
                     var wExitID = try self.addBlockOnEdge(wExit, ed);
                     ed.src = wExitID;
+
+                    // swap wCond2's outgoers
+                    var wCond2Outgoers = self.blocks.items[wCondID2].outgoers;
+                    self.blocks.items[wCondID2].outgoers[0] = wCond2Outgoers[1];
+                    self.blocks.items[wCondID2].outgoers[1] = wCond2Outgoers[0];
 
                     _ = try self.addEdgeBetween(wCondID, wExitID);
 
