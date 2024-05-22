@@ -563,6 +563,7 @@ pub fn stringify_phi_entries(ir: *const IR, fun: *const IR.Function, entries: st
     var buf = Buf.init(ir.alloc);
     var i: u32 = 0;
     for (entries.items) |entry| {
+        std.debug.print("entry: {any}\n", .{entry});
         try buf.fmt("[ {}, {} ]", .{
             stringify_ref(ir, fun, entry.ref),
             stringify_label_phi(fun, entry.bb),
@@ -589,6 +590,7 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
 }
 
 pub fn stringify_reg(ir: *const IR, fun: *const IR.Function, regID: IR.Register.ID) Rope {
+    std.debug.print("regID: {d}\n", .{regID});
     if (regID == 69420) {
         return Rope.str_num("%_", 69420);
     }

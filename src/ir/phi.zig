@@ -256,6 +256,7 @@ pub fn gen_function(
     // (should) only used if the function returns a value
     var retReg = IR.Register.default;
     retReg.name = ir.internIdent("return_reg");
+    std.debug.print("return reg: {d}\n", .{retReg.name});
     // generate alloca for the return value if the function returns a value
     // this makes it so ret reg is always `%0`
     if (fun.returnType != .void) {
@@ -264,6 +265,7 @@ pub fn gen_function(
         // save it in the function for easy access later
         fun.setReturnReg(retReg.id);
     }
+    try fun.typesMap.put(retReg.name, fun.returnType);
 
     // go through the basic blocks and add the statements for each.
     // update variableMap as we go
@@ -280,8 +282,12 @@ pub fn gen_function(
             const phiInstID = bb.phiMap.get(phiName.*).?;
             const phiInst = fun.insts.get(phiInstID);
             var asPhi = IR.Inst.Phi.get(phiInst.*);
-            for (asPhi.entries.items, 0..) |_, idx| {
-                asPhi.entries.items[idx].ref = bb.versionMap.get(phiName.*).?;
+            for (asPhi.entries.items, 0..) |asPhiEntry, idx| {
+                const currentBBID = asPhiEntry.bb;
+                const phiNameRef = asPhiEntry.ref.name;
+                std.debug.print("phiNameRef: {d}\n", .{phiNameRef});
+                std.debug.print("currentBBID: {d}\n", .{currentBBID});
+                asPhi.entries.items[idx].ref = try fun.getNamedRef(ir, phiNameRef, currentBBID);
             }
             const toInst = asPhi.toInst();
             fun.insts.set(phiInstID, toInst);
@@ -292,9 +298,15 @@ pub fn gen_function(
     if (fun.returnType != .void) {
         // get the exit basic block
         const exitBB = fun.bbs.get(fun.exitBBID).*;
-        var exitRef = exitBB.versionMap.get(retReg.name);
-        var instRet = IR.Inst.ret(fun.returnType, exitRef.?);
-        _ = try fun.addInst(fun.exitBBID, instRet, fun.returnType);
+        if (exitBB.phiInsts.items.len == 0) unreachable;
+        if (exitBB.phiInsts.items.len == 1) {
+            const phiInstID = exitBB.phiInsts.items[0];
+            const phiInst = fun.insts.get(phiInstID).*;
+            std.debug.print("phiInstEntries: {any}\n", .{IR.Inst.Phi.get(phiInst).entries.items});
+
+            var instRet = IR.Inst.ret(fun.returnType, phiInst.res);
+            _ = try fun.addInst(fun.exitBBID, instRet, fun.returnType);
+        }
     } else {
         _ = try fun.addInst(fun.exitBBID, Inst.retVoid(), .void);
     }
@@ -516,12 +528,19 @@ fn gen_statement(
                 try fun.addCtrlFlowInst(bb, Inst.jmp(IR.Ref.label(fun.exitBBID)));
                 return true;
             }
-            const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(ret.expr.?).*);
+            var exprRef = try gen_expression(ir, ast, fun, bb, ast.get(ret.expr.?).*);
+            var returnRegName = ir.internIdent("return_reg");
             if (fun.returnReg == null) {
                 std.debug.print("returnReg is null\n", .{});
                 unreachable;
             }
-            _ = try IR.BasicBlock.addRefToPhi(fun.exitBBID, fun, exprRef);
+            exprRef.type = fun.returnType;
+            exprRef.name = returnRegName;
+            try fun.typesMap.put(returnRegName, fun.returnType);
+            try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
+            std.debug.print("returnRegName: {d}\n", .{returnRegName});
+            std.debug.print("bb {d} exitBB {d}\n", .{ bb, fun.exitBBID });
+            _ = try IR.BasicBlock.addRefToPhi(fun.exitBBID, fun, exprRef, bb, returnRegName);
             // add jmp to exitBB
             try fun.addCtrlFlowInst(bb, Inst.jmp(IR.Ref.label(fun.exitBBID)));
         },
@@ -591,6 +610,7 @@ fn gen_expression(
             };
             const name = join_names(lhsRef.name, rhsRef.name);
             const res = try fun.addNamedInst(bb, inst, name, ty);
+            std.debug.print("res id: {d}\n", .{res.id});
             return IR.Ref.fromReg(res);
         },
         .Selector => |sel| {
@@ -1205,6 +1225,14 @@ test "phi.print_test_if" {
 test "phi.print_addition" {
     errdefer log.print();
     const in = " fun main() void { int a,b;  a = 5; b = a + 2; a = b + 4;   }";
+
+    var str = try inputToIRString(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+}
+
+test "phi.print_addition2" {
+    errdefer log.print();
+    const in = " fun main() int { int a,b;  a = 5; b = a + 2; a = b + 4; return a;  }";
 
     var str = try inputToIRString(in, testAlloc);
     std.debug.print("{s}\n", .{str});

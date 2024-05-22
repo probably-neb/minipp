@@ -1762,16 +1762,18 @@ pub const BasicBlock = struct {
     phiInsts: std.ArrayList(Function.InstID),
     phiMap: std.AutoHashMap(StrID, Function.InstID),
 
-    pub fn addRefToPhi(self: BasicBlock.ID, fun: *Function, ref: Ref) !Function.InstID {
-        const ident = ref.name;
+    pub fn addRefToPhi(self: BasicBlock.ID, fun: *Function, ref: Ref, bbIn: BasicBlock.ID, name: StrID) !Function.InstID {
+        std.debug.print("ref.i {any}\n", .{ref.i});
         const bb = fun.bbs.get(self);
-        var phiInstID = bb.getPhi(ident);
+        var phiInstID = bb.getPhi(name);
         if (phiInstID == null) {
-            phiInstID = try IR.BasicBlock.addEmptyPhiOrClear(self, fun, ident);
+            phiInstID = try IR.BasicBlock.addEmptyPhiOrClear(self, fun, name);
         }
         const phiInst = fun.insts.get(phiInstID.?);
         var phi = IR.Inst.Phi.get(phiInst.*);
-        try phi.entries.append(IR.PhiEntry{ .ref = ref, .bb = self });
+        std.debug.print("ref.i {any}\n", .{ref.i});
+        try phi.entries.append(IR.PhiEntry{ .ref = ref, .bb = bbIn });
+        std.debug.print("entries: {any}\n", .{phi.entries.items});
         var updatedPhiInst = phi.toInst();
         fun.insts.set(phiInstID.?, updatedPhiInst);
         return phiInstID.?;
@@ -1788,6 +1790,7 @@ pub const BasicBlock = struct {
             try phiInst.entries.resize(0);
             const phiInstInst = phiInst.toInst();
             fun.insts.set(contInst, phiInstInst);
+            try fun.bbs.get(self).versionMap.put(ident, fInst.res);
             return contInst;
         }
         const identType = fun.typesMap.get(ident).?;
