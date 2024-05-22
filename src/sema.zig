@@ -8,7 +8,7 @@ const log = @import("log.zig");
 
 const SemaError = error{
     NoMain,
-    InvalidReturnPath,
+    MissingReturnPath,
 };
 
 const TypeError = error{
@@ -39,7 +39,11 @@ pub fn ensureSemanticallyValid(ast: *const Ast) !void {
     var funcsKeys = ast.functionMap.keyIterator();
     while (funcsKeys.next()) |key| {
         const func = ast.getFunctionFromName(key.*).?.*;
-        try checkAllReturnPathsExist(ast, func.kind.Function);
+        const fc = func.kind.Function;
+        const returnType = fc.getReturnType(ast).?;
+        if (returnType != .Void) {
+            try checkAllReturnPathsExist(ast, fc);
+        }
         try typecheckFunction(ast, func);
     }
 }
@@ -84,6 +88,8 @@ fn checkAllReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool
     // otherwise continue decending for a fall through.
     // if there is no final return statment throw an error
     var result = false;
+    // used for printing the line of the node
+    var conditionalNode: ?*const Ast.Node = null;
     var cursor = start;
     while (cursor < end) {
         const i = cursor;
@@ -95,10 +101,21 @@ fn checkAllReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool
             result = true;
             break;
         }
+        if (node.kind == .While) {
+            const whileNode = node.kind.While;
+            const blockRange = ast.get(whileNode.block).kind.Block.range(ast);
+            if (blockRange) |range| {
+                cursor = range[1] + 1;
+            } else {
+                cursor = whileNode.block + 1;
+            }
+            return checkAllReturnPathsExistInner(ast, cursor, end);
+        }
         if (node.kind != .ConditionalIf) {
             // we don't care about non conditional nodes
             continue;
         }
+        conditionalNode = node;
 
         var returnsInThenCase = true;
         // defaults to true in case there is no else case
@@ -111,7 +128,7 @@ fn checkAllReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool
 
         var trailingNodesStart: usize = undefined;
         const trailingNodesEnd = end;
-        var fallthroughReq = false;
+        var fallthroughRequired = false;
 
         if (ifNode.isIfElse(ast)) {
             const ifElseNode = ast.get(ifNode.block).kind.ConditionalIfElse;
@@ -125,14 +142,14 @@ fn checkAllReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool
                 const elseBlockStart = range[0];
                 const elseBlockEnd = range[1] + 1;
                 returnsInElseCase = checkAllReturnPathsExistInner(ast, elseBlockStart, elseBlockEnd);
-                fallthroughReq = !returnsInElseCase;
+                fallthroughRequired = !returnsInElseCase;
 
                 trailingNodesStart = elseBlockEnd + 1;
             } else {
                 trailingNodesStart = ifElseNode.elseBlock + 1;
             }
         } else {
-            fallthroughReq = true;
+            fallthroughRequired = true;
             const ifNodeBlock = ast.get(ifNode.block).kind.Block;
             const ifNodeBlockRange = ifNodeBlock.range(ast);
             if (ifNodeBlockRange) |range| {
@@ -148,12 +165,19 @@ fn checkAllReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool
         }
         const returnsInTrailingNodes = checkAllReturnPathsExistInner(ast, trailingNodesStart, trailingNodesEnd);
         // print the trailing nodes
-        if (fallthroughReq) {
+        if (fallthroughRequired) {
             result = returnsInTrailingNodes;
         } else {
-            result = (returnsInThenCase and returnsInElseCase);
+            result = (returnsInThenCase and returnsInElseCase) or returnsInTrailingNodes;
         }
+        ast.printNodeLineTo(conditionalNode.?.*, std.debug.print);
+        std.debug.print("returns in:\nthen: {}\nelse: {}\ntrailing: {}\n\n", .{ returnsInThenCase, returnsInElseCase, returnsInTrailingNodes });
         break;
+    }
+    if (conditionalNode) |condNode| {
+        if (!result) {
+            ast.printNodeLineTo(condNode.*, log.trace);
+        }
     }
     return result;
 }
@@ -170,7 +194,7 @@ fn checkAllReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) S
 
     const ok = checkAllReturnPathsExistInner(ast, statList, funcEnd);
     if (!ok) {
-        return SemaError.InvalidReturnPath;
+        return SemaError.MissingReturnPath;
     }
 }
 
@@ -956,7 +980,7 @@ test "sema.not_all_paths_return" {
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 1);
     const result = checkAllFunctionsHaveValidReturnPaths(&ast);
-    try ting.expectError(SemaError.InvalidReturnPath, result);
+    try ting.expectError(SemaError.MissingReturnPath, result);
 }
 
 test "sema.not_all_paths_return_in_nested_if" {
@@ -964,7 +988,7 @@ test "sema.not_all_paths_return_in_nested_if" {
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
     const result = checkAllFunctionsHaveValidReturnPaths(&ast);
-    try ting.expectError(SemaError.InvalidReturnPath, result);
+    try ting.expectError(SemaError.MissingReturnPath, result);
 }
 
 test "sema.nested_fallthrough_fail_on_ifelse" {
@@ -972,7 +996,7 @@ test "sema.nested_fallthrough_fail_on_ifelse" {
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
     const result = checkAllFunctionsHaveValidReturnPaths(&ast);
-    try ting.expectError(SemaError.InvalidReturnPath, result);
+    try ting.expectError(SemaError.MissingReturnPath, result);
 }
 
 test "sema.super_nested_fallthrough_fail_on_ifelse" {
@@ -980,7 +1004,7 @@ test "sema.super_nested_fallthrough_fail_on_ifelse" {
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
     const result = checkAllFunctionsHaveValidReturnPaths(&ast);
-    try ting.expectError(SemaError.InvalidReturnPath, result);
+    try ting.expectError(SemaError.MissingReturnPath, result);
 }
 
 test "sema.get_and_check_invocation" {
