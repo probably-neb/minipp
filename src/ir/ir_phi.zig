@@ -111,7 +111,7 @@ pub fn astTypeToIRType(self: *IR, astType: Ast.Type) Type {
         .Bool => .bool,
         .Void => .void,
         .Null => std.debug.panic("FUCK WE HAVE TO HANDLE NULL TYPE\n", .{}),
-        .IntArray => utils.todo("Handle the array type", .{}),
+        .IntArray => .int_arr,
         .Struct => |name| blk: {
             const structID = self.internIdent(name);
             break :blk .{ .strct = structID };
@@ -296,6 +296,16 @@ pub const Function = struct {
         };
     }
 
+    pub fn renameRef(self: *Function, ref: Ref, name: StrID) Ref {
+        // get the register
+        var reg = self.regs.get(ref.i);
+        var inst = self.insts.get(reg.inst);
+        reg.name = name;
+        inst.res = IR.Ref.fromReg(reg);
+        self.regs.set(ref.i, reg);
+        self.insts.set(reg.inst, inst.*);
+        return inst.res;
+    }
     pub fn getKey(self: Function) StrID {
         return self.name;
     }
@@ -403,7 +413,7 @@ pub const Function = struct {
         try self.bbs.get(bb).insts.append(instID);
     }
 
-    pub const NotFoundError = error{ UnboundIdentifier, AllocFailed };
+    pub const NotFoundError = error{ OutOfMemory, UnboundIdentifier, AllocFailed };
 
     pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
         // check if the register is in the current block
@@ -448,9 +458,9 @@ pub const Function = struct {
             // add a load to the current block
             const allocRef = IR.Ref.fromReg(allocReg);
             const load = Inst.load(declType, allocRef);
-            const loadReg = try self.addNamedInst(bb, load, name, declType);
+            const loadReg = try self.addNamedInst(Function.entryBBID, load, name, declType);
             const loadRef = IR.Ref.fromReg(loadReg);
-            try self.bbs.get(Function.entryBBID).?.versionMap.put(name, loadRef);
+            try self.bbs.get(Function.entryBBID).versionMap.put(name, loadRef);
             return Ref.fromReg(loadReg);
         }
 
@@ -1752,6 +1762,21 @@ pub const BasicBlock = struct {
     phiInsts: std.ArrayList(Function.InstID),
     phiMap: std.AutoHashMap(StrID, Function.InstID),
 
+    pub fn addRefToPhi(self: BasicBlock.ID, fun: *Function, ref: Ref) !Function.InstID {
+        const ident = ref.name;
+        const bb = fun.bbs.get(self);
+        var phiInstID = bb.getPhi(ident);
+        if (phiInstID == null) {
+            phiInstID = try IR.BasicBlock.addEmptyPhiOrClear(self, fun, ident);
+        }
+        const phiInst = fun.insts.get(phiInstID.?);
+        var phi = IR.Inst.Phi.get(phiInst.*);
+        try phi.entries.append(IR.PhiEntry{ .ref = ref, .bb = self });
+        var updatedPhiInst = phi.toInst();
+        fun.insts.set(phiInstID.?, updatedPhiInst);
+        return phiInstID.?;
+    }
+
     // creates a new instruction phi node and adds it to the block, adds it to the phiMap
     // and version map
     pub fn addEmptyPhiOrClear(self: BasicBlock.ID, fun: *Function, ident: StrID) !Function.InstID {
@@ -2279,6 +2304,7 @@ pub const Type = union(enum) {
     // could just use int but I think it being wierd helps
     // make it stand out and that is probably a good thing
     i32,
+    int_arr,
     arr: struct {
         type: enum {
             i8,
@@ -2317,6 +2343,9 @@ pub const Type = union(enum) {
     pub fn sizeof(self: Type) u32 {
         return switch (self) {
             .strct, .int, .null_ => 8,
+            // int_arr is just a pointer to a dynamically allocated
+            // array so it is just the size of a pointer
+            .int_arr => 8,
             .i8, .bool => 1,
             .void => 0,
             .i32 => 4,
