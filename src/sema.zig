@@ -40,18 +40,18 @@ pub fn ensureSemanticallyValid(ast: *const Ast) !void {
     while (funcsKeys.next()) |key| {
         const func = ast.getFunctionFromName(key.*).?.*;
         try checkAllReturnPathsExist(ast, func.kind.Function);
-        try typeCheckFunction(ast, func);
+        try typecheckFunction(ast, func);
     }
 }
 
 /// Helper for testing where we only want to type check and don't
 /// necessarily care about return value, main, etc checking
-fn typeCheck(ast: *const Ast) !void {
+fn typecheck(ast: *const Ast) !void {
     // get all functions out of map
     var funcsKeys = ast.functionMap.keyIterator();
     while (funcsKeys.next()) |key| {
         const func = ast.getFunctionFromName(key.*).?;
-        try typeCheckFunction(ast, func.*);
+        try typecheckFunction(ast, func.*);
     }
 }
 
@@ -175,7 +175,7 @@ fn checkAllReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) S
 }
 
 // Done
-pub fn typeCheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
+pub fn typecheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
     // errdefer ast.printNodeLine(func);
     var fc = func.kind.Function;
     const functionName = fc.getName(ast);
@@ -213,50 +213,50 @@ pub fn typeCheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
         paramNames.deinit();
         // for each of the parameters check that there is no local declaration with the same name
     }
-    try typeCheckStatementList(ast, fstatementsIndex, functionName, returnType);
+    try typecheckStatementList(ast, fstatementsIndex, functionName, returnType);
 }
 
 // Done
-pub fn typeCheckStatementList(ast: *const Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckStatementList(ast: *const Ast, statementListn: ?usize, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer if (statementListn) |lst| ast.printNodeLine(ast.get(lst).*);
     // log.trace("statementListn: {d}\n", .{statementListn.?});
     var iter = ast.get(statementListn.?).kind.StatementList.iter(ast);
     while (iter.next()) |statement| {
         const stmtInner = ast.get(statement.kind.Statement.statement).*;
-        try typeCheckStatement(ast, stmtInner, fName, returnType);
+        try typecheckStatement(ast, stmtInner, fName, returnType);
     }
 }
 
-pub fn typeCheckStatement(ast: *const Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckStatement(ast: *const Ast, statement: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer ast.printNodeLine(statement);
     const kind = statement.kind;
     _ = switch (kind) {
         .Block => {
-            try typeCheckBlock(ast, statement, fName, returnType);
+            try typecheckBlock(ast, statement, fName, returnType);
             return;
         },
         .Assignment => {
-            try typeCheckAssignment(ast, statement, fName, returnType);
+            try typecheckAssignment(ast, statement, fName, returnType);
             return;
         },
         .Print => {
-            try typeCheckPrint(ast, statement, fName, returnType);
+            try typecheckPrint(ast, statement, fName, returnType);
             return;
         },
         .ConditionalIf => {
-            try typeCheckConditional(ast, statement, fName, returnType);
+            try typecheckConditional(ast, statement, fName, returnType);
             return;
         },
         .While => {
-            try typeCheckWhile(ast, statement, fName, returnType);
+            try typecheckWhile(ast, statement, fName, returnType);
             return;
         },
         .Delete => {
-            try typeCheckDelete(ast, statement, fName, returnType);
+            try typecheckDelete(ast, statement, fName, returnType);
             return;
         },
         .Return => {
-            try typeCheckReturn(ast, statement, fName, returnType);
+            try typecheckReturn(ast, statement, fName, returnType);
             return;
         },
         .Invocation => {
@@ -272,7 +272,7 @@ pub fn typeCheckStatement(ast: *const Ast, statement: Ast.Node, fName: []const u
 }
 
 // Done
-pub fn typeCheckBlock(ast: *const Ast, blockn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckBlock(ast: *const Ast, blockn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer ast.printNodeLine(blockn);
     // Block to statement list
     const block = blockn.kind.Block;
@@ -280,11 +280,11 @@ pub fn typeCheckBlock(ast: *const Ast, blockn: Ast.Node, fName: []const u8, retu
     if (statementIndex == null) {
         return;
     }
-    try typeCheckStatementList(ast, statementIndex.?, fName, returnType);
+    try typecheckStatementList(ast, statementIndex.?, fName, returnType);
 }
 
 // Done
-pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer ast.printNodeLine(assignmentn);
     const assignment = assignmentn.kind.Assignment;
     const left = assignment.lhs;
@@ -330,7 +330,7 @@ pub fn typeCheckAssignment(ast: *const Ast, assignmentn: Ast.Node, fName: []cons
 }
 
 // Done
-pub fn typeCheckPrint(ast: *const Ast, printn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckPrint(ast: *const Ast, printn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer ast.printNodeLine(printn);
     const print = printn.kind.Print;
     const expr = print.expr;
@@ -343,7 +343,7 @@ pub fn typeCheckPrint(ast: *const Ast, printn: Ast.Node, fName: []const u8, retu
 }
 
 // Done
-pub fn typeCheckConditional(ast: *const Ast, conditionaln: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckConditional(ast: *const Ast, conditionaln: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer ast.printNodeLine(conditionaln);
     // first check if conditional is bool
     const conditional = conditionaln.kind.ConditionalIf;
@@ -360,16 +360,16 @@ pub fn typeCheckConditional(ast: *const Ast, conditionaln: Ast.Node, fName: []co
         const ifElseNode = ast.get(conditional.block).kind.ConditionalIfElse;
         const ifBlockNode = ast.get(ifElseNode.ifBlock).*;
         const elseBlockNode = ast.get(ifElseNode.elseBlock).*;
-        try typeCheckBlock(ast, ifBlockNode, fName, returnType);
-        try typeCheckBlock(ast, elseBlockNode, fName, returnType);
+        try typecheckBlock(ast, ifBlockNode, fName, returnType);
+        try typecheckBlock(ast, elseBlockNode, fName, returnType);
     } else {
         const ifBlockNode = ast.get(conditional.block).*;
-        try typeCheckBlock(ast, ifBlockNode, fName, returnType);
+        try typecheckBlock(ast, ifBlockNode, fName, returnType);
     }
 }
 
 // Done
-pub fn typeCheckWhile(ast: *const Ast, while_nN: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckWhile(ast: *const Ast, while_nN: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer ast.printNodeLine(while_nN);
     // first check if conditional is bool
     const while_n = while_nN.kind.While;
@@ -382,11 +382,11 @@ pub fn typeCheckWhile(ast: *const Ast, while_nN: Ast.Node, fName: []const u8, re
     }
 
     const blockNode = ast.get(while_n.block).*;
-    try typeCheckBlock(ast, blockNode, fName, returnType);
+    try typecheckBlock(ast, blockNode, fName, returnType);
 }
 
 // Done
-pub fn typeCheckDelete(ast: *const Ast, deleten: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckDelete(ast: *const Ast, deleten: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer ast.printNodeLine(deleten);
     const delete = deleten.kind.Delete;
     const expr = delete.expr;
@@ -399,7 +399,7 @@ pub fn typeCheckDelete(ast: *const Ast, deleten: Ast.Node, fName: []const u8, re
 }
 
 // Done
-pub fn typeCheckReturn(ast: *const Ast, retn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
+pub fn typecheckReturn(ast: *const Ast, retn: Ast.Node, fName: []const u8, returnType: Ast.Type) TypeError!void {
     // errdefer ast.printNodeLine(retn);
     const ret = retn.kind.Return;
     const expr = ret.expr;
@@ -939,7 +939,7 @@ test "sema.not_all_return_paths_void" {
     const source = "fun main() void {if (true) {return;} else {return 1;}}";
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
-    const result = typeCheck(&ast);
+    const result = typecheck(&ast);
     try ting.expectError(TypeError.InvalidReturnType, result);
 }
 
@@ -998,7 +998,7 @@ test "sema.get_and_check_invocation" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("foo");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.get_and_check_invocation_with_args" {
@@ -1006,7 +1006,7 @@ test "sema.get_and_check_invocation_with_args" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("foo");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.get_and_check_invocation_with_args_fail" {
@@ -1014,7 +1014,7 @@ test "sema.get_and_check_invocation_with_args_fail" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try ting.expectError(TypeError.InvalidFunctionCall, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidFunctionCall, typecheckFunction(&ast, funcLit));
 }
 
 test "sema_get_and_check_invocations_with_mul_args_pass" {
@@ -1022,7 +1022,7 @@ test "sema_get_and_check_invocations_with_mul_args_pass" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("foo");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema_get_and_check_invocations_with_mul_args_fail" {
@@ -1030,7 +1030,7 @@ test "sema_get_and_check_invocations_with_mul_args_fail" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try ting.expectError(TypeError.InvalidFunctionCall, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidFunctionCall, typecheckFunction(&ast, funcLit));
 }
 
 test "sema_get_and_check_invocations_with_mul_args_fail2" {
@@ -1038,7 +1038,7 @@ test "sema_get_and_check_invocations_with_mul_args_fail2" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try ting.expectError(TypeError.InvalidFunctionCall, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidFunctionCall, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.get_and_check_invocation_with_return" {
@@ -1046,7 +1046,7 @@ test "sema.get_and_check_invocation_with_return" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("foo");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.get_and_check_invocation_with_return_fail" {
@@ -1054,7 +1054,7 @@ test "sema.get_and_check_invocation_with_return_fail" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("foo");
     var funcLit = func.?.*;
-    try ting.expectError(TypeError.InvalidReturnType, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidReturnType, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_assignment_int" {
@@ -1062,7 +1062,7 @@ test "sema.check_assignment_int" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_assignment_bool" {
@@ -1070,7 +1070,7 @@ test "sema.check_assignment_bool" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_assignment_fail" {
@@ -1078,7 +1078,7 @@ test "sema.check_assignment_fail" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidAssignmentType, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_assignment_fail2" {
@@ -1086,7 +1086,7 @@ test "sema.check_assignment_fail2" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidAssignmentType, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_struct_assignment_member" {
@@ -1094,7 +1094,7 @@ test "sema.check_struct_assignment_member" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_struct_assignment_member_fail" {
@@ -1102,7 +1102,7 @@ test "sema.check_struct_assignment_member_fail" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidAssignmentType, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_struct_assignment_member_no_such_member" {
@@ -1110,7 +1110,7 @@ test "sema.check_struct_assignment_member_no_such_member" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try ting.expectError(TypeError.StructHasNoMember, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.StructHasNoMember, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_print_int" {
@@ -1118,7 +1118,7 @@ test "sema.check_print_int" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_print_bool" {
@@ -1127,7 +1127,7 @@ test "sema.check_print_bool" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.InvalidReadExptedTypeInt, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidReadExptedTypeInt, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_binop_int" {
@@ -1135,7 +1135,7 @@ test "sema.check_binop_int" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_binop_int_many" {
@@ -1143,7 +1143,7 @@ test "sema.check_binop_int_many" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 test "sema.check_binop_int_fail" {
     const source = "fun main() void {int a; a = 1 + true;}";
@@ -1151,7 +1151,7 @@ test "sema.check_binop_int_fail" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_binop_int_function_call" {
@@ -1159,7 +1159,7 @@ test "sema.check_binop_int_function_call" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_binop_int_function_call_fail" {
@@ -1168,7 +1168,7 @@ test "sema.check_binop_int_function_call_fail" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_binop_all_ops" {
@@ -1176,7 +1176,7 @@ test "sema.check_binop_all_ops" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_binop_all_ops_and_logic" {
@@ -1184,7 +1184,7 @@ test "sema.check_binop_all_ops_and_logic" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_binop_many_ops_fail" {
@@ -1193,7 +1193,7 @@ test "sema.check_binop_many_ops_fail" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.BinaryOperationTypeMismatch, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_unop_not" {
@@ -1201,7 +1201,7 @@ test "sema.check_unop_not" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_unop_not_fail" {
@@ -1210,7 +1210,7 @@ test "sema.check_unop_not_fail" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.InvalidTypeExpectedBool, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidTypeExpectedBool, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_unop_minus" {
@@ -1218,7 +1218,7 @@ test "sema.check_unop_minus" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_unop_minus_fail" {
@@ -1227,7 +1227,7 @@ test "sema.check_unop_minus_fail" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidTypeExptectedInt, typecheckFunction(&ast, funcLit));
 }
 
 //FIXME: this seems so wrong lmao
@@ -1236,7 +1236,7 @@ test "sema.check_unop_in_binops" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_logical_unop_in_binops" {
@@ -1244,7 +1244,7 @@ test "sema.check_logical_unop_in_binops" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_logical_unop_in_binops_fail" {
@@ -1253,7 +1253,7 @@ test "sema.check_logical_unop_in_binops_fail" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.InvalidTypeExpectedBool, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidTypeExpectedBool, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_deep_struct" {
@@ -1261,7 +1261,7 @@ test "sema.check_deep_struct" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_deep_struct_assignment_fail" {
@@ -1270,7 +1270,7 @@ test "sema.check_deep_struct_assignment_fail" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.InvalidAssignmentType, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidAssignmentType, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_deep_struct_assignment" {
@@ -1278,7 +1278,7 @@ test "sema.check_deep_struct_assignment" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 
 test "sema.check_mixed.mini" {
@@ -1287,14 +1287,14 @@ test "sema.check_mixed.mini" {
     var ast = try testMe(source);
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
-    try typeCheckFunction(&ast, funcLit);
+    try typecheckFunction(&ast, funcLit);
 }
 test "sema.check_mixed_wrong_new.mini" {
     // load source from file
     const source = @embedFile("mixed_wrong_new.mini");
     var ast = try testMe(source);
     // expect error InvalidAssignmentType
-    try ting.expectError(TypeError.InvalidAssignmentType, typeCheck(&ast));
+    try ting.expectError(TypeError.InvalidAssignmentType, typecheck(&ast));
 }
 // test for InvalidFunctionCallNoDefinedArguments
 test "sema.check_invocationwithnoargsbutparams" {
@@ -1303,7 +1303,7 @@ test "sema.check_invocationwithnoargsbutparams" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error InvalidFunctionCallNoDefinedArguments
-    try ting.expectError(TypeError.InvalidFunctionCallNoDefinedArguments, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidFunctionCallNoDefinedArguments, typecheckFunction(&ast, funcLit));
 }
 
 test "sema.check_binop_mul_bools" {
@@ -1312,21 +1312,21 @@ test "sema.check_binop_mul_bools" {
     var func = ast.getFunctionFromName("main");
     var funcLit = func.?.*;
     // expect error
-    try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheckFunction(&ast, funcLit));
+    try ting.expectError(TypeError.InvalidTypeExptectedInt, typecheckFunction(&ast, funcLit));
 }
 test "sema.checkArrayAccess" {
     const source = "fun main() void {int_array a; a = new int_array[10]; a[0] = 1;}";
     var ast = try testMe(source);
     // var func = ast.getFunctionFromName("main");
     // var funcLit = func.?.*;
-    try typeCheck(&ast);
+    try typecheck(&ast);
 }
 test "sema.4mini" {
     // load source from file
     const source = @embedFile("4.mini");
     var ast = try testMe(source);
     // expect error InvalidAssignmentType
-    try typeCheck(&ast);
+    try typecheck(&ast);
 }
 
 test "sema.ia_invalid_access" {
@@ -1341,7 +1341,7 @@ test "sema.ia_invalid_access" {
     ;
     var ast = try testMe(source);
     // expect error
-    try ting.expectError(TypeError.InvalidTypeExptectedInt, typeCheck(&ast));
+    try ting.expectError(TypeError.InvalidTypeExptectedInt, typecheck(&ast));
 }
 
 test "sema.ia_invalid_new" {
@@ -1359,39 +1359,39 @@ test "sema_ia.structs" {
     const source = "struct S {int a;}; fun main() void {int_array a; struct S b; a = new int_array[10]; b.a = a[0];}";
     var ast = try testMe(source);
     // expect error
-    try typeCheck(&ast);
+    try typecheck(&ast);
 }
 
 test "sema.ia_structs_assign_retrive" {
     const source = "struct S {int a;}; fun main() void {int_array a; struct S b; a = new int_array[10]; b.a = a[0]; a[0] = b.a;}";
     var ast = try testMe(source);
     // expect error
-    try typeCheck(&ast);
+    try typecheck(&ast);
 }
 
 test "sema.ia_int_arryay_member_struct" {
     const source = "struct S {int_array a;}; fun main() void {struct S b; b.a = new int_array[10]; b.a[0] = 1;}";
     var ast = try testMe(source);
     // expect error
-    try typeCheck(&ast);
+    try typecheck(&ast);
 }
 test "sema.ia_struct_toself" {
     const source = "struct S {int_array a; int b;}; fun main() void {struct S c; c.a = new int_array[100]; c.b = c.a[20];}";
     var ast = try testMe(source);
     // expect error
-    try typeCheck(&ast);
+    try typecheck(&ast);
 }
 
 test "sema.ia_struct_toself2" {
     const source = "struct S {struct S s; int_array a; int b;}; fun main() void {struct S c; c.s.s.s.s.s.s.s.a = new int_array[100]; c.s.s.s.s.s.s.s.b = c.a[20]; c.s.s.s.s.s.s.s.s.s.a[20] = 2;}";
     var ast = try testMe(source);
     // expect error
-    try typeCheck(&ast);
+    try typecheck(&ast);
 }
 
 test "sema.struct_null" {
     const source = "struct S {int a;}; fun main() void {struct S b; b = null;}";
     var ast = try testMe(source);
     // expect error
-    try typeCheck(&ast);
+    try typecheck(&ast);
 }
