@@ -212,6 +212,7 @@ pub fn gen_function(
                 return error.DeclNotFound;
             }
             try fun.typesMap.put(list.items[0], preType.?);
+            try fun.typesMap.put(declNode, preType.?);
             list.deinit();
         } else {
             try fun.typesMap.put(declNode, preType.?);
@@ -501,6 +502,10 @@ fn gen_statement(
             std.debug.print("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             var name = toName;
 
+            // FIXME: rhs could also be a `read` handle!
+            const exprNode = ast.get(assign.rhs).*;
+            const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
+
             // FIXME: handle selector chain
             if (to.chain) |chain| {
                 var assignRef = try fun.getNamedRef(ir, toName, bb);
@@ -512,19 +517,21 @@ fn gen_statement(
                     const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
                     break :blk IR.Ref.fromReg(loadReg);
                 };
-                assignRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, .Assignment);
-                name = assignRef.name;
-            }
-
-            // FIXME: rhs could also be a `read` handle!
-            const exprNode = ast.get(assign.rhs).*;
-            const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
-            _ = fun.renameRef(exprRef, toName);
-            if (exprRef.name != IR.InternPool.NULL) {
-                std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
+                var selectorChainRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, .Assignment);
+                // need to store the result of the expression into the selector chain
+                const inst = Inst.store(
+                    selectorChainRef, // to
+                    exprRef, // from
+                );
+                try fun.addAnonInst(bb, inst);
+            } else {
+                _ = fun.renameRef(exprRef, toName);
+                if (exprRef.name != IR.InternPool.NULL) {
+                    std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
+                }
+                try fun.bbs.get(bb).versionMap.put(name, exprRef);
             }
             try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
-            try fun.bbs.get(bb).versionMap.put(name, exprRef);
         },
         .Print => |print| {
             const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(print.expr).*);
@@ -822,6 +829,18 @@ fn gen_invocation(ir: *IR, fun: *IR.Function, ast: *const Ast, bb: IR.BasicBlock
 // FIXME: allow redefinition of globals
 fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.StructType) !IR.Ref {
     // the args to malloc are just (i32 sizeof({struct type}))
+    const s_name = ir.getIdent(s.name);
+    // add .Struct to the name of the struct to avoid conflicts
+    const _Struct = ".Struct";
+    var mallocNameArr = std.ArrayList(u8).init(ir.alloc);
+    for (s_name) |c| {
+        try mallocNameArr.append(c);
+    }
+    for (_Struct) |c| {
+        try mallocNameArr.append(c);
+    }
+    const mallocNameStr = try mallocNameArr.toOwnedSlice();
+    const mallocName = ir.internIdent(mallocNameStr);
     const args = blk: {
         var args: []IR.Ref = try ir.alloc.alloc(IR.Ref, 1);
         args[0] = IR.Ref.immu32(s.size, .i32);
@@ -832,7 +851,7 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
     const retRef = blk: {
         const mallocRef: IR.Ref = IR.Ref.malloc(ir);
         const mallocInst = Inst.call(.i8, mallocRef, args);
-        const memReg = try fun.addNamedInst(bb, mallocInst, s.name, .i8);
+        const memReg = try fun.addNamedInst(bb, mallocInst, mallocName, .i8);
         const memRef = IR.Ref.fromReg(memReg);
         break :blk memRef;
     };
@@ -844,6 +863,7 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
         const castRef = IR.Ref.fromReg(castReg);
         break :blk castRef;
     };
+    try fun.bbs.get(bb).versionMap.put(s.name, resRef);
     // return the {struct type}* reference
     return resRef;
 }
@@ -1270,7 +1290,7 @@ test "phi.print_test_decreasing_num" {
 
 test "phi.print_first_struct" {
     errdefer log.print();
-    const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; a = s.a; }";
+    const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; s = new S; s.s = new S; s.s.a = 5; a = s.s.a; }";
     var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
