@@ -33,7 +33,20 @@ const TypeError = error{
     FunctionParametersMustBeUnique,
 };
 
-pub fn typeCheck(ast: *const Ast) !void {
+pub fn ensureSemanticallyValid(ast: *const Ast) !void {
+    // get all functions out of map
+    try ensureHasMain(ast);
+    var funcsKeys = ast.functionMap.keyIterator();
+    while (funcsKeys.next()) |key| {
+        const func = ast.getFunctionFromName(key.*).?.*;
+        try allReturnPathsExist(ast, func.kind.Function);
+        try typeCheckFunction(ast, func);
+    }
+}
+
+/// Helper for testing where we only want to type check and don't
+/// necessarily care about return value, main, etc checking
+fn typeCheck(ast: *const Ast) !void {
     // get all functions out of map
     var funcsKeys = ast.functionMap.keyIterator();
     while (funcsKeys.next()) |key| {
