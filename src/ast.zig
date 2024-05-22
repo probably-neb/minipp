@@ -1397,6 +1397,20 @@ pub fn NodeIter(comptime tag: NodeKindTag) type {
             self.i = self.last + 1;
             return null;
         }
+        pub fn nextInc(self: *Self) ?Node {
+            if (self.i > self.last) {
+                return null;
+            }
+            // PERF: use a hashmap to store the indexes of the functions
+            const nodeIndex = self.ast.findIndexWithin(tag, self.i, self.last + 1);
+            if (nodeIndex) |i| {
+                self.i = i + 1;
+                const n = self.ast.nodes.items[i];
+                return n;
+            }
+            self.i = self.last + 1;
+            return null;
+        }
 
         // WARN: somewhat expensive. Iterates over all entries
         pub fn calculateLen(self: Self) usize {
