@@ -1008,8 +1008,7 @@ pub const Node = struct {
                     .BoolType => return .Bool,
                     .IntType => return .Int,
                     .StructType => {
-                        const nameToken = ast.get(tyNode.structIdentifier.?).token;
-                        const name = nameToken._range.getSubStrFromStr(ast.input);
+                        const name = ast.getIdentValue(tyNode.structIdentifier.?);
                         return .{ .Struct = name };
                     },
                     .IntArrayType => return .IntArray,
