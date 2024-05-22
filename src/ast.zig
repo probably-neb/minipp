@@ -1129,7 +1129,10 @@ pub const Type = union(enum) {
             // hurt right?
             //
             // right?
-            .Null => other == .Struct or other == .Null,
+            .Null => switch (other) {
+                .Struct, .Null => true,
+                else => false,
+            },
             else => @intFromEnum(self) == @intFromEnum(other),
         };
         // Dylan I see what you were going for here I just don't like it ;)
