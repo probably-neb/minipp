@@ -261,7 +261,7 @@ pub fn gen_function(
     // this makes it so ret reg is always `%0`
     if (fun.returnType != .void) {
         // allocate a stack slot for the return value in the entry
-        retReg = try fun.addInst(entryBB, Inst.alloca(fun.returnType), fun.returnType);
+        retReg = try fun.addNamedInst(entryBB, Inst.alloca(fun.returnType), retReg.name, fun.returnType);
         // save it in the function for easy access later
         fun.setReturnReg(retReg.id);
     }
@@ -269,12 +269,12 @@ pub fn gen_function(
 
     // go through the basic blocks and add the statements for each.
     // update variableMap as we go
-    ast.debugPrintAst();
+    // ast.debugPrintAst();
     for (fun.cfg.postOrder.items) |cfgBlockID| {
+        fun.cfg.printBlockName(cfgBlockID);
         try generateInstsFromCfg(ir, ast, fun, cfgBlockID);
     }
     // link the entry block to the first block
-    try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(fun.cfgToBBs.get(0).?)));
 
     // relink all the phi nodes
     for (fun.bbs.items()) |bb| {
@@ -312,6 +312,7 @@ pub fn gen_function(
         _ = try fun.addInst(fun.exitBBID, Inst.retVoid(), .void);
     }
 
+    try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(fun.cfgToBBs.get(0).?)));
     return fun;
 }
 
@@ -351,6 +352,10 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
     const bbID = fun.cfgToBBs.get(cfgBlockID).?;
     const cfgBlock = fun.cfg.blocks.items[cfgBlockID];
     const bb = fun.bbs.get(bbID);
+    for (cfgBlock.statements.items) |stmtNode| {
+        fun.cfg.printBlockName(cfgBlockID);
+        ast.printNodeLine(stmtNode);
+    }
 
     if (cfgBlock.conditional) {
         const statments = cfgBlock.statements;
@@ -360,6 +365,7 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
         //TODO generate the control flow jump
         const brInst = Inst.br(condRef, IR.Ref.label(bb.outgoers[0].?), IR.Ref.label(bb.outgoers[1].?));
         try fun.addCtrlFlowInst(bbID, brInst);
+        try fun.bbs.get(bbID).versionMap.put(condRef.name, condRef);
 
         return;
     } else {
@@ -488,7 +494,7 @@ fn gen_statement(
         .Assignment => |assign| {
             const to = ast.get(assign.lhs).kind.LValue;
             const toName = ir.internIdentNodeAt(ast, to.ident);
-            log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
+            std.debug.print("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             var name = toName;
 
             // FIXME: handle selector chain
@@ -509,7 +515,11 @@ fn gen_statement(
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).*;
             const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
-            _ = fun.renameRef(exprRef, toName);
+            // _ = fun.renameRef(exprRef, toName);
+            if (exprRef.name != IR.InternPool.NULL) {
+                std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
+            }
+            try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
             try fun.bbs.get(bb).versionMap.put(name, exprRef);
         },
         .Print => |print| {
@@ -625,6 +635,7 @@ fn gen_expression(
                 .Identifier => ident: {
                     const identID = ir.internToken(ast, atom.token);
                     const ref = try fun.getNamedRef(ir, identID, bb);
+                    try fun.bbs.get(bb).versionMap.put(identID, ref);
                     break :ident ref;
                 },
                 .False => false: {
@@ -1229,7 +1240,7 @@ test "phi.print_addition2" {
 
 test "phi.print_test_if" {
     errdefer log.print();
-    const in = "fun main() void { int a,b,c; if(a == 1){ b =c;} b = a; }";
+    const in = "fun main() int {\n int a,b,c;\n if(a == 1){\n b =c;\n}\n b = a; return b;\n }";
     var str = try inputToIRString(in, testAlloc);
     std.debug.print("{s}\n", .{str});
     // print out the IR

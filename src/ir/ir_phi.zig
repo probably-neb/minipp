@@ -416,6 +416,11 @@ pub const Function = struct {
     pub const NotFoundError = error{ OutOfMemory, UnboundIdentifier, AllocFailed };
 
     pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
+        if (name != IR.InternPool.NULL) {
+            std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
+        } else {
+            std.debug.print("getting ref for NULL\n", .{});
+        }
         // check if the register is in the current block
         if (self.bbs.get(bb).versionMap.contains(name)) {
             return self.bbs.get(bb).versionMap.get(name).?;
@@ -430,7 +435,9 @@ pub const Function = struct {
         try visited.put(bb, true);
         while (queue.items.len > 0) {
             const current = queue.orderedRemove(0);
+            std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
             if (self.bbs.get(current).versionMap.contains(name)) {
+                std.debug.print("found in block {d}\n", .{current});
                 return self.bbs.get(current).versionMap.get(name).?;
             }
             for (self.bbs.get(current).incomers.items) |incomer| {
@@ -1459,6 +1466,8 @@ pub const CfgFunction = struct {
         while (statIter.nextInc()) |c_stat| {
             const statementIndex = c_stat.kind.Statement.statement;
             const statementNode = c_stat.kind.Statement;
+            self.printBlockName(cBlock);
+            ast.printNodeLine(c_stat);
             const innerNode = ast.get(statementIndex);
             const kind = innerNode.kind;
             const finalIndex = c_stat.kind.Statement.finalIndex;
@@ -1470,6 +1479,9 @@ pub const CfgFunction = struct {
                 try self.blocks.items[cBlock].addIdentsFromStatement(ir, ast, c_stat);
                 // add the statement to the block
                 try self.blocks.items[cBlock].statements.append(c_stat);
+                std.debug.print("items in block ", .{});
+                self.printBlockName(cBlock);
+                std.debug.print("{any}\n", .{self.blocks.items[cBlock].statements.items});
                 continue;
             }
 
@@ -1826,7 +1838,9 @@ pub const BasicBlock = struct {
             const predInst = predBB.versionMap.get(ident);
             // if there is no phi for the pred block then continue
             if (predInst == null) {
-                try bbPhi.entries.append(IR.PhiEntry{ .ref = IR.Ref.default, .bb = it });
+                var phiEntryTemp = IR.PhiEntry{ .ref = IR.Ref.default, .bb = it };
+                phiEntryTemp.ref.name = ident;
+                try bbPhi.entries.append(phiEntryTemp);
                 continue;
             }
             try bbPhi.entries.append(IR.PhiEntry{ .ref = predInst.?, .bb = it });
