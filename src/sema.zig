@@ -170,8 +170,6 @@ fn checkAllReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool
         } else {
             result = (returnsInThenCase and returnsInElseCase) or returnsInTrailingNodes;
         }
-        ast.printNodeLineTo(conditionalNode.?.*, std.debug.print);
-        std.debug.print("returns in:\nthen: {}\nelse: {}\ntrailing: {}\n\n", .{ returnsInThenCase, returnsInElseCase, returnsInTrailingNodes });
         break;
     }
     if (conditionalNode) |condNode| {
