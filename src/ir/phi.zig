@@ -371,13 +371,12 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
         const statments = cfgBlock.statements;
         // we know that if it is a conditional it is an expression
         if (statments.items.len > 1) unreachable;
-        const exprNode = ast.get(statments.items[0]).*;
-        try gen_expression(ir, ast, fun, bbID, exprNode);
+        _ = try gen_expression(ir, ast, fun, bbID, statments.items[0]);
         //TODO generate the control flow jump
         return;
     } else {
         for (cfgBlock.statements.items) |stmtNode| {
-            try gen_statement(ir, ast, fun, bbID, stmtNode);
+            _ = try gen_statement(ir, ast, fun, bbID, stmtNode);
         }
     }
 }
@@ -638,7 +637,7 @@ fn gen_statement(
             const toName = ir.internIdentNodeAt(ast, to.ident);
             // log.trace("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             // FIXME: handle selector chain
-            var assignRef = try fun.getNamedRef(ir, toName);
+            var assignRef = try fun.getNamedRef(ir, toName, bb);
             if (to.chain) |chain| {
                 const structRef = blk: {
                     // it's a chain, so the assign must be a struct, we're in the load/store ir,
@@ -749,7 +748,7 @@ fn gen_expression(
             var resultRef = switch (atom.kind) {
                 .Identifier => ident: {
                     const identID = ir.internToken(ast, atom.token);
-                    const ref = try fun.getNamedRef(ir, identID);
+                    const ref = try fun.getNamedRef(ir, identID, bb);
                     if (ref.kind == .param) {
                         break :ident ref;
                     }
@@ -895,7 +894,7 @@ fn gen_expression(
 fn gen_invocation(ir: *IR, fun: *IR.Function, ast: *const Ast, bb: IR.BasicBlock.ID, node: *const Ast.Node) !IR.Register {
     const invoc = node.*.kind.Invocation;
     const funNameID = ir.internIdentNodeAt(ast, invoc.funcName);
-    const funRef = try fun.getNamedRef(ir, funNameID);
+    const funRef = try fun.getNamedRef(ir, funNameID, bb);
 
     var args: []IR.Ref = undefined;
     if (invoc.args) |argsIndex| {
