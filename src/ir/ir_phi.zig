@@ -407,10 +407,31 @@ pub const Function = struct {
 
     pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
         // check if the register is in the current block
-        const regBB = try self.searchBBforREG(name, bb);
-        if (regBB != null) {
-            return Ref.fromReg(regBB.?);
+        if (self.bbs.get(bb).versionMap.contains(name)) {
+            return self.bbs.get(bb).versionMap.get(name).?;
         }
+
+        // do bfs to find the in the incoming blocks
+        var queue = std.ArrayList(BasicBlock.ID).init(self.alloc);
+        defer queue.deinit();
+        var visited = std.AutoHashMap(BasicBlock.ID, bool).init(self.alloc);
+        defer visited.deinit();
+        try queue.append(bb);
+        try visited.put(bb, true);
+        while (queue.items.len > 0) {
+            const current = queue.orderedRemove(0);
+            if (self.bbs.get(current).versionMap.contains(name)) {
+                return self.bbs.get(current).versionMap.get(name).?;
+            }
+            for (self.bbs.get(current).incomers.items) |incomer| {
+                if (visited.contains(incomer)) {
+                    continue;
+                }
+                try queue.append(incomer);
+                try visited.put(incomer, true);
+            }
+        }
+        // we have not found it, we have traversed the tree all the way up! oh no!
 
         // checks the function's parameters
         if (self.params.safeIndexOf(name)) |paramID| {
@@ -418,11 +439,23 @@ pub const Function = struct {
             return Ref.param(paramID, param.name, param.type);
         }
 
-        // we need this to look through the cfg also
-        const cfgReg = self.searchCFGforREG(name, bb) catch return NotFoundError.AllocFailed;
-        if (cfgReg != null) {
-            return Ref.fromReg(cfgReg.?);
+        // check if it is one of the defined items of the block
+        if (self.typesMap.contains(name)) {
+            // add it to the entry block
+            const declType = self.typesMap.get(name).?;
+            const alloca = Inst.alloca(declType);
+            const allocReg = try self.addNamedInst(Function.entryBBID, alloca, name, declType);
+            // add a load to the current block
+            const allocRef = IR.Ref.fromReg(allocReg);
+            const load = Inst.load(declType, allocRef);
+            const loadReg = try self.addNamedInst(bb, load, name, declType);
+            const loadRef = IR.Ref.fromReg(loadReg);
+            try self.bbs.get(Function.entryBBID).?.versionMap.put(name, loadRef);
+            return Ref.fromReg(loadReg);
         }
+
+        // okay she's nowhere...
+        // check if its a function?
 
         if (ir.funcs.items.safeIndexOf(name)) |funcID| {
             const func = ir.funcs.items.entry(funcID);
@@ -436,96 +469,14 @@ pub const Function = struct {
         for (ir.funcs.items.items) |func| {
             log.trace("func := {s}\n", .{ir.getIdent(func.name)});
         }
-
+        // check if its a global
+        // TODO: add it so that global vars are loaded on use, will have to do the same on store
         if (ir.globals.items.safeIndexOf(name)) |globalID| {
             const global = ir.globals.items.entry(globalID);
             return Ref.global(globalID, global.name, global.type);
         }
 
         return error.UnboundIdentifier;
-    }
-
-    // searches the CFG (upwards) for a register with the given name
-    pub fn searchCFGforREG(self: *Function, name: StrID, bb: BasicBlock.ID) !?Register {
-        // get the current block's incoming blocks
-        // create a queue of blocks to visit
-        var queue = std.ArrayList(BasicBlock.ID).init(self.alloc);
-        var visited = std.ArrayList(BasicBlock.ID).init(self.alloc);
-        const incomers = self.bbs.get(bb).incomers.items;
-
-        // pub const PhiEntry = struct { bb: Label, ref: Ref };
-        // need to create a list of phi entries, add self within the loop
-        // FIXME: above
-        var phiEntries = std.ArrayList(PhiEntry).init(self.alloc);
-        // FIXME this seems so wrong lol
-        try phiEntries.append(.{ .bb = bb, .ref = Ref.local(0, InternPool.NULL, .void) });
-
-        try visited.append(bb);
-        var queue_len: u64 = 0;
-        for (incomers) |incomer| {
-            queue_len += 1;
-            try queue.append(incomer);
-        }
-
-        var queue_start: u64 = 0;
-        // while there are still blocks to visit
-        while (queue_start <= queue_len) {
-            // get the current block
-            const current = queue.items[queue_start];
-            // for all items in visited , check if the current is there
-            var flag_v: bool = false;
-            for (visited.items) |v| {
-                if (v == current) {
-                    flag_v = true;
-                    break;
-                }
-            }
-            if (flag_v) {
-                queue_start += 1;
-                continue;
-            }
-            // mark it as visited
-            try visited.append(current);
-
-            // search the block for the register
-            const bbReg = try self.searchBBforREG(name, current);
-            if (bbReg != null) {
-                // we have found one, add it to the phiEntries list
-                // phiEntries.append(.{ .bb = current, .ref = Ref.fromReg(reg) });
-                return bbReg;
-            } else {
-                // add the parents to the queue
-                const p_in = self.bbs.get(current).incomers.items;
-                for (p_in) |in| {
-                    queue_len += 1;
-                    flag_v = false;
-                    for (visited.items) |v| {
-                        if (v == in) {
-                            flag_v = true;
-                            break;
-                        }
-                    }
-                    if (!flag_v) {
-                        try queue.append(in);
-                    }
-                }
-            }
-            queue_start += 1;
-        }
-        return null;
-    }
-
-    // finds the last definition of a register with the given name in the given basic block
-    pub fn searchBBforREG(self: *Function, name: StrID, bb: BasicBlock.ID) !?Register {
-        var result: ?Register = null;
-        for (self.bbs.get(bb).insts.items()) |instID| {
-            const inst = self.insts.get(instID);
-            const res = inst.res;
-            if (res.name == name) {
-                result = self.regs.get(res.i);
-            }
-        }
-        return result;
     }
 
     /// Gets the ID of a register created with an `alloca` in the entry
@@ -1794,6 +1745,7 @@ pub const BasicBlock = struct {
     outgoers: [2]?Label,
     defs: Set.Set(StrID),
     uses: Set.Set(StrID),
+    // a map of strID to the last definition within this block
     versionMap: std.AutoHashMap(StrID, Ref),
     // and ORDERED list of the instruction ids of the instructions in this block
     insts: List,
