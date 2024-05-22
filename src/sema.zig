@@ -817,7 +817,6 @@ fn getTypedIdentiferType(tid: Ast.Node, ast: *const Ast) !Ast.Type {
     _ = switch (ff) {
         .IntType => return Ast.Type.Int,
         .BoolType => return Ast.Type.Bool,
-        .Void => return Ast.Type.Void,
         .IntArrayType => return Ast.Type.IntArray,
         .StructType => {
             const ident = ast.get(ty.structIdentifier.?).*.token._range.getSubStrFromStr(ast.input);
@@ -825,6 +824,7 @@ fn getTypedIdentiferType(tid: Ast.Node, ast: *const Ast) !Ast.Type {
             const name = ident;
             return Ast.Type{ .Struct = name };
         },
+        .Void => return error.InvalidType,
         else => {
             utils.todo("this must be defined previously, do error proper", .{});
         },
