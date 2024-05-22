@@ -197,7 +197,7 @@ fn typecheckFunction(ast: *const Ast, func: Ast.Node) TypeError!void {
         var iter: ?usize = paraMNodes.firstParam;
         while (iter != null) {
             const param = ast.get(iter.?).*;
-            const ident = ast.get(param.kind.TypedIdentifier.ident).token._range.getSubStrFromStr(ast.input);
+            const ident = ast.getIdentValue(param.kind.TypedIdentifier.ident);
             // find if the ident is already in the list
             if (paramNames.contains(ident)) {
                 return error.FunctionParametersMustBeUnique;
@@ -665,7 +665,7 @@ fn typecheckFactor(ast: *const Ast, factorn: Ast.Node, fName: []const u8, return
 fn typecheckNewStruct(ast: *const Ast, newn: Ast.Node) TypeError!Ast.Type {
     // errdefer ast.printNodeLine(newn);
     const new = newn.kind.New;
-    const name = ast.get(new.ident).token._range.getSubStrFromStr(ast.input);
+    const name = ast.getIdentValue(new.ident);
     const structType = ast.getStructNodeFromName(name);
     if (structType == null) {
         utils.todo("Error on new type checking\n", .{});
@@ -799,8 +799,7 @@ fn getParamTypeByName(this: ?usize, ast: *const Ast, name: []const u8) !?Ast.Typ
     var iter: ?usize = self.firstParam;
     while (iter != null) {
         const param = ast.get(iter.?).*;
-        const identNode = ast.get(param.kind.TypedIdentifier.ident);
-        const ident = identNode.token._range.getSubStrFromStr(ast.input);
+        const ident = ast.getIdentValue(param.kind.TypedIdentifier.ident);
         if (std.mem.eql(u8, ident, name)) {
             return try getTypedIdentiferType(param, ast);
         }
@@ -819,7 +818,7 @@ fn getTypedIdentiferType(tid: Ast.Node, ast: *const Ast) !Ast.Type {
         .BoolType => return Ast.Type.Bool,
         .IntArrayType => return Ast.Type.IntArray,
         .StructType => {
-            const ident = ast.get(ty.structIdentifier.?).*.token._range.getSubStrFromStr(ast.input);
+            const ident = ast.getIdentValue(ty.structIdentifier.?);
             // identifier to name
             const name = ident;
             return Ast.Type{ .Struct = name };
