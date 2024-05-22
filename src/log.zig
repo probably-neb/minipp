@@ -20,7 +20,7 @@ const Msg = struct {
 
 const alloc = std.heap.page_allocator;
 
-var msgs = std.ArrayList(Msg).init(alloc);
+threadlocal var msgs = std.ArrayList(Msg).init(alloc);
 
 fn logInner(level: Level, comptime msg: []const u8, vars: anytype) void {
     const slice = std.fmt.allocPrint(alloc, msg, vars) catch |e| {
