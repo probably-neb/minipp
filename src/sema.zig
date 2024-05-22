@@ -35,11 +35,11 @@ const TypeError = error{
 
 pub fn ensureSemanticallyValid(ast: *const Ast) !void {
     // get all functions out of map
-    try ensureHasMain(ast);
+    try checkHasMain(ast);
     var funcsKeys = ast.functionMap.keyIterator();
     while (funcsKeys.next()) |key| {
         const func = ast.getFunctionFromName(key.*).?.*;
-        try allReturnPathsExist(ast, func.kind.Function);
+        try checkAllReturnPathsExist(ast, func.kind.Function);
         try typeCheckFunction(ast, func);
     }
 }
@@ -57,7 +57,7 @@ fn typeCheck(ast: *const Ast) !void {
 
 const MAIN: []const u8 = "main";
 
-fn ensureHasMain(ast: *const Ast) SemaError!void {
+fn checkHasMain(ast: *const Ast) SemaError!void {
     var funcs = ast.iterFuncs();
     while (funcs.next()) |func| {
         const name = func.getName(ast);
@@ -68,15 +68,16 @@ fn ensureHasMain(ast: *const Ast) SemaError!void {
     return error.NoMain;
 }
 
-fn allFunctionsHaveValidReturnPaths(ast: *const Ast) !void {
+/// Helper for testing where we only want to check that all functions have a return path
+fn checkAllFunctionsHaveValidReturnPaths(ast: *const Ast) !void {
     var funcs = ast.iterFuncs();
     while (funcs.next()) |func| {
-        try allReturnPathsExist(ast, func);
+        try checkAllReturnPathsExist(ast, func);
     }
     return;
 }
 
-fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
+fn checkAllReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
     // TODO:
     // decend the tree if we hit a conditional call a function that checks if the conditional
     // has a return statement, if both sides return then we are good.
@@ -115,7 +116,7 @@ fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
         if (ifNode.isIfElse(ast)) {
             const ifElseNode = ast.get(ifNode.block).kind.ConditionalIfElse;
 
-            returnsInThenCase = allReturnPathsExistInner(ast, ifElseNode.ifBlock, ifElseNode.elseBlock);
+            returnsInThenCase = checkAllReturnPathsExistInner(ast, ifElseNode.ifBlock, ifElseNode.elseBlock);
 
             // now default returnsInElse to false because there is an else block
             returnsInElseCase = false;
@@ -123,7 +124,7 @@ fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
             if (elseBlockRange) |range| {
                 const elseBlockStart = range[0];
                 const elseBlockEnd = range[1] + 1;
-                returnsInElseCase = allReturnPathsExistInner(ast, elseBlockStart, elseBlockEnd);
+                returnsInElseCase = checkAllReturnPathsExistInner(ast, elseBlockStart, elseBlockEnd);
                 fallthroughReq = !returnsInElseCase;
 
                 trailingNodesStart = elseBlockEnd + 1;
@@ -137,7 +138,7 @@ fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
             if (ifNodeBlockRange) |range| {
                 const ifNodeStart = range[0];
                 const ifNodeEnd = range[1] + 1;
-                returnsInThenCase = allReturnPathsExistInner(ast, ifNodeStart, ifNodeEnd);
+                returnsInThenCase = checkAllReturnPathsExistInner(ast, ifNodeStart, ifNodeEnd);
 
                 trailingNodesStart = ifNodeEnd;
             } else {
@@ -145,7 +146,7 @@ fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
                 trailingNodesStart = ifNode.block + 1;
             }
         }
-        const returnsInTrailingNodes = allReturnPathsExistInner(ast, trailingNodesStart, trailingNodesEnd);
+        const returnsInTrailingNodes = checkAllReturnPathsExistInner(ast, trailingNodesStart, trailingNodesEnd);
         // print the trailing nodes
         if (fallthroughReq) {
             result = returnsInTrailingNodes;
@@ -157,7 +158,7 @@ fn allReturnPathsExistInner(ast: *const Ast, start: usize, end: usize) bool {
     return result;
 }
 
-fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
+fn checkAllReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaError!void {
     errdefer log.err("Function: {s}\n", .{func.getName(ast)});
     const returnType = func.getReturnType(ast).?;
     const statementList = func.getBody(ast).getStatementList();
@@ -167,7 +168,7 @@ fn allReturnPathsExist(ast: *const Ast, func: Ast.Node.Kind.FunctionType) SemaEr
     const statList = statementList.?;
     const funcEnd = ast.findIndex(.FunctionEnd, statList).?;
 
-    const ok = allReturnPathsExistInner(ast, statList, funcEnd);
+    const ok = checkAllReturnPathsExistInner(ast, statList, funcEnd);
     if (!ok) {
         return SemaError.InvalidReturnPath;
     }
@@ -924,14 +925,14 @@ fn testMe(input: []const u8) !Ast {
 test "sema.no_main" {
     const source = "fun foo() void {return;}";
     const ast = try testMe(source);
-    try ting.expectError(SemaError.NoMain, ensureHasMain(&ast));
+    try ting.expectError(SemaError.NoMain, checkHasMain(&ast));
 }
 
 test "sema.has_main" {
     defer log.print();
     const source = "fun main() void {return;}";
     const ast = try testMe(source);
-    try ensureHasMain(&ast);
+    try checkHasMain(&ast);
 }
 
 test "sema.not_all_return_paths_void" {
@@ -945,26 +946,26 @@ test "sema.not_all_return_paths_void" {
 test "sema.all_return_paths_void" {
     const source = "fun main() void {if (true) {return;} else {return;} return;}";
     const ast = try testMe(source);
-    try allFunctionsHaveValidReturnPaths(&ast);
+    try checkAllFunctionsHaveValidReturnPaths(&ast);
 }
 
 test "sema.all_return_paths_bool" {
     const source = "fun main() bool {if (true) {return true;} else {return false;}}";
     const ast = try testMe(source);
-    try allFunctionsHaveValidReturnPaths(&ast);
+    try checkAllFunctionsHaveValidReturnPaths(&ast);
 }
 
 test "sema.returns_in_both_sides_of_if_else" {
     const source = "fun main() bool {if (true) {return true;} else {return false;}}";
     const ast = try testMe(source);
-    try allFunctionsHaveValidReturnPaths(&ast);
+    try checkAllFunctionsHaveValidReturnPaths(&ast);
 }
 
 test "sema.not_all_paths_return" {
     const source = "fun main() bool {if (true) {return true;}}";
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 1);
-    const result = allFunctionsHaveValidReturnPaths(&ast);
+    const result = checkAllFunctionsHaveValidReturnPaths(&ast);
     try ting.expectError(SemaError.InvalidReturnPath, result);
 }
 
@@ -972,7 +973,7 @@ test "sema.not_all_paths_return_in_nested_if" {
     const source = "fun main() bool {if (true) {if (false) {return true;} else {return false;}}}";
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
-    const result = allFunctionsHaveValidReturnPaths(&ast);
+    const result = checkAllFunctionsHaveValidReturnPaths(&ast);
     try ting.expectError(SemaError.InvalidReturnPath, result);
 }
 
@@ -980,7 +981,7 @@ test "sema.nested_fallthrough_fail_on_ifelse" {
     const source = "fun main() bool {if (true) {if (false) {if(true){return true;}} else {return false;}}}";
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
-    const result = allFunctionsHaveValidReturnPaths(&ast);
+    const result = checkAllFunctionsHaveValidReturnPaths(&ast);
     try ting.expectError(SemaError.InvalidReturnPath, result);
 }
 
@@ -988,7 +989,7 @@ test "sema.super_nested_fallthrough_fail_on_ifelse" {
     const source = "fun main() bool {if (true) {if (false) {if(true){if(false){return true;}} else {return false;}}}}";
     const ast = try testMe(source);
     try ting.expectEqual(ast.numNodes(.Return, 0), 2);
-    const result = allFunctionsHaveValidReturnPaths(&ast);
+    const result = checkAllFunctionsHaveValidReturnPaths(&ast);
     try ting.expectError(SemaError.InvalidReturnPath, result);
 }
 
