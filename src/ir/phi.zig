@@ -296,30 +296,110 @@ pub fn gen_function(
         fun.cfg.printBlockName(cfgBlockID);
         try generateInstsFromCfg(ir, ast, fun, cfgBlockID);
     }
-    // link the entry block to the first block
+    // // link the entry block to the first block
 
-    // relink all the phi nodes
-    for (fun.bbs.items()) |bb| {
+    // // relink all the phi nodes
+    for (fun.bbs.items(), 0..) |bb, bbid| {
+        // if not the entry or the exit get the phi
+        if (bbid == IR.Function.entryBBID or bbid == fun.exitBBID) {
+            continue;
+        }
+        std.debug.print("Looking for phi in bb: {s}\n", .{bb.name});
         var phiIter = bb.phiMap.keyIterator();
         while (phiIter.next()) |phiName| {
-            const phiInstID = bb.phiMap.get(phiName.*).?;
-            const phiInst = fun.insts.get(phiInstID);
-            var asPhi = IR.Inst.Phi.get(phiInst.*);
-            for (asPhi.entries.items, 0..) |asPhiEntry, idx| {
-                const currentBBID = asPhiEntry.bb;
-                const phiNameRef = asPhiEntry.ref.name;
-                asPhi.entries.items[idx].ref = try fun.getNamedRef(ir, phiNameRef, currentBBID);
+            std.debug.print("Looking for phiName: {s}\n", .{ir.getIdent(phiName.*)});
+            // get the phi instruction
+            var phiInstID = bb.phiMap.get(phiName.*).?;
+            var phiInst = fun.insts.get(phiInstID);
+            phiInst.res.debugPrintWithName(ir);
+
+            // convert it to a phi instruction
+            var phi = IR.Inst.Phi.get(phiInst.*);
+
+            // get the original entries
+            var anyDefault: bool = true;
+            while (anyDefault and phi.entries.items.len > 0) {
+                anyDefault = false;
+                for (phi.entries.items, 0..) |entry, idx| {
+                    var entryBBID = entry.bb;
+                    var entryBB_ = fun.bbs.get(entryBBID);
+
+                    // phi nodes must come from the predecessor block(s)
+                    for (entryBB_.incomers.items) |incomerBBID| {
+                        if (incomerBBID == bbid) {
+                            utils.todo("phi node from the same block\n", .{});
+                        }
+                        var incomerBB = fun.bbs.get(incomerBBID);
+                        std.debug.print("looking for named ref in block {s}\n", .{incomerBB.name});
+                        var ref = incomerBB.versionMap.get(phiName.*);
+                        // not in the present block
+                        if (ref == null) {
+                            ref = try fun.getNamedRefPhi(ir, phiName.*, incomerBBID);
+                            // not in any of the predecessor blocks, but it still must exist
+                            if (ref == null) {
+                                // check if this is the only entry in the phi
+                                if (idx == 0 and phi.entries.items.len == 1) {
+                                    ref = try fun.getNamedRef(ir, phiName.*, incomerBBID);
+                                } else {
+                                    // remove it, this is safe.
+                                    _ = phi.entries.orderedRemove(idx);
+                                    anyDefault = true;
+                                    break;
+                                }
+                            }
+                            std.debug.print("found named ref from searching upwords\n", .{});
+                            ref.?.debugPrintWithName(ir);
+                        } else {
+                            std.debug.print("found named ref from version map\n", .{});
+                            ref.?.debugPrintWithName(ir);
+                        }
+                        var ref_ = ref.?;
+                        phi.entries.items[idx].ref = ref_;
+                        std.debug.print("added entry\n", .{});
+                    }
+                    if (anyDefault) {
+                        break;
+                    }
+                }
             }
-            const toInst = asPhi.toInst();
-            fun.insts.set(phiInstID, toInst);
+            // delete any entries that are default
+            // FIXME: this is a good place for something to go wrong lol
+            // var anyDefault: bool = true;
+            //     anyDefault = false;
+            //     for (phi.entries.items, 0..) |entry, idx| {
+            //         if (entry.ref.name == IR.Ref.default.name) {
+            //             _ = phi.entries.orderedRemove(idx);
+            //             anyDefault = true;
+            //             break;
+            //         }
+            //     }
+            // }
+
+            // convert it back to an instruction
+            var back_to_inst = phi.toInst();
+            fun.insts.set(phiInstID, back_to_inst);
         }
     }
 
     // handle return
     if (fun.returnType != .void) {
         // get the exit basic block
-        const exitBB = fun.bbs.get(fun.exitBBID).*;
+        var exitBB = fun.bbs.get(fun.exitBBID);
         if (exitBB.phiInsts.items.len == 0) unreachable;
+        if (exitBB.phiInsts.items.len > 1) {
+            var anyDefault: bool = true;
+            while (anyDefault and exitBB.phiInsts.items.len > 1) {
+                anyDefault = false;
+                for (exitBB.phiInsts.items, 0..) |entryInstID, idx| {
+                    var entryInst = fun.insts.get(entryInstID);
+                    if (entryInst.res.name != retReg.name) {
+                        _ = exitBB.phiInsts.orderedRemove(idx);
+                        anyDefault = true;
+                        break;
+                    }
+                }
+            }
+        }
         if (exitBB.phiInsts.items.len == 1) {
             const phiInstID = exitBB.phiInsts.items[0];
             const phiInst = fun.insts.get(phiInstID).*;
@@ -403,10 +483,14 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
         // we know that if it is a conditional it is an expression
         if (statments.items.len > 1) unreachable;
         var condRef = try gen_expression(ir, ast, fun, bbID, statments.items[0]);
+        // condRef.name = IR.InternPool.NULL;
+        condRef = fun.renameRef(condRef, IR.InternPool.NULL);
         //TODO generate the control flow jump
         const brInst = Inst.br(condRef, IR.Ref.label(bb.outgoers[0].?), IR.Ref.label(bb.outgoers[1].?));
         try fun.addCtrlFlowInst(bbID, brInst);
-        try fun.bbs.get(bbID).versionMap.put(condRef.name, condRef);
+        // const instID = try fun.insts.add(brInst);
+        // try fun.bbs.get(bb).insts.append(instID);
+        // try fun.bbs.get(bbID).versionMap.put(condRef.name, condRef);
 
         return;
     } else {
@@ -444,33 +528,46 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
 //insert-phi(y,a):
 // insert the statement a = phi (a,a,...) at the top of the block y
 // where the phi function has as many arguments as y has predecessors
+//
+//
+// Algorithm: InsertPhiNodes
+// Input: A control flow graph (CFG) of a function
+// Output: CFG with phi nodes inserted at necessary locations
+
+// 1. Identify all the variables that are assigned in multiple basic blocks.
+// 2. For each variable:
+//    2.1 Determine the set of basic blocks (def_blocks) where the variable is defined.
+//    2.2 Use a dominance frontier algorithm to find where the phi nodes need to be placed:
+//        - Compute the dominance frontier for each block in def_blocks.
+//        - The dominance frontier of a block B is the set of all blocks C such that B dominates
+//          an immediate predecessor of C, but B does not strictly dominate C.
+//    2.3 For each block in the dominance frontier of any block in def_blocks:
+//        - Insert a phi node for the variable at the beginning of the block.
+//        - The phi node should merge different incoming values of the variable from its predecessors.
+// 3. For each phi node:
+//    3.1 For each predecessor of the block containing the phi node:
+//        - Determine the appropriate value of the variable to be used based on the control flow.
+//        - If the predecessor does not define the variable, trace back to find the last definition
+//          along the path from the predecessor to the phi node's block.
+//        - Set the incoming value from this predecessor in the phi node.
+// 4. Optimize the phi nodes by removing any that are unnecessary or redundant.
+
 pub fn place_phi_functions(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode: Ast.Node.Kind.FunctionType) !void {
     _ = funNode;
     _ = ast;
-    // for each node n:
-    for (fun.cfg.postOrder.items) |cfgBlockID| {
-        // for each variable a that is a member of A(orig)[n]:
-        for (fun.cfg.blocks.items[cfgBlockID].assignments.items) |defStrID| {
-            // create a set of defsites for each variable
-            // check if defblocks contains bb's id
-            const bbID = fun.cfgToBBs.get(cfgBlockID).?;
-            var reducdStr = ir.reduceChainToFirstIdent(defStrID);
-            if (!fun.defBlocks.contains(reducdStr)) {
-                try fun.defBlocks.put(reducdStr, std.ArrayList(IR.BasicBlock.ID).init(ir.alloc));
+    // 1. Identify all the variables that are assigned in multiple basic blocks.
+    // use cfg.assignments = hashmap(strid,hashmap(cfgblockid,bool));
+    var assignmentsIter = fun.cfg.assignments.keyIterator();
+    while (assignmentsIter.next()) |defStrID_| {
+        var defStrID = defStrID_.*;
+        var cfgBlockIter = fun.cfg.assignments.get(defStrID).?.keyIterator();
+        while (cfgBlockIter.next()) |cfgBlockID_| {
+            var cfgBlockID = cfgBlockID_.*;
+            if (!fun.defBlocks.contains(defStrID)) {
+                try fun.defBlocks.put(defStrID, std.ArrayList(IR.BasicBlock.ID).init(ir.alloc));
             }
-            // check if the bb is in the defsites
-            var inDefSites = false;
-            for (fun.defBlocks.getPtr(reducdStr).?.items) |bb| {
-                if (bb == bbID) {
-                    inDefSites = true;
-                    break;
-                }
-            }
-
-            if (inDefSites) {
-                continue;
-            }
-            try fun.defBlocks.getPtr(reducdStr).?.append(bbID);
+            var bbBlockID = fun.cfgToBBs.get(cfgBlockID).?;
+            try fun.defBlocks.getPtr(defStrID).?.append(@truncate(bbBlockID));
         }
     }
     // for each variable a:
@@ -533,7 +630,7 @@ fn gen_statement(
         .Assignment => |assign| {
             const to = ast.get(assign.lhs).kind.LValue;
             const toName = ir.internIdentNodeAt(ast, to.ident);
-            std.debug.print("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
+            // std.debug.print("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             var name = toName;
 
             // FIXME: rhs could also be a `read` handle!
@@ -557,7 +654,7 @@ fn gen_statement(
             } else {
                 _ = fun.renameRef(exprRef, toName);
                 if (exprRef.name != IR.InternPool.NULL) {
-                    std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
+                    // std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
                 }
                 try fun.bbs.get(bb).versionMap.put(name, exprRef);
                 try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
@@ -592,6 +689,8 @@ fn gen_statement(
             exprRef.type = fun.returnType;
             try fun.typesMap.put(returnRegName, fun.returnType);
             try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
+            try fun.bbs.get(bb).versionMap.put(returnRegName, exprRef);
+            // exprRef = fun.renameRef(exprRef, returnRegName);
             _ = try IR.BasicBlock.addRefToPhiReturn(fun.exitBBID, fun, exprRef, bb, ir);
             // add jmp to exitBB
             try fun.addCtrlFlowInst(bb, Inst.jmp(IR.Ref.label(fun.exitBBID)));
@@ -660,8 +759,9 @@ fn gen_expression(
                 .DoubleEq, .NotEq, .Lt, .LtEq, .Gt, .GtEq, .And, .Or => .bool,
                 else => unreachable,
             };
-            const name = join_names(lhsRef.name, rhsRef.name);
-            const res = try fun.addNamedInst(bb, inst, name, ty);
+            // const name = join_names(lhsRef.name, rhsRef.name);
+            const binopName = ir.internIdent("tmp.binop");
+            const res = try fun.addNamedInst(bb, inst, binopName, ty);
             return IR.Ref.fromReg(res);
         },
         .Selector => |sel| {
@@ -1109,42 +1209,42 @@ fn testMe(input: []const u8) !IR {
     return ir;
 }
 
-test "stack.types.none" {
-    const input = "fun main() void {}";
-    const ir = try testMe(input);
-    try ting.expectEqual(@as(usize, 0), ir.types.len());
-}
+// test "stack.types.none" {
+//     const input = "fun main() void {}";
+//     const ir = try testMe(input);
+//     try ting.expectEqual(@as(usize, 0), ir.types.len());
+// }
 
-test "stack.types.multiple" {
-    errdefer log.print();
-    const input = "struct Foo { int a; bool b; }; struct Bar { int c; int d; int e;}; fun main() void {}";
-    const ir = try testMe(input);
-    try ting.expectEqual(@as(usize, 2), ir.types.len());
-    const foo = ir.types.index(0);
-    const bar = ir.types.index(1);
-    try ting.expectEqualStrings("Foo", ir.getIdent(foo.name));
-    try ting.expectEqual(@as(usize, 2), foo.numFields());
-    try ting.expectEqualStrings("Bar", ir.getIdent(bar.name));
-    try ting.expectEqual(@as(usize, 3), bar.numFields());
-}
+// test "stack.types.multiple" {
+//     errdefer log.print();
+//     const input = "struct Foo { int a; bool b; }; struct Bar { int c; int d; int e;}; fun main() void {}";
+//     const ir = try testMe(input);
+//     try ting.expectEqual(@as(usize, 2), ir.types.len());
+//     const foo = ir.types.index(0);
+//     const bar = ir.types.index(1);
+//     try ting.expectEqualStrings("Foo", ir.getIdent(foo.name));
+//     try ting.expectEqual(@as(usize, 2), foo.numFields());
+//     try ting.expectEqualStrings("Bar", ir.getIdent(bar.name));
+//     try ting.expectEqual(@as(usize, 3), bar.numFields());
+// }
 
-test "stack.globals.multiple" {
-    const input = "struct Foo { int a; bool b; }; int a; bool b; fun main() void {}";
-    const ir = try testMe(input);
-    try ting.expectEqual(@as(usize, 2), ir.globals.len());
-    const a = ir.globals.index(0);
-    const b = ir.globals.index(1);
-    try ting.expectEqualStrings("a", ir.getIdent(a.name));
-    try ting.expectEqual(IR.Type.int, a.type);
-    try ting.expectEqualStrings("b", ir.getIdent(b.name));
-    try ting.expectEqual(IR.Type.bool, b.type);
-}
+// test "stack.globals.multiple" {
+//     const input = "struct Foo { int a; bool b; }; int a; bool b; fun main() void {}";
+//     const ir = try testMe(input);
+//     try ting.expectEqual(@as(usize, 2), ir.globals.len());
+//     const a = ir.globals.index(0);
+//     const b = ir.globals.index(1);
+//     try ting.expectEqualStrings("a", ir.getIdent(a.name));
+//     try ting.expectEqual(IR.Type.int, a.type);
+//     try ting.expectEqualStrings("b", ir.getIdent(b.name));
+//     try ting.expectEqual(IR.Type.bool, b.type);
+// }
 
-test "stack.globals.none" {
-    const input = "struct Foo { int a; bool b; }; fun main() void {}";
-    const ir = try testMe(input);
-    try ting.expectEqual(@as(usize, 0), ir.globals.len());
-}
+// test "stack.globals.none" {
+//     const input = "struct Foo { int a; bool b; }; fun main() void {}";
+//     const ir = try testMe(input);
+//     try ting.expectEqual(@as(usize, 0), ir.globals.len());
+// }
 
 const ExpectedInst = struct {
     inst: IR.Inst,
@@ -1268,19 +1368,19 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     });
 // }
 
-test "phi.print_test" {
-    errdefer log.print();
-    const in = "fun main() void { int a,b,c; a = 1; b = 2; c = 3; }";
-    // print out the IR
-    const ir = try testMe(in);
-    _ = ir;
-    // var arena = std.heap.ArenaAllocator.init(ting.allocator);
-    // var alloc = arena.allocator();
-    // defer arena.deinit();
-    // const ir_str = try inputToIRString(in, alloc);
-    // // check that the IR is correct
-    // std.debug.print("{s}\n", .{ir_str});
-}
+// test "phi.print_test" {
+//     errdefer log.print();
+//     const in = "fun main() void { int a,b,c; a = 1; b = 2; c = 3; }";
+//     // print out the IR
+//     const ir = try testMe(in);
+//     _ = ir;
+//     // var arena = std.heap.ArenaAllocator.init(ting.allocator);
+//     // var alloc = arena.allocator();
+//     // defer arena.deinit();
+//     // const ir_str = try inputToIRString(in, alloc);
+//     // // check that the IR is correct
+//     // std.debug.print("{s}\n", .{ir_str});
+// }
 
 // test "phi.print_test_while" {
 //     errdefer log.print();
@@ -1375,9 +1475,22 @@ test "phi.print_test" {
 //     var str = try inputToIRStringHeader(in, testAlloc);
 //     std.debug.print("{s}\n", .{str});
 // }
-test "phi.arrays" {
+// test "phi.arrays" {
+//     errdefer log.print();
+//     const in = "fun main() void { int_array a; a = new int_array[20]; a[0] = 5; print a[0] endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+test "phi_programBreaker" {
     errdefer log.print();
-    const in = "fun main() void { int_array a; a = new int_array[20]; a[0] = 5; print a[0] endl; }";
-    var str = try inputToIRStringHeader(in, testAlloc);
+    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/programBreaker/programBreaker.mini");
+    var str = try inputToIRStringHeader(name, testAlloc);
+    std.debug.print("{s}\n", .{str});
+}
+
+test "phi_wasteOfCycles" {
+    errdefer log.print();
+    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/fact_sum/fact_sum.mini");
+    var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }

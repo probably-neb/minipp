@@ -434,6 +434,77 @@ pub const Function = struct {
         return namedRef;
     }
 
+    pub fn getNamedRefPhi(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!?Ref {
+        if (name != IR.InternPool.NULL) {
+            std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
+        } else {
+            std.debug.print("getting ref for NULL\n", .{});
+        }
+        // check if the register is in the current block
+        if (self.bbs.get(bb).versionMap.contains(name)) {
+            return self.bbs.get(bb).versionMap.get(name).?;
+        }
+
+        // do bfs to find the in the incoming blocks
+        var queue = std.ArrayList(BasicBlock.ID).init(self.alloc);
+        defer queue.deinit();
+        var visited = std.AutoHashMap(BasicBlock.ID, bool).init(self.alloc);
+        defer visited.deinit();
+        try queue.append(bb);
+        try visited.put(bb, true);
+        while (queue.items.len > 0) {
+            const current = queue.orderedRemove(0);
+            // std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
+            if (self.bbs.get(current).versionMap.contains(name)) {
+                // std.debug.print("found in block {d}\n", .{current});
+                return self.bbs.get(current).versionMap.get(name).?;
+            }
+            for (self.bbs.get(current).incomers.items) |incomer| {
+                if (visited.contains(incomer)) {
+                    continue;
+                }
+                try queue.append(incomer);
+                try visited.put(incomer, true);
+            }
+        }
+        // we have not found it, we have traversed the tree all the way up! oh no!
+
+        // checks the function's parameters
+        if (self.params.safeIndexOf(name)) |paramID| {
+            const param = self.params.entry(paramID);
+            return Ref.param(paramID, param.name, param.type);
+        }
+
+        // check if it is one of the defined items of the block
+        if (self.typesMap.contains(name)) {
+            return null;
+        }
+
+        // okay she's nowhere...
+        // check if its a function?
+
+        if (ir.funcs.items.safeIndexOf(name)) |funcID| {
+            const func = ir.funcs.items.entry(funcID);
+            return Ref.global(funcID, func.name, func.returnType);
+        }
+
+        log.trace("fun.name not found := {s}\n", .{
+            ir.getIdent(name),
+        });
+
+        for (ir.funcs.items.items) |func| {
+            log.trace("func := {s}\n", .{ir.getIdent(func.name)});
+        }
+        // check if its a global
+        // TODO: add it so that global vars are loaded on use, will have to do the same on store
+        if (ir.globals.items.safeIndexOf(name)) |globalID| {
+            const global = ir.globals.items.entry(globalID);
+            return Ref.global(globalID, global.name, global.type);
+        }
+
+        return error.UnboundIdentifier;
+    }
+
     pub fn getNamedRefInner(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
         if (name != IR.InternPool.NULL) {
             std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
@@ -454,9 +525,9 @@ pub const Function = struct {
         try visited.put(bb, true);
         while (queue.items.len > 0) {
             const current = queue.orderedRemove(0);
-            std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
+            // std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
             if (self.bbs.get(current).versionMap.contains(name)) {
-                std.debug.print("found in block {d}\n", .{current});
+                // std.debug.print("found in block {d}\n", .{current});
                 return self.bbs.get(current).versionMap.get(name).?;
             }
             for (self.bbs.get(current).incomers.items) |incomer| {
@@ -872,7 +943,7 @@ pub const CfgFunction = struct {
     params: std.ArrayList(StrID),
     decls: std.ArrayList(StrID),
     declsUsed: std.AutoHashMap(StrID, bool),
-    assignments: std.AutoHashMap(StrID, bool),
+    assignments: std.AutoHashMap(StrID, std.AutoHashMap(CfgBlock.ID_t, bool)),
     paramsUsed: std.ArrayList(StrID),
     statements: std.ArrayList(Ast.Node),
     funNode: Ast.Node.Kind.FunctionType,
@@ -931,6 +1002,12 @@ pub const CfgFunction = struct {
             }
         }
 
+        // // std.debug.print("after init Dominators\n", .{});
+        // for (self.postOrder.items) |block| {
+        //     std.debug.print("block = {any}, ", .{block});
+        //     result.items[block].print();
+        //     std.debug.print("\n", .{});
+        // }
         // while changes in any Dom(n)
         //     for each n in N - {n0}:
         //         Dom(n) = {n} union with intersection over Dom(p) for all p in pred(n)
@@ -950,9 +1027,12 @@ pub const CfgFunction = struct {
                     var blockDom = result.items[block];
                     var intersection = try blockDom.intersectionOf(self.alloc, predDom);
                     _ = try intersection.add(self.alloc, block);
-                    // std.debug.print("block = {any}, pred = {any}\n", .{ block, pred });
+                    // std.debug.print("\nblock = {any}, pred = {any}\n", .{ block, pred });
+                    // std.debug.print("predDom\n", .{});
                     // predDom.print();
+                    // std.debug.print("blockDm\n", .{});
                     // blockDom.print();
+                    // std.debug.print("intersection\n", .{});
                     // intersection.print();
                     // std.debug.print("\n", .{});
                     var changedInter = intersection.eql(blockDom);
@@ -967,10 +1047,11 @@ pub const CfgFunction = struct {
             }
         }
         self.dominators = result;
+        // // std.debug.print("Dominators\n", .{});
         // for (self.postOrder.items) |block| {
-        //     // std.debug.print("block = {any}, ", .{block});
-        //     // self.dominators.items[block].print();
-        //     // std.debug.print("\n", .{});
+        //     std.debug.print("block = {any}, ", .{block});
+        //     self.dominators.items[block].print();
+        //     std.debug.print("\n", .{});
         // }
     }
 
@@ -1021,7 +1102,7 @@ pub const CfgFunction = struct {
                 }
 
                 if (doms_all) {
-                    // std.debug.print("block = {d}, idom = {d}\n", .{ block, d.key_ptr.* });
+                    // std.debug.print("idom adding block = {d}, idom = {d}\n", .{ block, d.key_ptr.* });
 
                     _ = try self.idoms.put(block, d.key_ptr.*);
                     break;
@@ -1052,6 +1133,25 @@ pub const CfgFunction = struct {
             }
         }
         return children;
+    }
+
+    pub fn printChildren(self: *CfgFunction, node: CfgBlock.ID_t) void {
+        // print block name
+        self.printBlockName(node);
+        const children = self.domChildren.get(node);
+        if (children == null) {
+            return;
+        }
+        for (children.?.items) |child| {
+            std.debug.print("{d} ", .{child});
+        }
+        std.debug.print("\n", .{});
+    }
+
+    pub fn printallChildren(self: *CfgFunction) void {
+        for (self.postOrder.items) |node| {
+            self.printChildren(node);
+        }
     }
 
     pub fn generateDomChildren(self: *CfgFunction) !void {
@@ -1133,7 +1233,7 @@ pub const CfgFunction = struct {
             .domFront = std.AutoHashMap(CfgBlock.ID_t, std.ArrayList(CfgBlock.ID_t)).init(alloc),
             .dominators = std.ArrayList(Set.Set(CfgBlock.ID_t)).init(alloc),
             .postOrderMap = std.AutoHashMap(CfgBlock.ID_t, usize).init(alloc),
-            .assignments = std.AutoHashMap(StrID, bool).init(alloc),
+            .assignments = std.AutoHashMap(StrID, std.AutoHashMap(CfgBlock.ID_t, bool)).init(alloc),
             .funNode = undefined,
             .exitID = 1,
             .alloc = alloc,
@@ -1418,8 +1518,20 @@ pub const CfgFunction = struct {
         try self.generateStatements(ast, ir, statIter, the_edge);
         try self.reversePostOrderComp();
         try self.genDominance();
-        // try self.printDomFront();
-        // self.printOutFunAsDot(ir);
+        // self.printallChildren();
+        try self.printDomFront();
+        self.printOutFunAsDot(ir);
+
+        // for every blocks's assignments add to the functions assignemnts
+        for (self.postOrder.items) |blockID| {
+            for (self.blocks.items[blockID].assignments.items) |ident| {
+                if (!self.assignments.contains(ident)) {
+                    // init the assignments for the ident
+                    try self.assignments.put(ident, std.AutoHashMap(CfgBlock.ID_t, bool).init(self.alloc));
+                }
+                try self.assignments.getPtr(ident).?.put(blockID, true);
+            }
+        }
         return self;
     }
 
@@ -1431,7 +1543,9 @@ pub const CfgFunction = struct {
                 // get the edge
                 var outEdge = self.edges.items[out.?];
                 if (outEdge.dest == self.exitID) {
-                    continue;
+                    if (self.blocks.items[blockID].incomers.items.len == 0 and blockID != 0) {} else {
+                        continue;
+                    }
                 }
 
                 try outIDArr.append(self.edges.items[out.?].dest);
@@ -1441,8 +1555,10 @@ pub const CfgFunction = struct {
         }
         for (outIDArr.items) |outID| {
             if (outID == self.exitID) {
-                // self.blocks.items[blockID].outgoers[i] = outID;
-                continue;
+                // check if we have no incomers, check if we are not block 0
+                if (self.blocks.items[blockID].incomers.items.len == 0 and blockID != 0) {} else {
+                    continue;
+                }
             }
             var succIncomers = self.blocks.items[outID].incomers;
             var newSuccIncomers = std.ArrayList(Edge.ID_t).init(self.alloc);
@@ -1498,9 +1614,9 @@ pub const CfgFunction = struct {
                 try self.blocks.items[cBlock].addIdentsFromStatement(ir, ast, c_stat);
                 // add the statement to the block
                 try self.blocks.items[cBlock].statements.append(c_stat);
-                std.debug.print("items in block ", .{});
+                // std.debug.print("items in block ", .{});
                 self.printBlockName(cBlock);
-                std.debug.print("{any}\n", .{self.blocks.items[cBlock].statements.items});
+                // std.debug.print("{any}\n", .{self.blocks.items[cBlock].statements.items});
                 continue;
             }
 
@@ -1799,7 +1915,7 @@ pub const BasicBlock = struct {
     phiMap: std.AutoHashMap(StrID, Function.InstID),
 
     pub fn addRefToPhi(self: BasicBlock.ID, fun: *Function, ref: Ref, bbIn: BasicBlock.ID, name: StrID) !Function.InstID {
-        std.debug.print("ref.i {any}\n", .{ref.i});
+        // std.debug.print("ref.i {any}\n", .{ref.i});
         const bb = fun.bbs.get(self);
         var phiInstID = bb.getPhi(name);
         if (phiInstID == null) {
@@ -1807,9 +1923,9 @@ pub const BasicBlock = struct {
         }
         const phiInst = fun.insts.get(phiInstID.?);
         var phi = IR.Inst.Phi.get(phiInst.*);
-        std.debug.print("ref.i {any}\n", .{ref.i});
+        // std.debug.print("ref.i {any}\n", .{ref.i});
         try phi.entries.append(IR.PhiEntry{ .ref = ref, .bb = bbIn });
-        std.debug.print("entries: {any}\n", .{phi.entries.items});
+        // std.debug.print("entries: {any}\n", .{phi.entries.items});
         var updatedPhiInst = phi.toInst();
         fun.insts.set(phiInstID.?, updatedPhiInst);
         return phiInstID.?;
@@ -1817,7 +1933,7 @@ pub const BasicBlock = struct {
 
     pub fn addRefToPhiReturn(self: BasicBlock.ID, fun: *Function, ref: Ref, bbIn: BasicBlock.ID, ir: *IR) !Function.InstID {
         var name = ir.internIdent("return_reg");
-        std.debug.print("ref.i {any}\n", .{ref.i});
+        // std.debug.print("ref.i {any}\n", .{ref.i});
         const bb = fun.bbs.get(self);
         var phiInstID = bb.getPhi(name);
         if (phiInstID == null) {
@@ -1825,9 +1941,9 @@ pub const BasicBlock = struct {
         }
         const phiInst = fun.insts.get(phiInstID.?);
         var phi = IR.Inst.Phi.get(phiInst.*);
-        std.debug.print("ref.i {any}\n", .{ref.i});
+        // std.debug.print("ref.i {any}\n", .{ref.i});
         try phi.entries.append(IR.PhiEntry{ .ref = ref, .bb = bbIn });
-        std.debug.print("entries: {any}\n", .{phi.entries.items});
+        // std.debug.print("entries: {any}\n", .{phi.entries.items});
         var updatedPhiInst = phi.toInst();
         fun.insts.set(phiInstID.?, updatedPhiInst);
         return phiInstID.?;
@@ -1904,6 +2020,7 @@ pub const BasicBlock = struct {
         return instID;
     }
 
+    // ads aphi node with %name = phi [%undef, %pred block]
     pub fn addPhiWithPreds(bbID: BasicBlock.ID, fun: *Function, ident: StrID) !Function.InstID {
         const bb = fun.bbs.get(bbID);
         const currentPhiInstID = try BasicBlock.addEmptyPhiOrClear(bbID, fun, ident);
@@ -1911,16 +2028,16 @@ pub const BasicBlock = struct {
         var bbPhi = IR.Inst.Phi.get(bbPhiInst);
 
         for (bb.incomers.items) |it| {
-            const predBB = fun.bbs.get(it);
-            const predInst = predBB.versionMap.get(ident);
+            // const predBB = fun.bbs.get(it);
+            // const predInst = predBB.versionMap.get(ident);
             // if there is no phi for the pred block then continue
-            if (predInst == null) {
-                var phiEntryTemp = IR.PhiEntry{ .ref = IR.Ref.default, .bb = it };
-                phiEntryTemp.ref.name = ident;
-                try bbPhi.entries.append(phiEntryTemp);
-                continue;
-            }
-            try bbPhi.entries.append(IR.PhiEntry{ .ref = predInst.?, .bb = it });
+            // if (predInst == null) {
+            var phiEntryTemp = IR.PhiEntry{ .ref = IR.Ref.default, .bb = it };
+            phiEntryTemp.ref.name = ident;
+            try bbPhi.entries.append(phiEntryTemp);
+            // continue;
+            // }
+            // try bbPhi.entries.append(IR.PhiEntry{ .ref = predInst.?, .bb = it });
         }
 
         const phiInst = bbPhi.toInst();
@@ -2440,6 +2557,20 @@ pub const Type = union(enum) {
         };
     }
 
+    pub fn debugPrint(self: Type) void {
+        switch (self) {
+            .void => std.debug.print("Type: void\n", .{}),
+            .int => std.debug.print("Type: int\n", .{}),
+            .bool => std.debug.print("Type: bool\n", .{}),
+            .strct => |structID| std.debug.print("Type: struct, StructID: {}\n", .{structID}),
+            .i8 => std.debug.print("Type: i8\n", .{}),
+            .i32 => std.debug.print("Type: i32\n", .{}),
+            .int_arr => std.debug.print("Type: int_arr\n", .{}),
+            .arr => |arrType| std.debug.print("Type: arr, Element Type: {}, Length: {}\n", .{ arrType.type, arrType.len }),
+            .null_ => std.debug.print("Type: null\n", .{}),
+        }
+    }
+
     /// WARN: returns sizeof(void*) for structs
     /// not the actual size of the struct
     pub fn sizeof(self: Type) u32 {
@@ -2502,6 +2633,45 @@ pub const Ref = struct {
     /// FIXME: add deadbeef here too
     pub const default = Ref.local(69420, InternPool.NULL, .void);
 
+    pub fn debugPrintWithName(self: Ref, ir: *IR) void {
+        std.debug.print("Ref: {any}, Kind: ", .{self.i});
+        self.kind.debugPrint();
+        std.debug.print(", Type: ", .{});
+        self.type.debugPrint();
+        std.debug.print("\n", .{});
+        if (self.name != InternPool.NULL) {
+            const name = ir.getIdent(self.name);
+            std.debug.print("Name: {s}\n", .{name});
+        } else {
+            std.debug.print("Name: NULL\n", .{});
+        }
+        // id
+        if (self.i != 69420) {
+            std.debug.print("ID: {any}\n", .{self.i});
+        } else {
+            std.debug.print("ID: 69420\n", .{});
+        }
+    }
+    pub fn debugPrint(self: Ref) void {
+        std.debug.print("Ref: {any}, Kind: ", .{self.i});
+        self.kind.debugPrint();
+        std.debug.print(", Type: ", .{});
+        self.type.debugPrint();
+        std.debug.print("\n", .{});
+        // name
+        if (self.name != InternPool.NULL) {
+            std.debug.print("Name: {any}\n", .{self.name});
+        } else {
+            std.debug.print("Name: NULL\n", .{});
+        }
+        // id
+        if (self.i != 69420) {
+            std.debug.print("ID: {any}\n", .{self.i});
+        } else {
+            std.debug.print("ID: 69420\n", .{});
+        }
+    }
+
     pub const Kind = enum {
         local,
         global,
@@ -2514,6 +2684,16 @@ pub const Ref = struct {
         // this makes things simpler trust me bro
         immediate_u32,
         param,
+        pub fn debugPrint(self: Kind) void {
+            switch (self) {
+                .local => std.debug.print("local", .{}),
+                .global => std.debug.print("global", .{}),
+                .label => std.debug.print("label", .{}),
+                .immediate => std.debug.print("immediate", .{}),
+                .immediate_u32 => std.debug.print("immediate_u32", .{}),
+                .param => std.debug.print("param", .{}),
+            }
+        }
     };
 
     pub inline fn fromReg(reg: Register) Ref {
