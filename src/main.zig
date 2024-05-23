@@ -1,6 +1,7 @@
 const std = @import("std");
 const log = @import("log.zig");
 const utils = @import("utils.zig");
+const dot = @import("dot.zig");
 
 const Flag = struct {
     long: []const u8,
@@ -10,7 +11,7 @@ const FLAGS_MAP = std.ComptimeStringMap(ArgKind, .{
     .{ "-stack", .{ .mode = .stack } },
     .{ "-ssa", .{ .mode = .ssa } },
     .{ "-opt", .{ .mode = .opt } },
-    .{ "-dot", .{ .mode = .dot } },
+    .{ "-dot", .dotfile },
     .{ "-o", .outfile },
     .{ "-out", .outfile },
     .{ "-i", .infile },
@@ -22,31 +23,33 @@ const MAX_FILE_SIZE: usize = 2 << 30; // 2 GB
 
 const ArgKind = union(enum) {
     mode: Args.Mode,
+    dotfile,
     outfile,
     infile,
 };
 
 const Args = struct {
     mode: Mode,
+    dotfile: ?[]const u8,
     outfile: []const u8,
     infile: []const u8,
+
+    pub const DEFAULT = Args{
+        .mode = Mode.stack,
+        .dotfile = null,
+        .outfile = "",
+        .infile = "",
+    };
 
     pub const Mode = enum {
         stack,
         ssa,
         opt,
-        dot,
     };
 };
 
-const DEFAULT_ARGS = Args{
-    .mode = Args.Mode.stack,
-    .outfile = "",
-    .infile = "",
-};
-
 fn parse_args() !Args {
-    var args: Args = DEFAULT_ARGS;
+    var args: Args = Args.DEFAULT;
     var argsIter = std.process.args();
     // skip program name
     _ = argsIter.skip();
@@ -80,6 +83,13 @@ fn parse_args() !Args {
                 };
                 args.infile = infile;
             },
+            .dotfile => {
+                const dotfile = argsIter.next() orelse {
+                    log.err("Expected an argument after {s}\n", .{arg});
+                    return error.ExpectedArg;
+                };
+                args.dotfile = dotfile;
+            },
         }
     }
     if (args.infile.len == 0) {
@@ -96,7 +106,7 @@ pub fn main() !void {
     try run(args.mode, args.infile, args.outfile);
 }
 
-pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !void {
+pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8, dotfilePath: ?[]const u8) !void {
     const alloc = std.heap.page_allocator;
 
     var backendArena = std.heap.ArenaAllocator.init(alloc);
@@ -127,7 +137,6 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
                     .header = true,
                 });
             },
-            .dot => utils.todo("Dot generation", .{}),
             // TODO: should probably break sooner than this instead
             // of blue-balling the user
             .ssa => utils.todo("SSA IR generation", .{}),
@@ -141,5 +150,11 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
     } else {
         try std.fs.cwd().writeFile(outfilePath, ir);
         // TODO: run clang if user asks for it
+    }
+
+    if (dotfilePath) |path| {
+        log.info("Writing dot to {s}\n", .{path});
+        const dot_str = try dot.generate(&ir);
+        try std.fs.cwd().writeFile(path, dot_str);
     }
 }
