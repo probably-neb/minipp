@@ -17,7 +17,7 @@ make path exe="a.out": build
 ensure-test-suite:
     git submodule update --init --recursive
 
-run-suite: ensure-test-suite
+run-suite *BUILD_ARGS: ensure-test-suite
     #!/usr/bin/env bash
     set -uo pipefail
 
@@ -26,7 +26,7 @@ run-suite: ensure-test-suite
     NC='\033[0m'
     
     for test in $(ls {{TEST_SUITE}}); do
-        just run-suite-test $test > /dev/null 2>&1
+        just run-suite-test $test {{BUILD_ARGS}} > /dev/null 2>&1
         if [ $? -eq 0 ]; then
           echo -e "${GREEN}SUCCESS${NC} - ${test}"
         else
@@ -34,7 +34,7 @@ run-suite: ensure-test-suite
         fi
     done
 
-run-suite-test name: ensure-test-suite
+run-suite-test name *BUILD_ARGS: ensure-test-suite
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -46,7 +46,7 @@ run-suite-test name: ensure-test-suite
 
     echo -e "Running Test Suite Test: ${YELLOW}{{name}}${NC}"
     echo -e "${BLUE}Building Test Suite Test...${NC}"
-    just build-suite-test {{name}}
+    just build-suite-test {{name}} {{BUILD_ARGS}}
     echo -e "${GREEN}BUILD SUCCESS${NC}"
 
     dir="{{TEST_SUITE}}/{{name}}"
@@ -77,13 +77,13 @@ run-suite-test name: ensure-test-suite
       echo -e "${GREEN}SUCCESS${NC}"
     fi
 
-build-suite-test name: build
+build-suite-test name *BUILD_ARGS: build
     #!/usr/bin/env bash
     set -euxo pipefail
     name="{{name}}"
     name="${name#array_}"
     dir="{{TEST_SUITE}}/{{name}}"
-    {{minipp}} -i "$dir/${name}.mini" -o "$dir/{{name}}.ll"
+    {{minipp}} -i "$dir/${name}.mini" -o "$dir/{{name}}.ll" {{BUILD_ARGS}}
     clang "$dir/{{name}}.ll" -o "$dir/{{name}}"
 
 nix:

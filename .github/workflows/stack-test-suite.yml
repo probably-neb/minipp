@@ -1,0 +1,167 @@
+name: STACK TEST SUITE
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+    branches:
+      - '*'
+# cancel in progress checks when a push occurs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  Fibonacci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test Fibonacci
+        shell: bash
+  array_sort:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test array_sort
+        shell: bash
+  array_sum:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test array_sum
+        shell: bash
+  BenchMarkishTopics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test BenchMarkishTopics
+        shell: bash
+  bert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test bert
+        shell: bash
+  biggest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test biggest
+        shell: bash
+  binaryConverter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test binaryConverter
+        shell: bash
+  brett:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test brett
+        shell: bash
+  creativeBenchMarkName:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test creativeBenchMarkName
+        shell: bash
+  fact_sum:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test fact_sum
+        shell: bash
+  GeneralFunctAndOptimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test GeneralFunctAndOptimize
+        shell: bash
+  hailstone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test hailstone
+        shell: bash
+  hanoi_benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test hanoi_benchmark
+        shell: bash
+  killerBubbles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test killerBubbles
+        shell: bash
+  mile1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test mile1
+        shell: bash
+  mixed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test mixed
+        shell: bash
+  OptimizationBenchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test OptimizationBenchmark
+        shell: bash
+  primes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test primes
+        shell: bash
+  programBreaker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test programBreaker
+        shell: bash
+  stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test stats
+        shell: bash
+  TicTac:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test TicTac
+        shell: bash
+  wasteOfCycles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/test-suite-setup
+      - run: just run-suite-test wasteOfCycles
+        shell: bash

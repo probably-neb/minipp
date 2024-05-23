@@ -8,7 +8,7 @@ const Flag = struct {
 
 const FLAGS_MAP = std.ComptimeStringMap(ArgKind, .{
     .{ "-stack", .{ .mode = .stack } },
-    .{ "-ssa", .{ .mode = .ssa } },
+    .{ "-phi", .{ .mode = .phi } },
     .{ "-opt", .{ .mode = .opt } },
     .{ "-dot", .dotfile },
     .{ "-o", .outfile },
@@ -42,7 +42,7 @@ const Args = struct {
 
     pub const Mode = enum {
         stack,
-        ssa,
+        phi,
         opt,
     };
 };
@@ -136,9 +136,15 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8, dot
                     .header = true,
                 });
             },
+            .phi => {
+                const phi = try @import("ir/phi.zig").generate(backendAlloc, &ast);
+                break :ir try phi.stringify_cfg(backendAlloc, .{
+                    .header = true,
+                });
+            },
+            .dot => utils.todo("Dot generation", .{}),
             // TODO: should probably break sooner than this instead
             // of blue-balling the user
-            .ssa => utils.todo("SSA IR generation", .{}),
             .opt => utils.todo("Optimization", .{}),
         }
     };
