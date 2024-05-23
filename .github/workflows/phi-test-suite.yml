@@ -1,4 +1,4 @@
-name: Test Suite
+name: PHI TEST SUITE
 on:
   push:
     branches:
@@ -8,7 +8,7 @@ on:
       - '*'
 # cancel in progress checks when a push occurs
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: true
 jobs:
   Fibonacci:
@@ -16,152 +16,152 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test Fibonacci
+      - run: just run-suite-test Fibonacci -phi
         shell: bash
   array_sort:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test array_sort
+      - run: just run-suite-test array_sort -phi
         shell: bash
   array_sum:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test array_sum
+      - run: just run-suite-test array_sum -phi
         shell: bash
   BenchMarkishTopics:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test BenchMarkishTopics
+      - run: just run-suite-test BenchMarkishTopics -phi
         shell: bash
   bert:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test bert
+      - run: just run-suite-test bert -phi
         shell: bash
   biggest:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test biggest
+      - run: just run-suite-test biggest -phi
         shell: bash
   binaryConverter:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test binaryConverter
+      - run: just run-suite-test binaryConverter -phi
         shell: bash
   brett:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test brett
+      - run: just run-suite-test brett -phi
         shell: bash
   creativeBenchMarkName:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test creativeBenchMarkName
+      - run: just run-suite-test creativeBenchMarkName -phi
         shell: bash
   fact_sum:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test fact_sum
+      - run: just run-suite-test fact_sum -phi
         shell: bash
   GeneralFunctAndOptimize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test GeneralFunctAndOptimize
+      - run: just run-suite-test GeneralFunctAndOptimize -phi
         shell: bash
   hailstone:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test hailstone
+      - run: just run-suite-test hailstone -phi
         shell: bash
   hanoi_benchmark:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test hanoi_benchmark
+      - run: just run-suite-test hanoi_benchmark -phi
         shell: bash
   killerBubbles:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test killerBubbles
+      - run: just run-suite-test killerBubbles -phi
         shell: bash
   mile1:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test mile1
+      - run: just run-suite-test mile1 -phi
         shell: bash
   mixed:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test mixed
+      - run: just run-suite-test mixed -phi
         shell: bash
   OptimizationBenchmark:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test OptimizationBenchmark
+      - run: just run-suite-test OptimizationBenchmark -phi
         shell: bash
   primes:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test primes
+      - run: just run-suite-test primes -phi
         shell: bash
   programBreaker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test programBreaker
+      - run: just run-suite-test programBreaker -phi
         shell: bash
   stats:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test stats
+      - run: just run-suite-test stats -phi
         shell: bash
   TicTac:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test TicTac
+      - run: just run-suite-test TicTac -phi
         shell: bash
   wasteOfCycles:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - uses: ./.github/actions/test-suite-setup
-      - run: just run-suite-test wasteOfCycles
+      - run: just run-suite-test wasteOfCycles -phi
         shell: bash

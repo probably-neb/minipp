@@ -8,7 +8,7 @@ const Flag = struct {
 
 const FLAGS_MAP = std.ComptimeStringMap(ArgKind, .{
     .{ "-stack", .{ .mode = .stack } },
-    .{ "-ssa", .{ .mode = .ssa } },
+    .{ "-phi", .{ .mode = .phi } },
     .{ "-opt", .{ .mode = .opt } },
     .{ "-dot", .{ .mode = .dot } },
     .{ "-o", .outfile },
@@ -33,7 +33,7 @@ const Args = struct {
 
     pub const Mode = enum {
         stack,
-        ssa,
+        phi,
         opt,
         dot,
     };
@@ -115,7 +115,7 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
             const tokens = try @import("lexer.zig").Lexer.tokenizeFromStr(input, frontendAlloc);
             const parser = try @import("parser.zig").Parser.parseTokens(tokens, input, frontendAlloc);
             const ast = try @import("ast.zig").initFromParser(parser);
-            try @import("sema.zig").typeCheck(&ast);
+            try @import("sema.zig").ensureSemanticallyValid(&ast);
 
             break :ast ast;
         };
@@ -127,10 +127,15 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8) !vo
                     .header = true,
                 });
             },
+            .phi => {
+                const phi = try @import("ir/phi.zig").generate(backendAlloc, &ast);
+                break :ir try phi.stringify_cfg(backendAlloc, .{
+                    .header = true,
+                });
+            },
             .dot => utils.todo("Dot generation", .{}),
             // TODO: should probably break sooner than this instead
             // of blue-balling the user
-            .ssa => utils.todo("SSA IR generation", .{}),
             .opt => utils.todo("Optimization", .{}),
         }
     };

@@ -20,7 +20,7 @@ const Msg = struct {
 
 const alloc = std.heap.page_allocator;
 
-var msgs = std.ArrayList(Msg).init(alloc);
+threadlocal var msgs = std.ArrayList(Msg).init(alloc);
 
 fn logInner(level: Level, comptime msg: []const u8, vars: anytype) void {
     const slice = std.fmt.allocPrint(alloc, msg, vars) catch |e| {
@@ -55,23 +55,40 @@ const YELLOW = "\x1b[0;33m";
 const BLUE = "\x1b[0;34m";
 const NC = "\x1b[0m";
 
-/// prints all messages in the log
-pub fn print() void {
+fn print_inner(prefix: []const u8) void {
     for (msgs.items) |msg| {
         switch (msg.level) {
-            .Info => std.debug.print("{s}INFO{s}  : {s}", .{ GREEN, NC, msg.msg }),
-            .Err => std.debug.print("{s}ERROR{s} : {s}", .{ RED, NC, msg.msg }),
-            .Warn => std.debug.print("{s}WARN{s}  : {s}", .{ YELLOW, NC, msg.msg }),
-            .Trace => std.debug.print("{s}TRACE{s} : {s}", .{ BLUE, NC, msg.msg }),
+            .Info => std.debug.print("{s}{s}INFO{s}  : {s}", .{ prefix, GREEN, NC, msg.msg }),
+            .Err => std.debug.print("{s}{s}ERROR{s} : {s}", .{ prefix, RED, NC, msg.msg }),
+            .Warn => std.debug.print("{s}{s}WARN{s}  : {s}", .{ prefix, YELLOW, NC, msg.msg }),
+            .Trace => std.debug.print("{s}{s}TRACE{s} : {s}", .{ prefix, BLUE, NC, msg.msg }),
         }
     }
+    clear();
+}
+/// prints all messages in the log
+pub fn print() void {
+    print_inner("");
+}
+
+/// prints all messages in the log with a prefix
+pub fn printWithPrefix(comptime prefix: []const u8) void {
+    print_inner("[" ++ prefix ++ "] ");
+}
+
+pub fn empty() void {
+    for (msgs.items) |msg| {
+        alloc.free(msg.msg);
+    }
+
+    msgs.clearRetainingCapacity();
 }
 
 /// clears all allocated messages and empties the list
 /// but does not destroy the list itself
 fn clear() void {
-    for (msgs.items()) |msg| {
-        alloc.destroy(msg.msg);
+    for (msgs.items) |msg| {
+        alloc.free(msg.msg);
     }
     msgs.clearAndFree();
 }
