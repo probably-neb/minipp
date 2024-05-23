@@ -13,7 +13,7 @@ pub fn print_tree(ast: *const Ast) !void {
     std.debug.print("\n{s}\n", .{try tree.print()});
 }
 
-fn into_tree(ast: *const Ast) !TreeNode {
+pub fn into_tree(ast: *const Ast) !TreeNode {
     // var baseAlloc = ast.allocator;
     // var baseAlloc = std.heap.page_allocator;
     // var arena = std.heap.ArenaAllocator.init(baseAlloc);
@@ -52,7 +52,7 @@ pub const TreeNode = struct {
     const Writer = std.ArrayList(u8).Writer;
     // Print the tree
     // TODO: take writer so we can swap between stdout and stderr
-    fn print(self: *const Self) ![]const u8 {
+    pub fn print(self: *const Self) ![]const u8 {
         var str = Str.init(self.alloc);
         var writer = str.writer();
 
@@ -343,7 +343,7 @@ fn repr_node(alloc: std.mem.Allocator, ast: *const Ast, node: Ast.Node) ![]const
         .TypeDeclaration => |tDecls| std.fmt.allocPrint(alloc, "Struct {s}", .{ast.getIdentValue(tDecls.ident)}),
         .TypedIdentifier => |tIdent| std.fmt.allocPrint(alloc, "{s} {s}", .{ @tagName(tIdent.getType(ast)), tIdent.getName(ast) }),
         .Function => |funDef| std.fmt.allocPrint(alloc, "Fun {s}", .{ast.getIdentValue(ast.get(funDef.proto).*.kind.FunctionProto.name)}),
-        .FunctionProto => |proto| std.fmt.allocPrint(alloc, "{s} -> {s}", .{ proto.getName(ast), @tagName(if (proto.getReturnType(ast)) |ty| ty else .Void) }),
+        .FunctionProto => |proto| std.fmt.allocPrint(alloc, "{s} -> {s}", .{ ast.getIdentValue(proto.name), @tagName(if (proto.getReturnType(ast)) |ty| ty else .Void) }),
         .Invocation => |funCall| std.fmt.allocPrint(alloc, "Call {s}", .{ast.getIdentValue(funCall.funcName)}),
         else => {
             log.warn("unhandled repr_node: {s}\n", .{@tagName(node.kind)});
