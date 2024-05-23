@@ -185,12 +185,20 @@ pub fn gen_function(
     while (declsIter.next()) |declNode| {
         const decl = declNode.kind.TypedIdentifier;
         const declName = ir.internIdent(decl.getName(ast));
+        // check if ir.funcs contains declName
+        if (ir.funcs.contains(declName)) {
+            return error.CannotNameVarSameAsFunction;
+        }
         const declType = ir.astTypeToIRType(decl.getType(ast));
         try tmpTypesMap.put(declName, declType);
     }
 
     for (fun.params.items) |item| {
         const name = item.name;
+        // check if ir.funcs contains name
+        if (ir.funcs.contains(name)) {
+            return error.CannotNameParamSameAsFunction;
+        }
         const typ = item.type;
         try tmpTypesMap.put(name, typ);
     }
@@ -211,10 +219,21 @@ pub fn gen_function(
             if (preType == null) {
                 return error.DeclNotFound;
             }
+            // check that the name is not the same as a function
+            if (ir.funcs.contains(list.items[0])) {
+                return error.CannotNameVarSameAsFunction;
+            }
+            if (ir.funcs.contains(declNode)) {
+                return error.CannotNameVarSameAsFunction;
+            }
             try fun.typesMap.put(list.items[0], preType.?);
             try fun.typesMap.put(declNode, preType.?);
             list.deinit();
         } else {
+            // check that the name is not the same as a function
+            if (ir.funcs.contains(declNode)) {
+                return error.CannotNameVarSameAsFunction;
+            }
             try fun.typesMap.put(declNode, preType.?);
         }
     }
@@ -257,12 +276,14 @@ pub fn gen_function(
     // (should) only used if the function returns a value
     var retReg = IR.Register.default;
     retReg.name = ir.internIdent("return_reg");
-    std.debug.print("return reg: {d}\n", .{retReg.name});
     // generate alloca for the return value if the function returns a value
     // this makes it so ret reg is always `%0`
     if (fun.returnType != .void) {
         // allocate a stack slot for the return value in the entry
         retReg = try fun.addNamedInst(entryBB, Inst.alloca(fun.returnType), retReg.name, fun.returnType);
+        // load the stack slot so there is a defualt value
+        var loadInst = Inst.load(fun.returnType, IR.Ref.fromReg(retReg));
+        retReg = try fun.addInst(entryBB, loadInst, fun.returnType);
         // save it in the function for easy access later
         fun.setReturnReg(retReg.id);
     }
@@ -287,8 +308,6 @@ pub fn gen_function(
             for (asPhi.entries.items, 0..) |asPhiEntry, idx| {
                 const currentBBID = asPhiEntry.bb;
                 const phiNameRef = asPhiEntry.ref.name;
-                std.debug.print("phiNameRef: {d}\n", .{phiNameRef});
-                std.debug.print("currentBBID: {d}\n", .{currentBBID});
                 asPhi.entries.items[idx].ref = try fun.getNamedRef(ir, phiNameRef, currentBBID);
             }
             const toInst = asPhi.toInst();
@@ -304,7 +323,6 @@ pub fn gen_function(
         if (exitBB.phiInsts.items.len == 1) {
             const phiInstID = exitBB.phiInsts.items[0];
             const phiInst = fun.insts.get(phiInstID).*;
-            std.debug.print("phiInstEntries: {any}\n", .{IR.Inst.Phi.get(phiInst).entries.items});
 
             var instRet = IR.Inst.ret(fun.returnType, phiInst.res);
             _ = try fun.addInst(fun.exitBBID, instRet, fun.returnType);
@@ -315,6 +333,24 @@ pub fn gen_function(
 
     if (fun.retRegUsed == false and fun.returnType != .void) {
         _ = fun.bbs.get(IR.Function.entryBBID).insts.orderedRemove(0);
+        _ = fun.bbs.get(IR.Function.entryBBID).insts.orderedRemove(0);
+        // remove it from the phi in exit if it is there
+        // var exitBB = fun.bbs.get(fun.exitBBID);
+        // var retInstPhi = exitBB.phiMap.get(retReg.name);
+        // if (retInstPhi != null) {
+        //     var instForPhi = fun.insts.get(retInstPhi.?);
+        //     var instAsPhi = IR.Inst.Phi.get(instForPhi.*);
+        //     var newEntries = std.ArrayList(IR.PhiEntry).init(ir.alloc);
+        //     for (instAsPhi.entries.items) |entry| {
+        //         if (entry.ref.name != retReg.name) {
+        //             try newEntries.append(entry);
+        //         }
+        //     }
+        //     instAsPhi.entries.deinit();
+        //     instAsPhi.entries = newEntries;
+        //     var back_to_inst = instAsPhi.toInst();
+        //     fun.insts.set(retInstPhi.?, back_to_inst);
+        // }
     }
 
     try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(fun.cfgToBBs.get(0).?)));
@@ -376,7 +412,6 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
     } else {
         for (cfgBlock.statements.items) |stmtNode| {
             const isRet = try gen_statement(ir, ast, fun, bbID, stmtNode);
-            std.debug.print("isRet: {any}\n", .{stmtNode});
             if (isRet == true) {
                 return; // we can just skip the rest
             }
@@ -420,7 +455,6 @@ pub fn place_phi_functions(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode:
             // check if defblocks contains bb's id
             const bbID = fun.cfgToBBs.get(cfgBlockID).?;
             var reducdStr = ir.reduceChainToFirstIdent(defStrID);
-            std.debug.print("full {s}, reduced {s}\n", .{ ir.getIdent(defStrID), ir.getIdent(reducdStr) });
             if (!fun.defBlocks.contains(reducdStr)) {
                 try fun.defBlocks.put(reducdStr, std.ArrayList(IR.BasicBlock.ID).init(ir.alloc));
             }
@@ -504,20 +538,16 @@ fn gen_statement(
 
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).*;
-            const exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
+            var exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
 
             // FIXME: handle selector chain
             if (to.chain) |chain| {
+                // if this is a selector chain, then it is assumed that there is a def prev
+
                 var assignRef = try fun.getNamedRef(ir, toName, bb);
-                const structRef = blk: {
-                    // it's a chain, so the assign must be a struct, we're in the load/store ir,
-                    // so it's got to be a %struct.{name}** (i.e. a pointer struct pointer on the stack)
-                    // so we have to load it first because gep can't do shit in this situation
-                    const loadStructInst = Inst.load(assignRef.type, assignRef);
-                    const loadReg = try fun.addNamedInst(bb, loadStructInst, assignRef.name, assignRef.type);
-                    break :blk IR.Ref.fromReg(loadReg);
-                };
-                var selectorChainRef = try gen_selector_chain(ir, ast, fun, bb, structRef, chain, .Assignment);
+                assignRef.name = toName;
+
+                var selectorChainRef = try gen_selector_chain(ir, ast, fun, bb, assignRef, chain);
                 // need to store the result of the expression into the selector chain
                 const inst = Inst.store(
                     selectorChainRef, // to
@@ -530,8 +560,8 @@ fn gen_statement(
                     std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
                 }
                 try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
             }
-            try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
         },
         .Print => |print| {
             const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(print.expr).*);
@@ -557,16 +587,12 @@ fn gen_statement(
             var exprRef = try gen_expression(ir, ast, fun, bb, ast.get(ret.expr.?).*);
             var returnRegName = ir.internIdent("return_reg");
             if (fun.returnReg == null) {
-                std.debug.print("returnReg is null\n", .{});
                 unreachable;
             }
             exprRef.type = fun.returnType;
-            exprRef.name = returnRegName;
             try fun.typesMap.put(returnRegName, fun.returnType);
             try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
-            std.debug.print("returnRegName: {d}\n", .{returnRegName});
-            std.debug.print("bb {d} exitBB {d}\n", .{ bb, fun.exitBBID });
-            _ = try IR.BasicBlock.addRefToPhi(fun.exitBBID, fun, exprRef, bb, returnRegName);
+            _ = try IR.BasicBlock.addRefToPhiReturn(fun.exitBBID, fun, exprRef, bb, ir);
             // add jmp to exitBB
             try fun.addCtrlFlowInst(bb, Inst.jmp(IR.Ref.label(fun.exitBBID)));
         },
@@ -636,7 +662,6 @@ fn gen_expression(
             };
             const name = join_names(lhsRef.name, rhsRef.name);
             const res = try fun.addNamedInst(bb, inst, name, ty);
-            std.debug.print("res id: {d}\n", .{res.id});
             return IR.Ref.fromReg(res);
         },
         .Selector => |sel| {
@@ -646,9 +671,10 @@ fn gen_expression(
             const atom = ast.get(atomIndex);
             var resultRef = switch (atom.kind) {
                 .Identifier => ident: {
-                    const identID = ir.internToken(ast, atom.token);
-                    const ref = try fun.getNamedRef(ir, identID, bb);
+                    var identID = ir.internToken(ast, atom.token);
+                    var ref = try fun.getNamedRef(ir, identID, bb);
                     try fun.bbs.get(bb).versionMap.put(identID, ref);
+                    ref.name = identID;
                     break :ident ref;
                 },
                 .False => false: {
@@ -733,18 +759,11 @@ fn gen_expression(
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
             };
             if (sel.chain) |chain| {
-                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain, .Usage);
-                switch (resultRef.type) {
-                    .strct, .arr, .int_arr => {},
-                    // Whenever we are accessing a field of a struct,
-                    // if it isn't a struct or an array, it should be derefed
-                    // so it isn't a pointer
-                    else => {
-                        const loadInst = Inst.load(resultRef.type, resultRef);
-                        const resultReg = try fun.addNamedInst(bb, loadInst, resultRef.name, resultRef.type);
-                        resultRef = IR.Ref.fromReg(resultReg);
-                    },
-                }
+                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain);
+                // we need to add a load here
+                const loadInst = Inst.load(resultRef.type, resultRef);
+                const loadRes = try fun.addInst(bb, loadInst, resultRef.type);
+                resultRef = IR.Ref.fromReg(loadRes);
             }
             return resultRef;
         },
@@ -823,7 +842,18 @@ fn gen_invocation(ir: *IR, fun: *IR.Function, ast: *const Ast, bb: IR.BasicBlock
     }
 
     const callInst = Inst.call(funRef.type, funRef, args);
-    return try fun.addNamedInst(bb, callInst, funRef.name, funRef.type);
+    var newNameArr = std.ArrayList(u8).init(ir.alloc);
+    defer newNameArr.deinit();
+    const aufrufen = "aufrufen_";
+    for (aufrufen) |c| {
+        try newNameArr.append(c);
+    }
+    for (ir.getIdent(funRef.name)) |c| {
+        try newNameArr.append(c);
+    }
+    const newNameStr = try newNameArr.toOwnedSlice();
+    const newName = ir.internIdent(newNameStr);
+    return try fun.addNamedInst(bb, callInst, newName, funRef.type);
 }
 
 // FIXME: allow redefinition of globals
@@ -831,16 +861,24 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
     // the args to malloc are just (i32 sizeof({struct type}))
     const s_name = ir.getIdent(s.name);
     // add .Struct to the name of the struct to avoid conflicts
-    const _Struct = ".Struct";
+    const _Struct = ".malloc";
+    const _Bitcase = ".bitcast";
     var mallocNameArr = std.ArrayList(u8).init(ir.alloc);
+    var bitcastNameArr = std.ArrayList(u8).init(ir.alloc);
     for (s_name) |c| {
         try mallocNameArr.append(c);
+        try bitcastNameArr.append(c);
     }
     for (_Struct) |c| {
         try mallocNameArr.append(c);
     }
+    for (_Bitcase) |c| {
+        try bitcastNameArr.append(c);
+    }
     const mallocNameStr = try mallocNameArr.toOwnedSlice();
+    const bitcastNameStr = try bitcastNameArr.toOwnedSlice();
     const mallocName = ir.internIdent(mallocNameStr);
+    const bitcastName = ir.internIdent(bitcastNameStr);
     const args = blk: {
         var args: []IR.Ref = try ir.alloc.alloc(IR.Ref, 1);
         args[0] = IR.Ref.immu32(s.size, .i32);
@@ -859,7 +897,7 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
     // the malloced pointer casted from an i8* to a {struct type}*
     const resRef = blk: {
         const cast = Inst.bitcast(retRef, s.getType());
-        const castReg = try fun.addNamedInst(bb, cast, s.name, s.getType());
+        const castReg = try fun.addNamedInst(bb, cast, bitcastName, s.getType());
         const castRef = IR.Ref.fromReg(castReg);
         break :blk castRef;
     };
@@ -927,6 +965,7 @@ const SelectorType = enum {
 /// @param chainIndex: the `chain` field in `LValue` or `Selector`
 ///               i.e. the pointer to the `SelectorChain` node
 /// @returns the reference to the last instruction in the chain
+/// // remove selectorType -> single pointer for all
 fn gen_selector_chain(
     ir: *IR,
     ast: *const Ast,
@@ -934,25 +973,49 @@ fn gen_selector_chain(
     bb: IR.BasicBlock.ID,
     startRef: IR.Ref,
     chainIndex: usize,
-    selectorType: SelectorType,
 ) !IR.Ref {
     var chainLink = ast.get(chainIndex).kind.SelectorChain;
     if (startRef.type == .int_arr) {
         // early return if the startRef is an array type as we know
         // that the chainLink is the index into the array and the result will be an
         // int and therefore there will be no more field accesses
+        var arrayName = std.ArrayList(u8).init(ir.alloc);
+        defer arrayName.deinit();
+        const app_str = "_auf";
+        for (ir.getIdent(startRef.name)) |c| {
+            try arrayName.append(c);
+        }
+        for (app_str) |c| {
+            try arrayName.append(c);
+        }
+        const arrayNameStr = try arrayName.toOwnedSlice();
+        const arrayNameID = ir.internIdent(arrayNameStr);
         const exprNode = ast.get(chainLink.ident).*;
         utils.assert(exprNode.kind == .Expression, "chainLink.ident should be expression for chain off of top level int_array", .{});
         const indexRef = try gen_expression(ir, ast, fun, bb, exprNode);
         const inst = Inst.gep(startRef.type, startRef, indexRef);
-        var reg = try fun.addNamedInst(bb, inst, startRef.name, indexRef.type);
+        var reg = try fun.addNamedInst(bb, inst, arrayNameID, indexRef.type);
         var ref = IR.Ref.fromReg(reg);
-        // if (selectorType == .Usage) {
-        //     const loadInst = Inst.load(ref.type, ref);
-        //     reg = try fun.addNamedInst(bb, loadInst, ref.name, ref.type);
-        //     ref = IR.Ref.fromReg(reg);
-        // }
         return ref;
+    }
+    var chainName = std.ArrayList(u8).init(ir.alloc);
+    defer chainName.deinit();
+    var startNameLit = ir.getIdent(startRef.name);
+    for (startNameLit) |c| {
+        try chainName.append(c);
+    }
+    try chainName.append('.');
+    for (ast.getIdentValue(chainLink.ident)) |c| {
+        try chainName.append(c);
+    }
+    const termStr = "_auf";
+    var tmp_nae = try chainName.clone();
+    defer tmp_nae.deinit();
+    for (termStr) |c| {
+        try tmp_nae.append(c);
+    }
+    if (startRef.type != .strct) {
+        return error.CannotChainFromANonStruct;
     }
     var structType = try ir.types.get(startRef.type.strct);
     var fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
@@ -960,8 +1023,8 @@ fn gen_selector_chain(
     var fieldIndex = fieldInfo.index;
     var field = fieldInfo.field;
     var inst = IR.Inst.gep(structType.getType(), startRef, IR.Ref.immu32(fieldIndex, .i32));
-
-    var reg = try fun.addNamedInst(bb, inst, field.name, field.type);
+    var chainLinkNameID = ir.internIdent(try tmp_nae.toOwnedSlice());
+    var reg = try fun.addNamedInst(bb, inst, chainLinkNameID, field.type);
     var ref = IR.Ref.fromReg(reg);
     var nextChainLink = chainLink.next;
     var prevField = field;
@@ -969,6 +1032,17 @@ fn gen_selector_chain(
     while (nextChainLink) |nextIndex| : (nextChainLink = chainLink.next) {
         chainLink = ast.get(nextIndex).kind.SelectorChain;
 
+        try chainName.append('.');
+        for (ast.getIdentValue(chainLink.ident)) |c| {
+            try chainName.append(c);
+        }
+
+        tmp_nae = try chainName.clone();
+        defer tmp_nae.deinit();
+        for (termStr) |c| {
+            try tmp_nae.append(c);
+        }
+        chainLinkNameID = ir.internIdent(try tmp_nae.toOwnedSlice());
         if (prevField.type == .int_arr) {
             // early return if we reach a field that is an array type as we know
             // that the chainLink is the index into the array and the result will be an
@@ -986,6 +1060,7 @@ fn gen_selector_chain(
             // }
             return ref;
         }
+
         utils.assert(prevField.type == .strct, "prevField.type.isStruct in `gen_selector_chain`", .{});
         structType = try ir.types.get(prevField.type.strct);
         fieldNameID = ir.internIdentNodeAt(ast, chainLink.ident);
@@ -995,20 +1070,13 @@ fn gen_selector_chain(
         const loadRef = blk: {
             // need to load the secondary struct because rn we have a struct**
             const loadInst = Inst.load(structType.getType(), ref);
+            // maybe also have to change the name of the struct type here
             reg = try fun.addNamedInst(bb, loadInst, structType.name, structType.getType());
             break :blk IR.Ref.fromReg(reg);
         };
         inst = IR.Inst.gep(structType.getType(), loadRef, IR.Ref.immu32(fieldIndex, .i32));
 
-        reg = try fun.addNamedInst(bb, inst, field.name, field.type);
-        ref = IR.Ref.fromReg(reg);
-    }
-    if (ref.type == .strct and selectorType == .Usage) {
-        // if the final field being accessed in the struct, we are polite
-        // and return a pointer to the struct instead of the pointer to the pointer to the struct
-        // because that is (certainly?) what the consumer expects
-        const loadInst = Inst.load(ref.type, ref);
-        reg = try fun.addNamedInst(bb, loadInst, ref.name, ref.type);
+        reg = try fun.addNamedInst(bb, inst, chainLinkNameID, field.type);
         ref = IR.Ref.fromReg(reg);
     }
     return ref;
@@ -1244,53 +1312,72 @@ test "phi.print_test" {
 //     var str = try inputToIRString(in, testAlloc);
 //     std.debug.print("{s}\n", .{str});
 // }
-test "phi.print_addition" {
+// test "phi.print_addition" {
+//     errdefer log.print();
+//     const in = " fun main() void { int a,b;  a = 5; b = a + 2; a = b + 4;   }";
+
+//     var str = try inputToIRString(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+
+// test "phi.print_addition2" {
+//     errdefer log.print();
+//     const in = " fun main() int { int a,b;  a = 5; b = a + 2; a = b + 4; return a;  }";
+
+//     var str = try inputToIRString(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+
+// test "phi.print_test_if" {
+//     errdefer log.print();
+//     const in = "fun main() int {\n int a,b,c;\n if(a == 1){\n b =c;\n}\n b = a; return b;\n }";
+//     var str = try inputToIRString(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     // print out the IR
+//     // var arena = std.heap.ArenaAllocator.init(ting.allocator);
+//     // var alloc = arena.allocator();
+//     // defer arena.deinit();
+//     // const ir_str = try inputToIRString(in, alloc);
+//     // // check that the IR is correct
+//     // std.debug.print("{s}\n", .{ir_str});
+// }
+
+// test "phi.print_test_while_nested" {
+//     errdefer log.print();
+//     const in = "fun main() void { int a,b,c; a = 1;while(a == 2){ b =c;} c=a; print c endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+
+// test "phi.print_test_decreasing_num" {
+//     errdefer log.print();
+//     const in = "fun main() void { int a; a = 10; while(a >= 0){ print a endl; a = a - 1;} }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+
+// test "phi.print_first_struct" {
+//     errdefer log.print();
+//     const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; struct S b; s = new S; s.s = new S; s.s.a = 5; b = s.s; a = b.a; print a endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+
+// test "phi.functioncalls" {
+//     errdefer log.print();
+//     const in = "fun test(int a, int b) int { return a + b;} fun main() void { int a; a = test(5, 2); print a endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+// test "phi.fibonacci" {
+//     errdefer log.print();
+//     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+test "phi.arrays" {
     errdefer log.print();
-    const in = " fun main() void { int a,b;  a = 5; b = a + 2; a = b + 4;   }";
-
-    var str = try inputToIRString(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
-}
-
-test "phi.print_addition2" {
-    errdefer log.print();
-    const in = " fun main() int { int a,b;  a = 5; b = a + 2; a = b + 4; return a;  }";
-
-    var str = try inputToIRString(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
-}
-
-test "phi.print_test_if" {
-    errdefer log.print();
-    const in = "fun main() int {\n int a,b,c;\n if(a == 1){\n b =c;\n}\n b = a; return b;\n }";
-    var str = try inputToIRString(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
-    // print out the IR
-    // var arena = std.heap.ArenaAllocator.init(ting.allocator);
-    // var alloc = arena.allocator();
-    // defer arena.deinit();
-    // const ir_str = try inputToIRString(in, alloc);
-    // // check that the IR is correct
-    // std.debug.print("{s}\n", .{ir_str});
-}
-
-test "phi.print_test_while_nested" {
-    errdefer log.print();
-    const in = "fun main() void { int a,b,c; a = 1;while(a == 2){ b =c;} c=a; print c endl; }";
-    var str = try inputToIRStringHeader(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
-}
-
-test "phi.print_test_decreasing_num" {
-    errdefer log.print();
-    const in = "fun main() void { int a; a = 10; while(a >= 0){ print a endl; a = a - 1;} }";
-    var str = try inputToIRStringHeader(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
-}
-
-test "phi.print_first_struct" {
-    errdefer log.print();
-    const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; s = new S; s.s = new S; s.s.a = 5; a = s.s.a; }";
+    const in = "fun main() void { int_array a; a = new int_array[20]; a[0] = 5; print a[0] endl; }";
     var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
 }

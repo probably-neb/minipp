@@ -195,6 +195,10 @@ pub const FunctionList = struct {
     pub fn fill(self: *FunctionList, items: []Function) void {
         self.items = List.init(items);
     }
+
+    pub fn contains(self: *const FunctionList, name: StrID) bool {
+        return self.items.contains(name);
+    }
 };
 
 pub const Function = struct {
@@ -1811,6 +1815,59 @@ pub const BasicBlock = struct {
         return phiInstID.?;
     }
 
+    pub fn addRefToPhiReturn(self: BasicBlock.ID, fun: *Function, ref: Ref, bbIn: BasicBlock.ID, ir: *IR) !Function.InstID {
+        var name = ir.internIdent("return_reg");
+        std.debug.print("ref.i {any}\n", .{ref.i});
+        const bb = fun.bbs.get(self);
+        var phiInstID = bb.getPhi(name);
+        if (phiInstID == null) {
+            phiInstID = try IR.BasicBlock.addEmptyPhiReturn(self, fun, ir);
+        }
+        const phiInst = fun.insts.get(phiInstID.?);
+        var phi = IR.Inst.Phi.get(phiInst.*);
+        std.debug.print("ref.i {any}\n", .{ref.i});
+        try phi.entries.append(IR.PhiEntry{ .ref = ref, .bb = bbIn });
+        std.debug.print("entries: {any}\n", .{phi.entries.items});
+        var updatedPhiInst = phi.toInst();
+        fun.insts.set(phiInstID.?, updatedPhiInst);
+        return phiInstID.?;
+    }
+
+    pub fn addEmptyPhiReturn(self: BasicBlock.ID, fun: *Function, ir: *IR) !Function.InstID {
+        var ident = ir.internIdent("return_reg");
+        const bbMap = fun.bbs.get(self).*.phiMap;
+        if (bbMap.contains(ident)) {
+            const contInst = bbMap.get(ident).?;
+            const fInst = fun.insts.get(contInst).*;
+            var phiInst = IR.Inst.Phi.get(fInst);
+            try phiInst.entries.resize(0);
+            const phiInstInst = phiInst.toInst();
+            fun.insts.set(contInst, phiInstInst);
+            try fun.bbs.get(self).versionMap.put(ident, fInst.res);
+            return contInst;
+        }
+        const identType = fun.typesMap.get(ident).?;
+        var phiEntries = std.ArrayList(IR.PhiEntry).init(fun.alloc);
+        const phi = Inst.phi(IR.Ref.default, identType, phiEntries);
+
+        // reserve
+        const regID = try fun.regs.add(undefined);
+        const instID = try fun.insts.add(undefined);
+
+        // construct the register to be added, using the reserved IDs
+        const reg = Register{ .id = regID, .inst = instID, .name = ident, .bb = self, .type = identType };
+        var inst = phi;
+        inst.res = Ref.local(regID, ident, identType); // update the reference of the incoming instruction
+
+        // save
+        fun.regs.set(regID, reg);
+        fun.insts.set(instID, inst); // in the inst array update the resulting instruction
+        try fun.bbs.get(self).versionMap.put(ident, inst.res);
+
+        try fun.bbs.get(self).addPhiInst(instID, ident);
+        return instID;
+    }
+
     // creates a new instruction phi node and adds it to the block, adds it to the phiMap
     // and version map
     pub fn addEmptyPhiOrClear(self: BasicBlock.ID, fun: *Function, ident: StrID) !Function.InstID {
@@ -2013,6 +2070,9 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
                 items[i] = default;
             }
             return Self.init(items);
+        }
+        pub fn contains(self: Self, key: Key) bool {
+            return self.safeIndexOf(key) != null;
         }
     };
 }
