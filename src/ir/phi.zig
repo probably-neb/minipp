@@ -317,49 +317,30 @@ pub fn gen_function(
             var phi = IR.Inst.Phi.get(phiInst.*);
 
             // get the original entries
-            var anyDefault: bool = true;
-            while (anyDefault and phi.entries.items.len > 0) {
-                anyDefault = false;
-                for (phi.entries.items, 0..) |entry, idx| {
-                    var entryBBID = entry.bb;
-                    var entryBB_ = fun.bbs.get(entryBBID);
+            for (phi.entries.items, 0..) |entry, idx| {
+                var entryBBID = entry.bb;
+                var entryBB_ = fun.bbs.get(entryBBID);
 
-                    // phi nodes must come from the predecessor block(s)
-                    for (entryBB_.incomers.items) |incomerBBID| {
-                        if (incomerBBID == bbid) {
-                            utils.todo("phi node from the same block\n", .{});
-                        }
-                        var incomerBB = fun.bbs.get(incomerBBID);
-                        std.debug.print("looking for named ref in block {s}\n", .{incomerBB.name});
-                        var ref = incomerBB.versionMap.get(phiName.*);
-                        // not in the present block
-                        if (ref == null) {
-                            ref = try fun.getNamedRefPhi(ir, phiName.*, incomerBBID);
-                            // not in any of the predecessor blocks, but it still must exist
-                            if (ref == null) {
-                                // check if this is the only entry in the phi
-                                if (idx == 0 and phi.entries.items.len == 1) {
-                                    ref = try fun.getNamedRef(ir, phiName.*, incomerBBID);
-                                } else {
-                                    // remove it, this is safe.
-                                    _ = phi.entries.orderedRemove(idx);
-                                    anyDefault = true;
-                                    break;
-                                }
-                            }
-                            std.debug.print("found named ref from searching upwords\n", .{});
-                            ref.?.debugPrintWithName(ir);
-                        } else {
-                            std.debug.print("found named ref from version map\n", .{});
-                            ref.?.debugPrintWithName(ir);
-                        }
-                        var ref_ = ref.?;
-                        phi.entries.items[idx].ref = ref_;
-                        std.debug.print("added entry\n", .{});
+                // phi nodes must come from the predecessor block(s)
+                for (entryBB_.incomers.items) |incomerBBID| {
+                    if (incomerBBID == bbid) {
+                        utils.todo("phi node from the same block\n", .{});
                     }
-                    if (anyDefault) {
-                        break;
+                    var incomerBB = fun.bbs.get(incomerBBID);
+                    std.debug.print("looking for named ref in block {s}\n", .{incomerBB.name});
+                    var ref = incomerBB.versionMap.get(phiName.*);
+                    // not in the present block
+                    if (ref == null) {
+                        ref = try fun.getNamedRef(ir, phiName.*, incomerBBID);
+                        std.debug.print("found named ref from searching upwords\n", .{});
+                        ref.?.debugPrintWithName(ir);
+                    } else {
+                        std.debug.print("found named ref from version map\n", .{});
+                        ref.?.debugPrintWithName(ir);
                     }
+                    var ref_ = ref.?;
+                    phi.entries.items[idx].ref = ref_;
+                    std.debug.print("added entry\n", .{});
                 }
             }
             // delete any entries that are default
@@ -1490,7 +1471,7 @@ test "phi_programBreaker" {
 
 test "phi_wasteOfCycles" {
     errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/fact_sum/fact_sum.mini");
+    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/wasteOfCycles/wasteOfCycles.mini");
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
