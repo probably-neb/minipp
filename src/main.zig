@@ -142,7 +142,6 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8, dot
                     .header = true,
                 });
             },
-            .dot => utils.todo("Dot generation", .{}),
             // TODO: should probably break sooner than this instead
             // of blue-balling the user
             .opt => utils.todo("Optimization", .{}),
