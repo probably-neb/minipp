@@ -716,7 +716,8 @@ fn gen_expression(
                 .Minus => .int,
                 else => unreachable,
             };
-            const res = try fun.addNamedInst(bb, inst, exprReg.name, ty);
+            const unopName = ir.internIdent("tmp.unop");
+            const res = try fun.addNamedInst(bb, inst, unopName, ty);
             return IR.Ref.fromReg(res);
         },
         .BinaryOperation => |binary| {
@@ -805,6 +806,24 @@ fn gen_expression(
                 .NewIntArray => |newArr| newArr: {
                     const lenStr = ast.getIdentValue(newArr.length);
                     const len = try std.fmt.parseInt(u32, lenStr, 10);
+                    const _malloc = ".alloc";
+                    const _bitcast = ".bitcast";
+                    var allocNameArr = std.ArrayList(u8).init(ir.alloc);
+                    var bitcastNameArr = std.ArrayList(u8).init(ir.alloc);
+                    for (lenStr) |c| {
+                        try allocNameArr.append(c);
+                        try bitcastNameArr.append(c);
+                    }
+                    for (_malloc) |c| {
+                        try allocNameArr.append(c);
+                    }
+                    for (_bitcast) |c| {
+                        try bitcastNameArr.append(c);
+                    }
+                    const allocNameStr = try allocNameArr.toOwnedSlice();
+                    const bitcastNameStr = try bitcastNameArr.toOwnedSlice();
+                    const allocName = ir.internIdent(allocNameStr);
+                    const bitcastName = ir.internIdent(bitcastNameStr);
                     const arrType = IR.Type{
                         .arr = .{
                             .type = .int,
@@ -815,7 +834,7 @@ fn gen_expression(
                         // allocate the array on the stack
                         // yielding reference to the *array* (i.e. [int x {len}]*)
                         const inst = Inst.alloca(arrType);
-                        const reg = try fun.addInst(bb, inst, arrType);
+                        const reg = try fun.addNamedInst(bb, inst, allocName, arrType);
                         const ref = IR.Ref.fromReg(reg);
                         break :alloca ref;
                     };
@@ -824,7 +843,7 @@ fn gen_expression(
                         // as int_arrays are passed around and treated as int*
                         // (i.e. unknown length)
                         const inst = Inst.bitcast(alloca, .int_arr);
-                        const reg = try fun.addInst(bb, inst, .int_arr);
+                        const reg = try fun.addNamedInst(bb, inst, bitcastName, .int_arr);
                         const ref = IR.Ref.fromReg(reg);
                         break :cast ref;
                     };
