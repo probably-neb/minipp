@@ -3,16 +3,19 @@ const Alloc = std.mem.Allocator;
 
 const str = []const u8;
 
-const LineIter = std.mem.SplitIterator(str, u8);
+const LineIter = std.mem.SplitIterator(u8, .scalar);
 
-pub fn genenerate(alloc: Alloc, llvm_ir: str) str {
+pub fn generate(alloc: Alloc, llvm_ir: str) !str {
     var buf = Buf.init(alloc);
-    var lines: LineIter = std.mem.splitScalar(llvm_ir, '\n');
+    var lines: LineIter = std.mem.splitScalar(u8, llvm_ir, '\n');
 
     try buf.write("digraph CFG {\n");
-    try buf.write("  node [shape=rectangle labeljust=l];\n\n");
+    try buf.write("  node [shape=rectangle];\n");
+    try buf.write("  labeljust=l;\n");
+    try buf.write("  labelloc=t;\n");
+    try buf.write("\n");
 
-    for (lines) |line| {
+    while (lines.next()) |line| {
         if (extract_fn_name(line)) |fn_name| {
             try gen_function(&buf, fn_name, &lines);
             continue;
@@ -20,6 +23,8 @@ pub fn genenerate(alloc: Alloc, llvm_ir: str) str {
     }
 
     try buf.write("}\n");
+
+    return buf.get_contents();
 }
 
 fn gen_function(buf: *Buf, fn_name: str, lines: *LineIter) !void {
@@ -32,6 +37,7 @@ fn gen_function(buf: *Buf, fn_name: str, lines: *LineIter) !void {
     try buf.write("label = \"");
     try buf.write(fn_name);
     try buf.write("\";\n");
+    try buf.write("  labeljust=l;\n");
 
     const MommysLittleHelper = struct {
         fn get_next_label(line_iter: *LineIter) !str {
@@ -47,55 +53,75 @@ fn gen_function(buf: *Buf, fn_name: str, lines: *LineIter) !void {
             }
             return null;
         }
-        fn print_bb_start(label: str) !void {
-            try buf.write(indent);
-            try buf.write(label);
-            try buf.write(" [label=\"");
+        fn print_bb_start(b: *Buf, fname: str, label: str) !void {
+            try b.write(indent);
+            try @This().print_bb_id(b, fname, label);
+            try b.write(" [labeljust=l, label=\"");
+            try b.write(label);
+            try b.write(":\\n");
         }
-        fn print_bb_end() !void {
-            try buf.write("\"]'\n");
+        fn print_bb_end(b: *Buf) !void {
+            try b.write("\"];\n");
+        }
+
+        fn print_bb_id(b: *Buf, fname: str, s: str) !void {
+            try b.write("\"");
+            try b.write(fname);
+            try b.write(".");
+            try b.write(s);
+            try b.write("\"");
         }
     };
 
     const entry_label = try MommysLittleHelper.get_next_label(lines);
-    try MommysLittleHelper.print_bb_start(entry_label);
+    try MommysLittleHelper.print_bb_start(buf, fn_name, entry_label);
 
     var cur_bb_label = entry_label;
-    var line_no = 0;
+    var line_no: usize = 0;
     while (MommysLittleHelper.next_non_empty(lines)) |line| : (line_no += 1) {
         const is_end_fn = is_end_fn: {
-            const ends_with_squirly = std.mem.endsWith(u8, line, "{");
-            const up_to_squirly = std.mem.sliceTo(line, "}");
+            const ends_with_squirly = std.mem.endsWith(u8, line, "}");
+            const up_to_squirly = std.mem.sliceTo(line, '}');
             const is_space_to_squirly = std.mem.allEqual(u8, up_to_squirly, ' ');
             break :is_end_fn ends_with_squirly and is_space_to_squirly;
         };
         if (is_end_fn) {
-            try MommysLittleHelper.print_bb_end();
+            try MommysLittleHelper.print_bb_end(buf);
             try buf.write("  }\n");
+            break;
         }
+        try buf.write(line);
+        try buf.write("\\n");
         if (extract_branch_labels(line)) |bbs| {
-            MommysLittleHelper.print_bb_end();
-            inline while (bbs) |bb| {
-                try buf.write(indent);
-                try buf.write(cur_bb_label);
-                try buf.write(" -> ");
-                try buf.write(bb);
-                try buf.write(";\n");
+            try MommysLittleHelper.print_bb_end(buf);
+            const is_cond_branch = bbs[1] != null;
+            inline for (bbs, 0..) |maybe_bb, i| {
+                if (maybe_bb) |bb| {
+                    try buf.write(indent);
+                    try MommysLittleHelper.print_bb_id(buf, fn_name, cur_bb_label);
+                    try buf.write(" -> ");
+                    try MommysLittleHelper.print_bb_id(buf, fn_name, bb);
+                    if (is_cond_branch) {
+                        try buf.write(" [label=\"");
+                        try buf.write(if (i == 0) "then" else "else");
+                        try buf.write("\"]");
+                    }
+                    try buf.write(";\n");
+                }
             }
 
             const next_label = try MommysLittleHelper.get_next_label(lines);
             cur_bb_label = next_label;
-            try MommysLittleHelper.print_bb_start(next_label);
+            try MommysLittleHelper.print_bb_start(buf, fn_name, next_label);
             continue;
         }
-        try buf.write(line);
-        try buf.write("\\n");
     }
-
-    try buf.write("  }\n");
 }
 
 fn extract_fn_name(line: str) ?str {
+    if (std.mem.lastIndexOf(u8, line, "{") == null) {
+        return null;
+    }
     const end = std.mem.lastIndexOf(u8, line, "(") orelse return null;
     const start = (std.mem.lastIndexOf(u8, line[0..end], "@") orelse return null) + 1;
     return line[start..end];
@@ -172,6 +198,10 @@ const Buf = struct {
         const writer = self.str.writer();
         try std.fmt.format(writer, fmt_str, args);
     }
+
+    fn get_contents(self: *Buf) !str {
+        return try self.str.toOwnedSlice();
+    }
 };
 
 ///////////
@@ -196,6 +226,10 @@ test "dot.extract-fn-name" {
         .{ null, "if.else:\n" },
         .{ null, "if.end:   \n" },
         .{ null, "while.cond:\n" },
+        .{ null, "declare i8* @malloc(i32)\n" },
+        .{ null, "declare void @free(i8*\n)" },
+        .{ null, "declare i32 @printf(i8*, ...\n)" },
+        .{ null, "declare i32 @scanf(i8*, ...\n)" },
     };
 
     inline for (inputs) |in| {

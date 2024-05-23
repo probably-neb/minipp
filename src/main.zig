@@ -1,7 +1,6 @@
 const std = @import("std");
 const log = @import("log.zig");
 const utils = @import("utils.zig");
-const dot = @import("dot.zig");
 
 const Flag = struct {
     long: []const u8,
@@ -103,7 +102,7 @@ pub fn main() !void {
     errdefer log.print();
     const args = try parse_args();
     log.trace("{s} {s} -> {s}\n", .{ @tagName(args.mode), args.infile, args.outfile });
-    try run(args.mode, args.infile, args.outfile);
+    try run(args.mode, args.infile, args.outfile, args.dotfile);
 }
 
 pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8, dotfilePath: ?[]const u8) !void {
@@ -154,7 +153,7 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8, dot
 
     if (dotfilePath) |path| {
         log.info("Writing dot to {s}\n", .{path});
-        const dot_str = try dot.generate(&ir);
+        const dot_str = try @import("dot.zig").generate(backendAlloc, ir);
         try std.fs.cwd().writeFile(path, dot_str);
     }
 }
