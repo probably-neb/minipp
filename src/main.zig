@@ -152,7 +152,11 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8, dot
         var writer = std.io.getStdOut().writer();
         _ = try writer.write(ir);
     } else {
-        try std.fs.cwd().writeFile(outfilePath, ir);
+        std.fs.cwd().writeFile(outfilePath, ir) catch |err| {
+            log.err("Failed to write to {s}\n", .{outfilePath});
+            log.err("{any}\n", .{err});
+            return err;
+        };
         // TODO: run clang if user asks for it
     }
 

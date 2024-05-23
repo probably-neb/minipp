@@ -83,8 +83,18 @@ build-suite-test name *BUILD_ARGS: build
     name="{{name}}"
     name="${name#array_}"
     dir="{{TEST_SUITE}}/{{name}}"
+    if [[ ! -d "$dir" ]]; then
+        echo "Test Suite Test Not Found"
+        exit 1
+    fi
     {{minipp}} -i "$dir/${name}.mini" -o "$dir/{{name}}.ll" {{BUILD_ARGS}}
     clang "$dir/{{name}}.ll" -o "$dir/{{name}}"
+
+dot-suite-test name *BUILD_ARGS:
+    just build-suite-test {{name}} -dot "{{TEST_SUITE}}/{{name}}/{{name}}.dot" {{BUILD_ARGS}}
+    echo "OUTPUT DOT TO"
+    echo "{{TEST_SUITE}}/{{name}}/{{name}}.dot"
+    dot -Tpng "{{TEST_SUITE}}/{{name}}/{{name}}.dot" -o "{{TEST_SUITE}}/{{name}}/{{name}}.png"
 
 nix:
     sudo nix develop --extra-experimental-features nix-command --extra-experimental-features flakes
