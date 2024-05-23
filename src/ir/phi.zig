@@ -473,7 +473,7 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
         if (statments.items.len > 1) unreachable;
         var condRef = try gen_expression(ir, ast, fun, bbID, statments.items[0]);
         // condRef.name = IR.InternPool.NULL;
-        condRef = fun.renameRef(condRef, IR.InternPool.NULL);
+        condRef = fun.renameRef(ir, condRef, IR.InternPool.NULL);
         //TODO generate the control flow jump
         const brInst = Inst.br(condRef, IR.Ref.label(bb.outgoers[0].?), IR.Ref.label(bb.outgoers[1].?));
         try fun.addCtrlFlowInst(bbID, brInst);
@@ -641,7 +641,18 @@ fn gen_statement(
                 );
                 try fun.addAnonInst(bb, inst);
             } else {
-                _ = fun.renameRef(exprRef, toName);
+                switch (exprRef.kind) {
+                    .local => {
+                        _ = fun.renameRef(ir, exprRef, toName);
+                    },
+                    .param => {},
+                    .global => {
+                        utils.todo("Need to implement storing to a global\n", .{});
+                    },
+                    else => {
+                        utils.todo("Cannot assign to an unknown param type\n", .{});
+                    },
+                }
                 if (exprRef.name != IR.InternPool.NULL) {
                     // std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
                 }
@@ -1502,9 +1513,16 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     var str = try inputToIRStringHeader(name, testAlloc);
 //     std.debug.print("{s}\n", .{str});
 // }
-test "phi_killerBubs" {
+// test "phi_killerBubs" {
+//     errdefer log.print();
+//     const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+
+test "phi.struct_killBubs" {
     errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
+    const name = "struct Node {struct Node n;}; fun main(struct Node in ) void {struct Node comp; comp = in; if(comp.n != in){ print 1 endl;}  }";
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }

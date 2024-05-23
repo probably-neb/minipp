@@ -306,7 +306,46 @@ pub const Function = struct {
         };
     }
 
-    pub fn renameRef(self: *Function, ref: Ref, name: StrID) Ref {
+    pub fn renameRef(self: *Function, ir: *IR, ref: Ref, name: StrID) Ref {
+        // check the kind of the ref
+        switch (ref.kind) {
+            .local => {
+                return self.renameLocalRef(ref, name);
+            },
+            .param => {
+                return self.renameParamRef(ir, ref, name);
+            },
+            .global => {
+                return self.renameGlobalRef(ir, ref, name);
+            },
+            else => {
+                std.debug.panic("Unknown ref kind: {any}\n", .{ref.kind});
+            },
+        }
+        unreachable;
+    }
+
+    pub fn renameParamRef(self: *Function, ir: *IR, ref: Ref, name: StrID) Ref {
+        _ = ir;
+        // ref.debugPrintWithName(ir);
+        // utils.todo("Tried to rename a param, this is not allowed", .{});
+        // const param = self.params.contains(ref.name);
+        // param.name = name;
+        // self.params.set(ref.i, param);
+        // return Ref.param(ref.i, name, param.type);
+        var refCopy = ref;
+        refCopy.kind = .local;
+        return self.renameLocalRef(refCopy, name);
+    }
+
+    pub fn renameGlobalRef(self: *Function, ir: *IR, ref: Ref, name: StrID) Ref {
+        ref.debugPrintWithName(ir);
+        _ = name;
+        _ = self;
+        utils.todo("Tried to rename a gloabl ref, this is not implemented yet", .{});
+    }
+
+    pub fn renameLocalRef(self: *Function, ref: Ref, name: StrID) Ref {
         // get the register
         var reg = self.regs.get(ref.i);
         var inst = self.insts.get(reg.inst);
@@ -316,6 +355,7 @@ pub const Function = struct {
         self.insts.set(reg.inst, inst.*);
         return inst.res;
     }
+
     pub fn getKey(self: Function) StrID {
         return self.name;
     }
@@ -434,7 +474,7 @@ pub const Function = struct {
         return namedRef;
     }
 
-    pub fn getNamedRefPhi(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!?Ref {
+    pub fn getNamedRefNoAdd(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!?Ref {
         if (name != IR.InternPool.NULL) {
             std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
         } else {
