@@ -203,6 +203,13 @@ pub fn gen_function(
         try tmpTypesMap.put(name, typ);
     }
 
+    // add globals to the types map
+    for (ir.globals.items.items) |global| {
+        const name = global.name;
+        const typ = global.type;
+        try tmpTypesMap.put(name, typ);
+    }
+
     // convert the used decls into types
     // iterate over the decls iside the cfg
     var cfgDeclsIter = fun.cfg.declsUsed.keyIterator();
@@ -217,6 +224,7 @@ pub fn gen_function(
             }
             preType = tmpTypesMap.get(list.items[0]);
             if (preType == null) {
+                std.debug.print("could not find type for decl {s}\n", .{ir.getIdent(list.items[0])});
                 return error.DeclNotFound;
             }
             // check that the name is not the same as a function
@@ -1462,16 +1470,22 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     var str = try inputToIRStringHeader(in, testAlloc);
 //     std.debug.print("{s}\n", .{str});
 // }
-test "phi_programBreaker" {
-    errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/programBreaker/programBreaker.mini");
-    var str = try inputToIRStringHeader(name, testAlloc);
-    std.debug.print("{s}\n", .{str});
-}
+// test "phi_programBreaker" {
+//     errdefer log.print();
+//     const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/programBreaker/programBreaker.mini");
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
 
-test "phi_wasteOfCycles" {
+// test "phi_wasteOfCycles" {
+//     errdefer log.print();
+//     const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/wasteOfCycles/wasteOfCycles.mini");
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+test "phi_killerBubs" {
     errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/wasteOfCycles/wasteOfCycles.mini");
+    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
