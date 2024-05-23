@@ -132,7 +132,10 @@ fn expr_into_treenode(alloc: std.mem.Allocator, ast: *const Ast, node: Ast.Node)
             }
         },
         .TypeDeclaration => |tDecl| {
-            const fieldDecls = ast.get(tDecl.declarations).*.kind.StructFieldDeclarations;
+            const tDecl_t = try expr_into_treenode(alloc, ast, ast.get(tDecl.declarations).*);
+            try node_t.add_node(tDecl_t);
+        },
+        .StructFieldDeclarations => |fieldDecls| {
             var iter = fieldDecls.iter(ast);
             while (iter.next()) |fieldDecl| {
                 const fieldDecl_t = try expr_into_treenode(alloc, ast, fieldDecl);
@@ -186,12 +189,15 @@ fn expr_into_treenode(alloc: std.mem.Allocator, ast: *const Ast, node: Ast.Node)
         },
         .Invocation => |funCall| {
             if (funCall.args) |args| {
-                const arg_node = ast.get(args).*.kind.Arguments;
-                var argsIter = arg_node.iter(ast);
-                while (argsIter.next()) |arg| {
-                    const arg_t = try expr_into_treenode(alloc, ast, arg);
-                    try node_t.add_node(arg_t);
-                }
+                const arg_t = try expr_into_treenode(alloc, ast, ast.get(args).*);
+                try node_t.add_node(arg_t);
+            }
+        },
+        .Arguments => |args| {
+            var argsIter = args.iter(ast);
+            while (argsIter.next()) |arg| {
+                const arg_t = try expr_into_treenode(alloc, ast, arg);
+                try node_t.add_node(arg_t);
             }
         },
         .StatementList => |stmtList| {
@@ -291,10 +297,6 @@ fn expr_into_treenode(alloc: std.mem.Allocator, ast: *const Ast, node: Ast.Node)
                 try node_t.add_node(expr_t);
             }
         },
-        .NewIntArray => |newIntArray| {
-            const expr_t = try expr_into_treenode(alloc, ast, ast.get(newIntArray.length).*);
-            try node_t.add_node(expr_t);
-        },
         .Print => |print| {
             const expr_t = try expr_into_treenode(alloc, ast, ast.get(print.expr).*);
             try node_t.add_node(expr_t);
@@ -303,11 +305,43 @@ fn expr_into_treenode(alloc: std.mem.Allocator, ast: *const Ast, node: Ast.Node)
                 try node_t.add_node(endl_t);
             }
         },
+        .New => |new| {
+            const expr_t = try expr_into_treenode(alloc, ast, ast.get(new.ident).*);
+            try node_t.add_node(expr_t);
+        },
+        .NewIntArray => |newIntArray| {
+            const expr_t = try expr_into_treenode(alloc, ast, ast.get(newIntArray.length).*);
+            try node_t.add_node(expr_t);
+        },
+        .Delete => |del| {
+            const expr_t = try expr_into_treenode(alloc, ast, ast.get(del.expr).*);
+            try node_t.add_node(expr_t);
+        },
         // base nodes with no children
         // typed Identifier has children but we display it as `{type} {name}`
         // for simplicity's sake
-        .TypedIdentifier, .Number, .Identifier, .True, .False, .Read => {},
-        else => utils.todo("expr_into_treenode: {s}", .{@tagName(node.kind)}),
+        .TypedIdentifier,
+        .Number,
+        .Identifier,
+        .True,
+        .False,
+        .Read,
+        .Null,
+        .Type,
+        .BoolType,
+        .IntType,
+        .IntArrayType,
+        .Void,
+        .StructType,
+        .ArgumentEnd,
+        .ArgumentsEnd,
+        .ReturnTypedIdentifier,
+        .ReturnType,
+        => {},
+        .FunctionEnd, .BackfillReserve => {
+            log.warn("unhandled expr_into_treenode: {s}\n", .{@tagName(node.kind)});
+        },
+        // else => utils.todo("expr_into_treenode: {s}", .{@tagName(node.kind)}),
     }
     return node_t;
 }
