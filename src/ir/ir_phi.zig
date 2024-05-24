@@ -1568,7 +1568,7 @@ pub const CfgFunction = struct {
         try self.genDominance();
         // self.printallChildren();
         try self.printDomFront();
-        self.printOutFunAsDot(ir);
+        // self.printOutFunAsDot(ir);
 
         // for every blocks's assignments add to the functions assignemnts
         for (self.postOrder.items) |blockID| {

@@ -659,6 +659,7 @@ fn gen_statement(
                 );
                 try fun.addAnonInst(bb, inst);
             } else {
+                var nullFlag: bool = false;
                 switch (exprRef.kind) {
                     .local => {
                         _ = fun.renameRef(ir, exprRef, toName);
@@ -671,11 +672,29 @@ fn gen_statement(
                     .global => {
                         utils.todo("Need to implement loading from a global\n", .{});
                     },
+                    .immediate => {
+                        // switch (exprRef.type) {
+                        //     .null_ => {
+                        //         // if it null we need somewhere to assign it to!
+                        //         var assignRef = try fun.getNamedRef(ir, toName, bb);
+
+                        //         // generate the store instruction
+                        //         const nullInst = Inst.store(assignRef, exprRef);
+                        //         try fun.addAnonInst(bb, nullInst);
+                        //         nullFlag = true;
+                        //     },
+                        //     else => {
+                        //         utils.todo("undefined behavior on imm assignment", .{});
+                        //     },
+                        // }
+                    },
                     else => {
-                        utils.todo("Cannot assign to an unknown param type\n", .{});
+                        ast.printNodeLine(node.*);
+                        utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(exprRef.kind)});
                     },
                 }
-                if (selfRef != null) {
+
+                if (selfRef != null and nullFlag == false) {
                     switch (selfRef.?.kind) {
                         .local => {},
                         .param => {
@@ -1575,9 +1594,16 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     std.debug.print("{s}\n", .{str});
 // }
 //
-test "phi.struct_inter_funcs" {
+// test "phi.struct_inter_funcs" {
+//     errdefer log.print();
+//     const name = @embedFile("../inter_fun_structs.mini");
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+//
+test "phi_stats" {
     errdefer log.print();
-    const name = @embedFile("../inter_fun_structs.mini");
+    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/stats/stats.mini");
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
