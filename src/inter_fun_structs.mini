@@ -1,0 +1,20 @@
+
+struct Node {
+	struct Node n;
+	int a;
+};
+
+fun comparevalue(struct Node head) void {
+	struct Node currnode;
+	currnode = head;
+	print currnode.a endl;
+}
+
+fun main() void{
+	struct Node head;
+	head = new Node;
+	head.n = new Node;
+	head.n.a = 2;
+	head.a = 1;
+	comparevalue(head);
+}
