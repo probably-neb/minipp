@@ -181,6 +181,10 @@ pub const GlobalsList = struct {
     pub fn len(self: *const GlobalsList) usize {
         return self.items.len;
     }
+
+    pub fn contains(self: *const GlobalsList, name: StrID) bool {
+        return self.items.contains(name);
+    }
 };
 
 pub const FunctionList = struct {
@@ -251,6 +255,20 @@ pub const Function = struct {
         }
     }
 
+    pub fn mapUsesBBFromCFG(self: *Function, ir: *IR) !void {
+        for (self.cfg.postOrder.items) |cfgBlockID| {
+            const cfgBock = self.cfg.blocks.items[cfgBlockID];
+            const bbID = self.cfgToBBs.get(cfgBlockID).?;
+            for (cfgBock.typedIdents.items) |ident| {
+                var redIdent = ir.reduceChainToFirstIdent(ident);
+                var bb = self.bbs.get(bbID);
+                if (!bb.uses.contains(redIdent)) {
+                    try bb.uses.put(redIdent, true);
+                }
+            }
+        }
+    }
+
     pub fn addPhiEntry(self: *Function, bbDest: BasicBlock.ID, ident: IR.StrId, bbFrom: Label, ref: Ref) !void {
         // check if an entry already exists
         // if it does, then just update the ref
@@ -271,7 +289,8 @@ pub const Function = struct {
         const instId = phiInstReg.inst;
 
         // add the phi inst to the block's phi map
-        try block.phiMap.put(ident, instId);
+        try block.addPhiInst(instId, ident);
+
         self.bbs.set(bbDest, block);
     }
 
@@ -472,7 +491,7 @@ pub const Function = struct {
 
     pub const NotFoundError = error{ OutOfMemory, UnboundIdentifier, AllocFailed };
 
-    pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: BasicBlock.ID) NotFoundError!Ref {
+    pub fn getNamedRef(self: *Function, ir: *IR, name: StrID, bb: BasicBlock.ID) NotFoundError!Ref {
         const namedRef = try self.getNamedRefInner(ir, name, bb);
         if (self.returnReg == null) return namedRef;
         if (namedRef.i == self.returnReg.?) {
@@ -481,7 +500,7 @@ pub const Function = struct {
         return namedRef;
     }
 
-    pub fn getNamedRefNoAdd(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!?Ref {
+    pub fn getNamedRefNoAdd(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!?Ref {
         if (name != IR.InternPool.NULL) {
             std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
         } else {
@@ -499,12 +518,16 @@ pub const Function = struct {
         defer visited.deinit();
         try queue.append(bb);
         try visited.put(bb, true);
+        var flagUsed: bool = false;
         while (queue.items.len > 0) {
             const current = queue.orderedRemove(0);
             // std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
             if (self.bbs.get(current).versionMap.contains(name)) {
                 // std.debug.print("found in block {d}\n", .{current});
                 return self.bbs.get(current).versionMap.get(name).?;
+            }
+            if (self.bbs.get(current).uses.contains(name)) {
+                flagUsed = true;
             }
             for (self.bbs.get(current).incomers.items) |incomer| {
                 if (visited.contains(incomer)) {
@@ -514,16 +537,26 @@ pub const Function = struct {
                 try visited.put(incomer, true);
             }
         }
+
+        if (self.bbs.get(IR.Function.entryBBID).versionMap.contains(name)) {
+            return self.bbs.get(IR.Function.entryBBID).versionMap.get(name).?;
+        }
         // we have not found it, we have traversed the tree all the way up! oh no!
 
         // checks the function's parameters
         if (self.paramRegs.contains(name)) {
             const paramRegID = self.paramRegs.get(name).?;
             const paramReg = self.regs.get(paramRegID);
-            return Ref.fromReg(paramReg, self);
+            return Ref.fromReg(paramReg, self, ir);
         }
         // check if it is one of the defined items of the block
-        if (self.typesMap.contains(name)) {
+        if (self.typesMap.contains(name) and !ir.globals.contains(name)) {
+            if (flagUsed) {
+                // lets just make a new one this should only happen on assignment(I hope lol)
+                const declType = self.typesMap.get(name).?;
+                const ref = Ref.local(0, name, declType);
+                return ref;
+            }
             return null;
         }
 
@@ -552,83 +585,23 @@ pub const Function = struct {
         return error.UnboundIdentifier;
     }
 
-    pub fn getNamedRefInner(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
-        if (name != IR.InternPool.NULL) {
-            std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
-        } else {
-            std.debug.print("getting ref for NULL\n", .{});
-        }
-        // check if the register is in the current block
-        if (self.bbs.get(bb).versionMap.contains(name)) {
-            return self.bbs.get(bb).versionMap.get(name).?;
-        }
-
-        // do bfs to find the in the incoming blocks
-        var queue = std.ArrayList(BasicBlock.ID).init(self.alloc);
-        defer queue.deinit();
-        var visited = std.AutoHashMap(BasicBlock.ID, bool).init(self.alloc);
-        defer visited.deinit();
-        try queue.append(bb);
-        try visited.put(bb, true);
-        while (queue.items.len > 0) {
-            const current = queue.orderedRemove(0);
-            // std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
-            if (self.bbs.get(current).versionMap.contains(name)) {
-                // std.debug.print("found in block {d}\n", .{current});
-                return self.bbs.get(current).versionMap.get(name).?;
-            }
-            for (self.bbs.get(current).incomers.items) |incomer| {
-                if (visited.contains(incomer)) {
-                    continue;
-                }
-                try queue.append(incomer);
-                try visited.put(incomer, true);
-            }
-        }
-        // we have not found it, we have traversed the tree all the way up! oh no!
-
-        // checks the function's parameters
-        if (self.paramRegs.contains(name)) {
-            const paramRegID = self.paramRegs.get(name).?;
-            const paramReg = self.regs.get(paramRegID);
-            return Ref.fromReg(paramReg, self);
-        }
+    pub fn getNamedRefInner(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
+        var ref = try self.getNamedRefNoAdd(ir, name, bb);
+        if (ref != null) return ref.?;
 
         // check if it is one of the defined items of the block
-        if (self.typesMap.contains(name)) {
+        if (self.typesMap.contains(name) and !ir.globals.contains(name)) {
             // add it to the entry block
             const declType = self.typesMap.get(name).?;
             const alloca = Inst.alloca(declType);
             const allocReg = try self.addNamedInst(Function.entryBBID, alloca, name, declType);
             // add a load to the current block
-            const allocRef = IR.Ref.fromReg(allocReg, self);
+            const allocRef = IR.Ref.fromReg(allocReg, self, ir);
             const load = Inst.load(declType, allocRef);
             const loadReg = try self.addNamedInst(Function.entryBBID, load, name, declType);
-            const loadRef = IR.Ref.fromReg(loadReg, self);
+            const loadRef = IR.Ref.fromReg(loadReg, self, ir);
             try self.bbs.get(Function.entryBBID).versionMap.put(name, loadRef);
             return Ref.fromRegLocal(loadReg);
-        }
-
-        // okay she's nowhere...
-        // check if its a function?
-
-        if (ir.funcs.items.safeIndexOf(name)) |funcID| {
-            const func = ir.funcs.items.entry(funcID);
-            return Ref.global(funcID, func.name, func.returnType);
-        }
-
-        log.trace("fun.name not found := {s}\n", .{
-            ir.getIdent(name),
-        });
-
-        for (ir.funcs.items.items) |func| {
-            log.trace("func := {s}\n", .{ir.getIdent(func.name)});
-        }
-        // check if its a global
-        // TODO: add it so that global vars are loaded on use, will have to do the same on store
-        if (ir.globals.items.safeIndexOf(name)) |globalID| {
-            const global = ir.globals.items.entry(globalID);
-            return Ref.global(globalID, global.name, global.type);
         }
 
         return error.UnboundIdentifier;
@@ -1954,7 +1927,7 @@ pub const BasicBlock = struct {
     incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
     defs: Set.Set(StrID),
-    uses: Set.Set(StrID),
+    uses: std.AutoHashMap(StrID, bool),
     // a map of strID to the last definition within this block
     versionMap: std.AutoHashMap(StrID, Ref),
     // and ORDERED list of the instruction ids of the instructions in this block
@@ -2096,6 +2069,7 @@ pub const BasicBlock = struct {
     pub fn addPhiInst(self: *BasicBlock, instID: Function.InstID, ident: StrID) !void {
         try self.phiInsts.append(instID);
         try self.phiMap.put(ident, instID);
+        try self.uses.put(ident, true);
     }
 
     pub fn getPhi(self: *BasicBlock, ident: StrID) ?Function.InstID {
@@ -2114,7 +2088,7 @@ pub const BasicBlock = struct {
         return .{
             .incomers = std.ArrayList(Label).init(alloc),
             .defs = Set.Set(StrID).init(),
-            .uses = Set.Set(StrID).init(),
+            .uses = std.AutoHashMap(StrID, bool).init(alloc),
             .versionMap = std.AutoHashMap(StrID, Ref).init(alloc),
             .outgoers = [2]?Label{ null, null },
             .insts = List.init(alloc),
@@ -2679,7 +2653,8 @@ pub const Ref = struct {
     name: StrID,
     kind: Kind,
     type: Type,
-    extra: Function.InstID = 0,
+    // used for when a thing is assigned an immediate and then assigned something else
+    extraImm: Kind = ._invalid,
     /// Ref used when no ref needed
     /// FIXME: add deadbeef here too
     pub const default = Ref.local(69420, InternPool.NULL, .void);
@@ -2735,6 +2710,7 @@ pub const Ref = struct {
         // this makes things simpler trust me bro
         immediate_u32,
         param,
+        _invalid,
         pub fn debugPrint(self: Kind) void {
             switch (self) {
                 .local => std.debug.print("local", .{}),
@@ -2743,6 +2719,7 @@ pub const Ref = struct {
                 .immediate => std.debug.print("immediate", .{}),
                 .immediate_u32 => std.debug.print("immediate_u32", .{}),
                 .param => std.debug.print("param", .{}),
+                ._invalid => std.debug.print("_invalid", .{}),
             }
         }
     };
@@ -2751,9 +2728,12 @@ pub const Ref = struct {
         return Ref{ .i = reg.id, .kind = .local, .name = reg.name, .type = reg.type };
     }
 
-    pub inline fn fromReg(reg: Register, fun: *Function) Ref {
+    pub inline fn fromReg(reg: Register, fun: *Function, ir: *IR) Ref {
         if (fun.paramRegs.contains(reg.name)) {
             return Ref{ .i = reg.id, .kind = .param, .name = reg.name, .type = reg.type };
+        }
+        if (ir.globals.contains(reg.name)) {
+            return Ref{ .i = reg.id, .kind = .global, .name = reg.name, .type = reg.type };
         }
         return Ref{ .i = reg.id, .kind = .local, .name = reg.name, .type = reg.type };
     }

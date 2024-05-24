@@ -589,6 +589,7 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
         // really it's just that everything is interned
         .immediate => return Rope.pair("", if (ref.i == IR.InternPool.NULL) "null" else ir.getIdent(ref.i)),
         .immediate_u32 => return Rope.just_num(ref.i),
+        ._invalid => utils.todo("invalid ref kind of _invalid\n", .{}),
     }
 }
 
