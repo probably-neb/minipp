@@ -212,6 +212,7 @@ pub fn gen_function(
         const parReg = IR.Register{ .id = parRegID, .name = name, .type = typ, .inst = parInstID, .bb = 0 };
         var parRef = IR.Ref.fromRegLocal(parReg);
         parRef.kind = .param;
+        parRef.i = parRegID;
         var inst = IR.Inst.param(parRef, typ);
 
         // save the register and the inst
@@ -504,7 +505,9 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
         if (statments.items.len > 1) unreachable;
         var condRef = try gen_expression(ir, ast, fun, bbID, statments.items[0]);
         // condRef.name = IR.InternPool.NULL;
-        condRef = fun.renameRef(ir, condRef, IR.InternPool.NULL);
+        if (condRef.kind != .param) {
+            condRef = fun.renameRefAnon(ir, condRef);
+        }
         //TODO generate the control flow jump
         const brInst = Inst.br(condRef, IR.Ref.label(bb.outgoers[0].?), IR.Ref.label(bb.outgoers[1].?));
         try fun.addCtrlFlowInst(bbID, brInst);
@@ -666,11 +669,22 @@ fn gen_statement(
             // FIXME: handle selector chain
             if (to.chain) |chain| {
                 // if this is a selector chain, then it is assumed that there is a def prev
-
                 selfRef = try fun.getNamedRef(ir, toName, bb);
+                if (selfRef.?.kind == .global) {
+                    // load it first
+                    const loadInst = Inst.load(selfRef.?.type, selfRef.?);
+                    var exprReg = try fun.addInst(bb, loadInst, selfRef.?.type);
+                    selfRef = IR.Ref.fromRegLocal(exprReg);
+                }
 
                 var selectorChainRef = try gen_selector_chain(ir, ast, fun, bb, selfRef.?, chain, toName);
                 // need to store the result of the expression into the selector chain
+                // if (exprRef.kind == .global) {
+                //     // load it first
+                //     const loadInst = Inst.load(exprRef.type, exprRef);
+                //     var exprReg = try fun.addInst(bb, loadInst, exprRef.type);
+                //     exprRef = IR.Ref.fromRegLocal(exprReg);
+                // }
                 const inst = Inst.store(
                     selectorChainRef, // to
                     exprRef, // from
@@ -1750,7 +1764,7 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     errdefer log.print();
 //     const name = @embedFile("../inter_fun_structs.mini");
 //     var str = try inputToIRStringHeader(name, testAlloc);
-//     std.debug.print("{s}\n", .{str});
+//     std.debparamug.print("{s}\n", .{str});
 // }
 //
 // test "phi_stats" {
@@ -1769,7 +1783,7 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //
 test "phi_stats" {
     errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/hailstone/hailstone.mini");
+    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/brett/brett.mini");
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }

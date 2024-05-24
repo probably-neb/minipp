@@ -346,6 +346,31 @@ pub const Function = struct {
         unreachable;
     }
 
+    pub fn renameRefAnon(
+        self: *Function,
+        ir: *IR,
+        ref: Ref,
+    ) Ref {
+        // check the kind of the ref
+        switch (ref.kind) {
+            .local => {
+                return self.renameLocalRef(ref, IR.InternPool.NULL);
+            },
+            .param => {
+                var ref_ = ref;
+                ref_.name = IR.InternPool.NULL;
+                return ref_;
+            },
+            .global => {
+                return self.renameGlobalRef(ir, ref, IR.InternPool.NULL);
+            },
+            else => {
+                std.debug.panic("Unknown ref kind: {any}\n", .{ref.kind});
+            },
+        }
+        unreachable;
+    }
+
     pub fn renameParamRef(self: *Function, ir: *IR, ref: Ref, name: StrID, inst: IR.Function.InstID) Ref {
         utils.todo("This should be removed in refactoring to params as reg", .{});
         _ = self;
