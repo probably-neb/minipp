@@ -415,6 +415,19 @@ pub fn gen_function(
             _ = try fun.addInst(fun.exitBBID, instRet, fun.returnType);
         }
     } else {
+        var anyDefault: bool = true;
+        var exitBB = fun.bbs.get(fun.exitBBID);
+        while (anyDefault and exitBB.phiInsts.items.len > 0) {
+            anyDefault = false;
+            for (exitBB.phiInsts.items, 0..) |entryInstID, idx| {
+                var entryInst = fun.insts.get(entryInstID);
+                if (entryInst.res.name != retReg.name) {
+                    _ = exitBB.phiInsts.orderedRemove(idx);
+                    anyDefault = true;
+                    break;
+                }
+            }
+        }
         _ = try fun.addInst(fun.exitBBID, Inst.retVoid(), .void);
     }
 
@@ -1747,9 +1760,16 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     std.debug.print("{s}\n", .{str});
 // }
 //
-test "phi_hanoi" {
+// test "phi_hanoi" {
+//     errdefer log.print();
+//     const name = @embedFile("../hanoi_local.mini");
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+//
+test "phi_stats" {
     errdefer log.print();
-    const name = @embedFile("../hanoi_local.mini");
+    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/hailstone/hailstone.mini");
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
