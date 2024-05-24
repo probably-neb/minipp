@@ -279,6 +279,7 @@ pub fn gen_function(
 
     // link them all together
     try fun.linkBBsFromCFG();
+    try fun.mapUsesBBFromCFG(ir);
 
     // fill in the entry block with all used decls
     var defined = std.AutoHashMap(IR.StrID, bool).init(ir.alloc);
@@ -494,9 +495,6 @@ pub fn generateInstsFromCfg(ir: *IR, ast: *const Ast, fun: *IR.Function, cfgBloc
         //TODO generate the control flow jump
         const brInst = Inst.br(condRef, IR.Ref.label(bb.outgoers[0].?), IR.Ref.label(bb.outgoers[1].?));
         try fun.addCtrlFlowInst(bbID, brInst);
-        // const instID = try fun.insts.add(brInst);
-        // try fun.bbs.get(bb).insts.append(instID);
-        // try fun.bbs.get(bbID).versionMap.put(condRef.name, condRef);
 
         return;
     } else {
@@ -569,11 +567,16 @@ pub fn place_phi_functions(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode:
         var cfgBlockIter = fun.cfg.assignments.get(defStrID).?.keyIterator();
         while (cfgBlockIter.next()) |cfgBlockID_| {
             var cfgBlockID = cfgBlockID_.*;
-            if (!fun.defBlocks.contains(defStrID)) {
-                try fun.defBlocks.put(defStrID, std.ArrayList(IR.BasicBlock.ID).init(ir.alloc));
+            var final_string = ir.reduceChainToFirstIdent(defStrID);
+            // check if its a global
+            if (ir.globals.contains(final_string)) {
+                continue;
+            }
+            if (!fun.defBlocks.contains(final_string)) {
+                try fun.defBlocks.put(final_string, std.ArrayList(IR.BasicBlock.ID).init(ir.alloc));
             }
             var bbBlockID = fun.cfgToBBs.get(cfgBlockID).?;
-            try fun.defBlocks.getPtr(defStrID).?.append(@truncate(bbBlockID));
+            try fun.defBlocks.getPtr(final_string).?.append(@truncate(bbBlockID));
         }
     }
     // for each variable a:
@@ -599,7 +602,10 @@ pub fn place_phi_functions(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode:
                 if (!assInBBPhi) {
                     // 		    insert-phi(y,a)
                     // 		    A(phi)[y] = A(phi)[y] U {a}
-                    _ = try IR.BasicBlock.addPhiWithPreds(dfBBID, fun, defStr);
+                    var phiInstID = try IR.BasicBlock.addPhiWithPreds(dfBBID, fun, defStr);
+                    var phiInst = fun.insts.get(phiInstID);
+                    var phiRef = phiInst.res;
+                    try fun.bbs.get(dfBBID).versionMap.put(defStr, phiRef);
 
                     // 		    if a does not belong to the set A(orig)[y]
                     // iterate through the cfgBlock's assignments and see if any of them are the same as defStr
@@ -648,10 +654,9 @@ fn gen_statement(
             if (to.chain) |chain| {
                 // if this is a selector chain, then it is assumed that there is a def prev
 
-                var assignRef = try fun.getNamedRef(ir, toName, bb);
-                assignRef.name = toName;
+                selfRef = try fun.getNamedRef(ir, toName, bb);
 
-                var selectorChainRef = try gen_selector_chain(ir, ast, fun, bb, assignRef, chain, toName);
+                var selectorChainRef = try gen_selector_chain(ir, ast, fun, bb, selfRef.?, chain, toName);
                 // need to store the result of the expression into the selector chain
                 const inst = Inst.store(
                     selectorChainRef, // to
@@ -662,51 +667,170 @@ fn gen_statement(
                 var nullFlag: bool = false;
                 switch (exprRef.kind) {
                     .local => {
-                        _ = fun.renameRef(ir, exprRef, toName);
-                        try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
-                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                        var immFlagGaurd = true;
+                        while (immFlagGaurd) {
+                            immFlagGaurd = false;
+                            if (selfRef != null and nullFlag == false) {
+                                switch (selfRef.?.kind) {
+                                    .local => {
+                                        _ = fun.renameRef(ir, exprRef, toName);
+                                        try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
+                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                    },
+                                    .param => {
+                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                    },
+                                    .global => {
+                                        const storeInst = Inst.store(selfRef.?, exprRef);
+                                        try fun.addAnonInst(bb, storeInst);
+                                    },
+                                    .immediate => {
+                                        // we are not doing no constant folding here, use the immediate information
+                                        if (immFlagGaurd == true) {
+                                            utils.todo("Cannot assign to an immediate\n", .{});
+                                        }
+                                        switch (selfRef.?.extraImm) {
+                                            ._invalid => {
+                                                selfRef = try fun.getNamedRef(ir, toName, bb);
+                                                // utils.todo("invalid extraImm\n", .{});
+                                            },
+                                            else => {},
+                                        }
+                                        selfRef.?.kind = selfRef.?.extraImm;
+                                        immFlagGaurd = true;
+                                    },
+                                    else => {
+                                        utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
+                                    },
+                                }
+                            } else {
+                                unreachable;
+                            }
+                        }
                     },
                     .param => {
-                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                        var immFlagGaurd = true;
+                        while (immFlagGaurd) {
+                            immFlagGaurd = false;
+                            if (selfRef != null and nullFlag == false) {
+                                switch (selfRef.?.kind) {
+                                    .local => {
+                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                    },
+                                    .param => {
+                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                    },
+                                    .global => {
+                                        const storeInst = Inst.store(selfRef.?, exprRef);
+                                        try fun.addAnonInst(bb, storeInst);
+                                    },
+                                    .immediate => {
+                                        // we are not doing no constant folding here, use the immediate information
+                                        if (immFlagGaurd == true) {
+                                            utils.todo("Cannot assign to an immediate\n", .{});
+                                        }
+                                        switch (selfRef.?.extraImm) {
+                                            ._invalid => {
+                                                selfRef = try fun.getNamedRef(ir, toName, bb);
+                                                // utils.todo("invalid extraImm\n", .{});
+                                            },
+                                            else => {},
+                                        }
+                                        selfRef.?.kind = selfRef.?.extraImm;
+                                        immFlagGaurd = true;
+                                    },
+                                    else => {
+                                        utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
+                                    },
+                                }
+                            } else {
+                                unreachable;
+                            }
+                        }
                     },
                     .global => {
-                        utils.todo("Need to implement loading from a global\n", .{});
+                        var immFlagGaurd = true;
+                        while (immFlagGaurd) {
+                            immFlagGaurd = false;
+                            if (selfRef != null and nullFlag == false) {
+                                switch (selfRef.?.kind) {
+                                    .local => {
+                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                    },
+                                    .param => {
+                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                    },
+                                    .global => {
+                                        const storeInst = Inst.store(selfRef.?, exprRef);
+                                        try fun.addAnonInst(bb, storeInst);
+                                    },
+                                    .immediate => {
+                                        // we are not doing no constant folding here, use the immediate information
+                                        if (immFlagGaurd == true) {
+                                            utils.todo("Cannot assign to an immediate\n", .{});
+                                        }
+                                        switch (selfRef.?.extraImm) {
+                                            ._invalid => {
+                                                selfRef = try fun.getNamedRef(ir, toName, bb);
+                                                // utils.todo("invalid extraImm\n", .{});
+                                            },
+                                            else => {},
+                                        }
+                                        selfRef.?.kind = selfRef.?.extraImm;
+                                        immFlagGaurd = true;
+                                    },
+                                    else => {
+                                        utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
+                                    },
+                                }
+                            } else {
+                                unreachable;
+                            }
+                        }
                     },
                     .immediate => {
-                        // switch (exprRef.type) {
-                        //     .null_ => {
-                        //         // if it null we need somewhere to assign it to!
-                        //         var assignRef = try fun.getNamedRef(ir, toName, bb);
+                        switch (exprRef.type) {
+                            .null_ => {
+                                // if it null we need somewhere to assign it to!
+                                // var assignRef = try fun.getNamedRef(ir, toName, bb);
 
-                        //         // generate the store instruction
-                        //         const nullInst = Inst.store(assignRef, exprRef);
-                        //         try fun.addAnonInst(bb, nullInst);
-                        //         nullFlag = true;
-                        //     },
-                        //     else => {
-                        //         utils.todo("undefined behavior on imm assignment", .{});
-                        //     },
-                        // }
+                                // generate the store instruction
+                                // const nullInst = Inst.store(assignRef, exprRef);
+                                // try fun.addAnonInst(bb, nullInst);
+                                if (selfRef != null) {
+                                    switch (selfRef.?.kind) {
+                                        .local => {
+                                            _ = try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                            exprRef.extraImm = selfRef.?.kind;
+                                        },
+                                        .param => {
+                                            _ = try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                            exprRef.extraImm = selfRef.?.kind;
+                                        },
+                                        .global => {
+                                            const storeInst = Inst.store(selfRef.?, exprRef);
+                                            try fun.addAnonInst(bb, storeInst);
+                                        },
+                                        else => {
+                                            utils.todo("Cannot assign to an unknown param type\n", .{});
+                                        },
+                                    }
+                                }
+                                nullFlag = true;
+                            },
+                            else => {
+                                utils.todo("undefined behavior on imm assignment", .{});
+                            },
+                        }
                     },
                     else => {
                         ast.printNodeLine(node.*);
                         utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(exprRef.kind)});
                     },
                 }
-
-                if (selfRef != null and nullFlag == false) {
-                    switch (selfRef.?.kind) {
-                        .local => {},
-                        .param => {
-                            try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                        },
-                        .global => {
-                            utils.todo("Need to implement storing to a global\n", .{});
-                        },
-                        else => {
-                            utils.todo("Cannot assign to an unknown param type\n", .{});
-                        },
-                    }
+                if (selfRef == null and nullFlag == false) {
+                    selfRef = try fun.getNamedRef(ir, toName, bb);
+                    utils.todo("Cannot assign to an unknown param type\n", .{});
                 }
             }
         },
@@ -779,7 +903,7 @@ fn gen_expression(
             };
             const unopName = ir.internIdent("tmp.unop");
             const res = try fun.addNamedInst(bb, inst, unopName, ty);
-            return IR.Ref.fromReg(res, fun);
+            return IR.Ref.fromReg(res, fun, ir);
         },
         .BinaryOperation => |binary| {
             const lhsExpr = ast.get(binary.lhs).*;
@@ -813,7 +937,7 @@ fn gen_expression(
             // const name = join_names(lhsRef.name, rhsRef.name);
             const binopName = ir.internIdent("tmp.binop");
             const res = try fun.addNamedInst(bb, inst, binopName, ty);
-            return IR.Ref.fromReg(res, fun);
+            return IR.Ref.fromReg(res, fun, ir);
         },
         .Selector => |sel| {
             const factor = ast.get(sel.factor).kind.Factor;
@@ -824,7 +948,12 @@ fn gen_expression(
                 .Identifier => ident: {
                     var identID = ir.internToken(ast, atom.token);
                     var ref = try fun.getNamedRef(ir, identID, bb);
-                    try fun.bbs.get(bb).versionMap.put(identID, ref);
+                    switch (ref.kind) {
+                        .global => {},
+                        else => {
+                            try fun.bbs.get(bb).versionMap.put(identID, ref);
+                        },
+                    }
                     switch (ref.kind) {
                         .param => {
                             // note that the ref is in the type map under a different name,
@@ -835,7 +964,17 @@ fn gen_expression(
                             ref.name = identID;
                         },
                         .global => {
-                            utils.todo("Need to implement loading from a global\n", .{});
+                            // load the global
+                            const loadInst = Inst.load(ref.type, ref);
+                            const name = ir.internIdent("load_global");
+                            const reg = try fun.addNamedInst(bb, loadInst, name, ref.type);
+                            ref = IR.Ref.fromReg(reg, fun, ir);
+                            // we do not want this tracked so we do not add it to the version map
+                        },
+                        .immediate => {
+                            // note that the ref is in the type map under a different name,
+                            // but is holding onto its own value so that if it is used it
+                            // does not use the wrong name
                         },
                         else => {
                             utils.todo("Cannot assign to an unknown param type\n", .{});
@@ -938,7 +1077,7 @@ fn gen_expression(
                     // and this would add no new abstractions to the IR
                     break :null IR.Ref.immnull();
                 },
-                .Invocation => IR.Ref.fromReg(try gen_invocation(ir, fun, ast, bb, atom), fun),
+                .Invocation => IR.Ref.fromReg(try gen_invocation(ir, fun, ast, bb, atom), fun, ir),
                 .Expression => try gen_expression(ir, ast, fun, bb, atom.*),
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
             };
@@ -948,7 +1087,7 @@ fn gen_expression(
                 // we need to add a load here
                 const loadInst = Inst.load(resultRef.type, resultRef);
                 const loadRes = try fun.addInst(bb, loadInst, resultRef.type);
-                resultRef = IR.Ref.fromReg(loadRes, fun);
+                resultRef = IR.Ref.fromReg(loadRes, fun, ir);
             }
             return resultRef;
         },
@@ -993,14 +1132,14 @@ fn gen_expression(
             const i64ResReg = blk: {
                 // sign extend the i32 put into the @.read_scratch
                 // global to an i64
-                const resRef = IR.Ref.fromReg(resReg, fun);
+                const resRef = IR.Ref.fromReg(resReg, fun, ir);
                 const sextInst = Inst.sext(resRef, .int);
                 const sextResReg = try fun.addInst(bb, sextInst, .int);
                 break :blk sextResReg;
             };
 
             // return reference to the sign extended i64 value we read
-            return IR.Ref.fromReg(i64ResReg, fun);
+            return IR.Ref.fromReg(i64ResReg, fun, ir);
         },
         else => utils.todo("gen_expression: {s}\n", .{@tagName(exprNode.kind)}),
     }
@@ -1096,7 +1235,7 @@ fn gen_free_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, ptrRef: IR.
     const castRef = blk: {
         const castInst = Inst.bitcast(ptrRef, .i8);
         const castReg = try fun.addInst(bb, castInst, .i8);
-        const castRef = IR.Ref.fromReg(castReg, fun);
+        const castRef = IR.Ref.fromReg(castReg, fun, ir);
         break :blk castRef;
     };
 
@@ -1181,7 +1320,7 @@ fn gen_selector_chain(
         const indexRef = try gen_expression(ir, ast, fun, bb, exprNode);
         const inst = Inst.gep(startRef.type, startRef, indexRef);
         var reg = try fun.addNamedInst(bb, inst, arrayNameID, indexRef.type);
-        var ref = IR.Ref.fromReg(reg, fun);
+        var ref = IR.Ref.fromReg(reg, fun, ir);
         return ref;
     }
     var chainName = std.ArrayList(u8).init(ir.alloc);
@@ -1258,12 +1397,12 @@ fn gen_selector_chain(
             const loadInst = Inst.load(structType.getType(), ref);
             // maybe also have to change the name of the struct type here
             reg = try fun.addNamedInst(bb, loadInst, structType.name, structType.getType());
-            break :blk IR.Ref.fromReg(reg, fun);
+            break :blk IR.Ref.fromReg(reg, fun, ir);
         };
         inst = IR.Inst.gep(structType.getType(), loadRef, IR.Ref.immu32(fieldIndex, .i32));
 
         reg = try fun.addNamedInst(bb, inst, chainLinkNameID, field.type);
-        ref = IR.Ref.fromReg(reg, fun);
+        ref = IR.Ref.fromReg(reg, fun, ir);
     }
     return ref;
 }
@@ -1601,9 +1740,16 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     std.debug.print("{s}\n", .{str});
 // }
 //
-test "phi_stats" {
+// test "phi_stats" {
+//     errdefer log.print();
+//     const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/stats/stats.mini");
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+//
+test "phi_hanoi" {
     errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/stats/stats.mini");
+    const name = @embedFile("../hanoi_local.mini");
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
