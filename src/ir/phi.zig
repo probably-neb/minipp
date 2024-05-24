@@ -186,9 +186,9 @@ pub fn gen_function(
         const decl = declNode.kind.TypedIdentifier;
         const declName = ir.internIdent(decl.getName(ast));
         // check if ir.funcs contains declName
-        if (ir.funcs.contains(declName)) {
-            return error.CannotNameVarSameAsFunction;
-        }
+        // if (ir.funcs.contains(declName)) {
+        //     return error.CannotNameVarSameAsFunction;
+        // }
         const declType = ir.astTypeToIRType(decl.getType(ast));
         try tmpTypesMap.put(declName, declType);
     }
@@ -197,9 +197,10 @@ pub fn gen_function(
     for (fun.params.items) |item| {
         const name = item.name;
         // check if ir.funcs contains name
-        if (ir.funcs.contains(name)) {
-            return error.CannotNameParamSameAsFunction;
-        }
+        // if (ir.funcs.contains(name)) {
+        //     std.debug.print
+        //     return error.CannotNameParamSameAsFunction;
+        // }
         const typ = item.type;
         try tmpTypesMap.put(name, typ);
 
@@ -257,9 +258,9 @@ pub fn gen_function(
             list.deinit();
         } else {
             // check that the name is not the same as a function
-            if (ir.funcs.contains(declNode)) {
-                return error.CannotNameVarSameAsFunction;
-            }
+            // if (ir.funcs.contains(declNode)) {
+            //     return error.CannotNameVarSameAsFunction;
+            // }
             try fun.typesMap.put(declNode, preType.?);
         }
     }
@@ -331,14 +332,14 @@ pub fn gen_function(
         if (bbid == IR.Function.entryBBID or bbid == fun.exitBBID) {
             continue;
         }
-        std.debug.print("Looking for phi in bb: {s}\n", .{bb.name});
+        // std.debug.print("Looking for phi in bb: {s}\n", .{bb.name});
         var phiIter = bb.phiMap.keyIterator();
         while (phiIter.next()) |phiName| {
-            std.debug.print("Looking for phiName: {s}\n", .{ir.getIdent(phiName.*)});
+            // std.debug.print("Looking for phiName: {s}\n", .{ir.getIdent(phiName.*)});
             // get the phi instruction
             var phiInstID = bb.phiMap.get(phiName.*).?;
             var phiInst = fun.insts.get(phiInstID);
-            phiInst.res.debugPrintWithName(ir);
+            // phiInst.res.debugPrintWithName(ir);
 
             // convert it to a phi instruction
             var phi = IR.Inst.Phi.get(phiInst.*);
@@ -354,20 +355,21 @@ pub fn gen_function(
                         utils.todo("phi node from the same block\n", .{});
                     }
                     var incomerBB = fun.bbs.get(incomerBBID);
-                    std.debug.print("looking for named ref in block {s}\n", .{incomerBB.name});
+                    // std.debug.print("looking for named ref in block {s}\n", .{incomerBB.name});
                     var ref = incomerBB.versionMap.get(phiName.*);
                     // not in the present block
                     if (ref == null) {
                         ref = try fun.getNamedRef(ir, phiName.*, incomerBBID);
-                        std.debug.print("found named ref from searching upwords\n", .{});
-                        ref.?.debugPrintWithName(ir);
-                    } else {
-                        std.debug.print("found named ref from version map\n", .{});
-                        ref.?.debugPrintWithName(ir);
                     }
+                    // std.debug.print("found named ref from searching upwords\n", .{});
+                    // ref.?.debugPrintWithName(ir);
+                    // } else {
+                    //     // std.debug.print("found named ref from version map\n", .{});
+                    //     ref.?.debugPrintWithName(ir);
+                    // }
                     var ref_ = ref.?;
                     phi.entries.items[idx].ref = ref_;
-                    std.debug.print("added entry\n", .{});
+                    // std.debug.print("added entry\n", .{});
                 }
             }
             // delete any entries that are default
@@ -1783,7 +1785,7 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //
 test "phi_stats" {
     errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/brett/brett.mini");
+    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/OptimizationBenchmark/OptimizationBenchmark.mini");
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
