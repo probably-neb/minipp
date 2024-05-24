@@ -212,6 +212,7 @@ pub const Function = struct {
     bbsToCFG: std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t),
     cfgToBBs: std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID),
     defBlocks: std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)),
+    declaredVars: std.AutoHashMap(StrID, Type),
     bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
     cfg: CfgFunction,
@@ -229,6 +230,26 @@ pub const Function = struct {
     params: ParamsList,
     typesMap: std.AutoHashMap(StrID, Type),
     pub const entryBBID: usize = 0;
+
+    pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type, params: []Param) Function {
+        return .{
+            .alloc = alloc,
+            .bbs = OrderedList(BasicBlock).init(alloc),
+            .name = name,
+            .returnType = returnType,
+            .regs = LookupTable(Register.ID, Register, Register.getID).init(alloc),
+            .params = ParamsList.init(params),
+            .insts = OrderedList(Inst).init(alloc),
+            .typesMap = std.AutoHashMap(StrID, Type).init(alloc),
+            .bbsToCFG = std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t).init(alloc),
+            .cfgToBBs = std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID).init(alloc),
+            .paramRegs = std.AutoHashMap(StrID, Register.ID).init(alloc),
+            .declaredVars = std.AutoHashMap(StrID, Type).init(alloc),
+            .exitBBID = 0,
+            .defBlocks = std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)).init(alloc),
+            .cfg = CfgFunction.init(alloc),
+        };
+    }
 
     pub fn identToType(self: *Function, ident: StrID) !Type {
         const protoType = self.typesMap.get(ident);
@@ -307,25 +328,6 @@ pub const Function = struct {
             return self.name;
         }
     };
-
-    pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type, params: []Param) Function {
-        return .{
-            .alloc = alloc,
-            .bbs = OrderedList(BasicBlock).init(alloc),
-            .name = name,
-            .returnType = returnType,
-            .regs = LookupTable(Register.ID, Register, Register.getID).init(alloc),
-            .params = ParamsList.init(params),
-            .insts = OrderedList(Inst).init(alloc),
-            .typesMap = std.AutoHashMap(StrID, Type).init(alloc),
-            .bbsToCFG = std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t).init(alloc),
-            .cfgToBBs = std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID).init(alloc),
-            .paramRegs = std.AutoHashMap(StrID, Register.ID).init(alloc),
-            .exitBBID = 0,
-            .defBlocks = std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)).init(alloc),
-            .cfg = CfgFunction.init(alloc),
-        };
-    }
 
     pub fn renameRef(self: *Function, ir: *IR, ref: Ref, name: StrID) Ref {
         // check the kind of the ref
@@ -516,8 +518,8 @@ pub const Function = struct {
 
     pub const NotFoundError = error{ OutOfMemory, UnboundIdentifier, AllocFailed };
 
-    pub fn getNamedRef(self: *Function, ir: *IR, name: StrID, bb: BasicBlock.ID) NotFoundError!Ref {
-        const namedRef = try self.getNamedRefInner(ir, name, bb);
+    pub fn getNamedRef(self: *Function, ir: *IR, name: StrID, bb: BasicBlock.ID, assignmentTOrAccessF: bool) NotFoundError!Ref {
+        const namedRef = try self.getNamedRefInner(ir, name, bb, assignmentTOrAccessF);
         if (self.returnReg == null) return namedRef;
         if (namedRef.i == self.returnReg.?) {
             self.retRegUsed = true;
@@ -543,16 +545,12 @@ pub const Function = struct {
         defer visited.deinit();
         try queue.append(bb);
         try visited.put(bb, true);
-        var flagUsed: bool = false;
         while (queue.items.len > 0) {
             const current = queue.orderedRemove(0);
             // std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
             if (self.bbs.get(current).versionMap.contains(name)) {
                 // std.debug.print("found in block {d}\n", .{current});
                 return self.bbs.get(current).versionMap.get(name).?;
-            }
-            if (self.bbs.get(current).uses.contains(name)) {
-                flagUsed = true;
             }
             for (self.bbs.get(current).incomers.items) |incomer| {
                 if (visited.contains(incomer)) {
@@ -574,18 +572,13 @@ pub const Function = struct {
             const paramReg = self.regs.get(paramRegID);
             return Ref.fromReg(paramReg, self, ir);
         }
-        // check if it is one of the defined items of the block
-        if (self.typesMap.contains(name) and !ir.globals.contains(name)) {
-            if (flagUsed) {
-                // lets just make a new one this should only happen on assignment(I hope lol)
-                const declType = self.typesMap.get(name).?;
-                const ref = Ref.local(0, name, declType);
-                return ref;
-            }
-            return null;
-        }
+        // now we have to check if its in the typesMap,
 
         // okay she's nowhere...
+        // if it is declared in this function return null, otherwise search on
+        if (self.declaredVars.contains(name)) {
+            return null;
+        }
         // check if its a function?
 
         if (ir.funcs.items.safeIndexOf(name)) |funcID| {
@@ -607,20 +600,29 @@ pub const Function = struct {
             return Ref.global(globalID, global.name, global.type);
         }
 
+        std.debug.print("name not found := {s}\n", .{
+            ir.getIdent(name),
+        });
         return error.UnboundIdentifier;
     }
 
-    pub fn getNamedRefInner(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
+    pub fn getNamedRefInner(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID, assignmentTOrAccessF: bool) NotFoundError!Ref {
         var ref = try self.getNamedRefNoAdd(ir, name, bb);
         if (ref != null) return ref.?;
 
-        // check if it is one of the defined items of the block
-        if (self.typesMap.contains(name) and !ir.globals.contains(name)) {
-            // add it to the entry block
+        // at this point we know that it is a declared variable, but it has not been used yet
+        // we can create a new register for it based on the passed (desired) outcome
+        if (assignmentTOrAccessF) {
+            // if this is anot assigned over -><- we boned
+            const declType = self.typesMap.get(name).?;
+            const refAss = Ref.local(0, name, declType);
+            return refAss;
+        } else {
+            // we need to create a new register for this in the entry block using alloca
             const declType = self.typesMap.get(name).?;
             const alloca = Inst.alloca(declType);
             const allocReg = try self.addNamedInst(Function.entryBBID, alloca, name, declType);
-            // add a load to the current block
+            // add a load also for those quircky girls
             const allocRef = IR.Ref.fromReg(allocReg, self, ir);
             const load = Inst.load(declType, allocRef);
             const loadReg = try self.addNamedInst(Function.entryBBID, load, name, declType);
