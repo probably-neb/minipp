@@ -526,11 +526,11 @@ pub const Function = struct {
     }
 
     pub fn getNamedRefNoAdd(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!?Ref {
-        if (name != IR.InternPool.NULL) {
-            std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
-        } else {
-            std.debug.print("getting ref for NULL\n", .{});
-        }
+        // if (name != IR.InternPool.NULL) {
+        //     std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
+        // } else {
+        //     std.debug.print("getting ref for NULL\n", .{});
+        // }
         // check if the register is in the current block
         if (self.bbs.get(bb).versionMap.contains(name)) {
             return self.bbs.get(bb).versionMap.get(name).?;
