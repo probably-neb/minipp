@@ -193,6 +193,7 @@ pub fn gen_function(
         try tmpTypesMap.put(declName, declType);
     }
 
+    // add the params to the types map
     for (fun.params.items) |item| {
         const name = item.name;
         // check if ir.funcs contains name
@@ -201,6 +202,22 @@ pub fn gen_function(
         }
         const typ = item.type;
         try tmpTypesMap.put(name, typ);
+
+        // also put the param into the registers
+
+        const parRegID = try fun.regs.add(undefined);
+        const parInstID = try fun.insts.add(undefined);
+
+        // FIXME: should create a bb that is like 0 or something that just holds the params, that is for later
+        const parReg = IR.Register{ .id = parRegID, .name = name, .type = typ, .inst = parInstID, .bb = 0 };
+        var parRef = IR.Ref.fromRegLocal(parReg);
+        parRef.kind = .param;
+        var inst = IR.Inst.param(parRef, typ);
+
+        // save the register and the inst
+        fun.regs.set(parRegID, parReg);
+        fun.insts.set(parInstID, inst);
+        try fun.paramRegs.put(name, parRegID);
     }
 
     // add globals to the types map
@@ -290,7 +307,7 @@ pub fn gen_function(
         // allocate a stack slot for the return value in the entry
         retReg = try fun.addNamedInst(entryBB, Inst.alloca(fun.returnType), retReg.name, fun.returnType);
         // load the stack slot so there is a defualt value
-        var loadInst = Inst.load(fun.returnType, IR.Ref.fromReg(retReg));
+        var loadInst = Inst.load(fun.returnType, IR.Ref.fromRegLocal(retReg));
         retReg = try fun.addInst(entryBB, loadInst, fun.returnType);
         // save it in the function for easy access later
         fun.setReturnReg(retReg.id);
@@ -634,7 +651,7 @@ fn gen_statement(
                 var assignRef = try fun.getNamedRef(ir, toName, bb);
                 assignRef.name = toName;
 
-                var selectorChainRef = try gen_selector_chain(ir, ast, fun, bb, assignRef, chain);
+                var selectorChainRef = try gen_selector_chain(ir, ast, fun, bb, assignRef, chain, toName);
                 // need to store the result of the expression into the selector chain
                 const inst = Inst.store(
                     selectorChainRef, // to
@@ -649,7 +666,7 @@ fn gen_statement(
                         try fun.bbs.get(bb).versionMap.put(name, exprRef);
                     },
                     .param => {
-                        // try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
                     },
                     .global => {
                         utils.todo("Need to implement loading from a global\n", .{});
@@ -743,7 +760,7 @@ fn gen_expression(
             };
             const unopName = ir.internIdent("tmp.unop");
             const res = try fun.addNamedInst(bb, inst, unopName, ty);
-            return IR.Ref.fromReg(res);
+            return IR.Ref.fromReg(res, fun);
         },
         .BinaryOperation => |binary| {
             const lhsExpr = ast.get(binary.lhs).*;
@@ -777,7 +794,7 @@ fn gen_expression(
             // const name = join_names(lhsRef.name, rhsRef.name);
             const binopName = ir.internIdent("tmp.binop");
             const res = try fun.addNamedInst(bb, inst, binopName, ty);
-            return IR.Ref.fromReg(res);
+            return IR.Ref.fromReg(res, fun);
         },
         .Selector => |sel| {
             const factor = ast.get(sel.factor).kind.Factor;
@@ -789,7 +806,22 @@ fn gen_expression(
                     var identID = ir.internToken(ast, atom.token);
                     var ref = try fun.getNamedRef(ir, identID, bb);
                     try fun.bbs.get(bb).versionMap.put(identID, ref);
-                    ref.name = identID;
+                    switch (ref.kind) {
+                        .param => {
+                            // note that the ref is in the type map under a different name,
+                            // but is holding onto its own value so that if it is used it
+                            // does not use the wrong name
+                        },
+                        .local => {
+                            ref.name = identID;
+                        },
+                        .global => {
+                            utils.todo("Need to implement loading from a global\n", .{});
+                        },
+                        else => {
+                            utils.todo("Cannot assign to an unknown param type\n", .{});
+                        },
+                    }
                     break :ident ref;
                 },
                 .False => false: {
@@ -798,7 +830,7 @@ fn gen_expression(
                     const orInst = Inst.or_(trueRef, falseRef);
                     const name = ir.internIdent("imm_false");
                     const res = try fun.addNamedInst(bb, orInst, name, .bool);
-                    break :false IR.Ref.fromReg(res);
+                    break :false IR.Ref.fromRegLocal(res);
                 },
                 .True => true: {
                     const trueRef = IR.Ref.immTrue();
@@ -806,7 +838,7 @@ fn gen_expression(
                     const orInst = Inst.or_(trueRef, falseRef);
                     const name = ir.internIdent("imm_true");
                     const res = try fun.addNamedInst(bb, orInst, name, .bool);
-                    break :true IR.Ref.fromReg(res);
+                    break :true IR.Ref.fromRegLocal(res);
                 },
                 .Number => num: {
                     const tok = atom.token;
@@ -818,7 +850,7 @@ fn gen_expression(
                     const inst = Inst.add(immRef, immRef2);
                     const name = ir.internIdent("imm_store");
                     const res = try fun.addNamedInst(bb, inst, name, .int);
-                    break :num IR.Ref.fromReg(res);
+                    break :num IR.Ref.fromRegLocal(res);
                 },
                 .New => |new| new: {
                     const structName = ir.internIdentNodeAt(ast, new.ident);
@@ -860,7 +892,7 @@ fn gen_expression(
                         // yielding reference to the *array* (i.e. [int x {len}]*)
                         const inst = Inst.alloca(arrType);
                         const reg = try fun.addNamedInst(bb, inst, allocName, arrType);
-                        const ref = IR.Ref.fromReg(reg);
+                        const ref = IR.Ref.fromRegLocal(reg);
                         break :alloca ref;
                     };
                     const cast = cast: {
@@ -869,7 +901,7 @@ fn gen_expression(
                         // (i.e. unknown length)
                         const inst = Inst.bitcast(alloca, .int_arr);
                         const reg = try fun.addNamedInst(bb, inst, bitcastName, .int_arr);
-                        const ref = IR.Ref.fromReg(reg);
+                        const ref = IR.Ref.fromRegLocal(reg);
                         break :cast ref;
                     };
                     break :newArr cast;
@@ -887,16 +919,17 @@ fn gen_expression(
                     // and this would add no new abstractions to the IR
                     break :null IR.Ref.immnull();
                 },
-                .Invocation => IR.Ref.fromReg(try gen_invocation(ir, fun, ast, bb, atom)),
+                .Invocation => IR.Ref.fromReg(try gen_invocation(ir, fun, ast, bb, atom), fun),
                 .Expression => try gen_expression(ir, ast, fun, bb, atom.*),
                 else => utils.todo("gen_expression.selector.factor: {s}\n", .{@tagName(atom.kind)}),
             };
             if (sel.chain) |chain| {
-                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain);
+                var identID = ir.internToken(ast, atom.token);
+                resultRef = try gen_selector_chain(ir, ast, fun, bb, resultRef, chain, identID);
                 // we need to add a load here
                 const loadInst = Inst.load(resultRef.type, resultRef);
                 const loadRes = try fun.addInst(bb, loadInst, resultRef.type);
-                resultRef = IR.Ref.fromReg(loadRes);
+                resultRef = IR.Ref.fromReg(loadRes, fun);
             }
             return resultRef;
         },
@@ -912,7 +945,7 @@ fn gen_expression(
                 const zeroIndex = IR.Ref.immediate(0, .i32);
                 const gepFmtPtr = Inst.gep(fmtRef.type, fmtRef, zeroIndex);
                 const res = try fun.addInst(bb, gepFmtPtr, .i8);
-                break :blk IR.Ref.fromReg(res);
+                break :blk IR.Ref.fromRegLocal(res);
             };
 
             // the reference to the scratch global whose pointer
@@ -941,14 +974,14 @@ fn gen_expression(
             const i64ResReg = blk: {
                 // sign extend the i32 put into the @.read_scratch
                 // global to an i64
-                const resRef = IR.Ref.fromReg(resReg);
+                const resRef = IR.Ref.fromReg(resReg, fun);
                 const sextInst = Inst.sext(resRef, .int);
                 const sextResReg = try fun.addInst(bb, sextInst, .int);
                 break :blk sextResReg;
             };
 
             // return reference to the sign extended i64 value we read
-            return IR.Ref.fromReg(i64ResReg);
+            return IR.Ref.fromReg(i64ResReg, fun);
         },
         else => utils.todo("gen_expression: {s}\n", .{@tagName(exprNode.kind)}),
     }
@@ -1023,7 +1056,7 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
         const mallocRef: IR.Ref = IR.Ref.malloc(ir);
         const mallocInst = Inst.call(.i8, mallocRef, args);
         const memReg = try fun.addNamedInst(bb, mallocInst, mallocName, .i8);
-        const memRef = IR.Ref.fromReg(memReg);
+        const memRef = IR.Ref.fromRegLocal(memReg);
         break :blk memRef;
     };
 
@@ -1031,7 +1064,7 @@ fn gen_malloc_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, s: IR.Str
     const resRef = blk: {
         const cast = Inst.bitcast(retRef, s.getType());
         const castReg = try fun.addNamedInst(bb, cast, bitcastName, s.getType());
-        const castRef = IR.Ref.fromReg(castReg);
+        const castRef = IR.Ref.fromRegLocal(castReg);
         break :blk castRef;
     };
     try fun.bbs.get(bb).versionMap.put(s.name, resRef);
@@ -1044,7 +1077,7 @@ fn gen_free_struct(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, ptrRef: IR.
     const castRef = blk: {
         const castInst = Inst.bitcast(ptrRef, .i8);
         const castReg = try fun.addInst(bb, castInst, .i8);
-        const castRef = IR.Ref.fromReg(castReg);
+        const castRef = IR.Ref.fromReg(castReg, fun);
         break :blk castRef;
     };
 
@@ -1076,7 +1109,7 @@ fn gen_print(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, expr: IR.Ref, nl:
         const zeroIndex = IR.Ref.immediate(0, .i32);
         const gepFmtPtr = Inst.gep(fmtRef.type, fmtRef, zeroIndex);
         const res = try fun.addInst(bb, gepFmtPtr, .i8);
-        break :blk IR.Ref.fromReg(res);
+        break :blk IR.Ref.fromRegLocal(res);
     };
     const printRef = IR.Ref.printf(ir);
     // the args are (i8* fmt, i64 num)
@@ -1106,6 +1139,7 @@ fn gen_selector_chain(
     bb: IR.BasicBlock.ID,
     startRef: IR.Ref,
     chainIndex: usize,
+    gen_name: IR.StrID,
 ) !IR.Ref {
     var chainLink = ast.get(chainIndex).kind.SelectorChain;
     if (startRef.type == .int_arr) {
@@ -1115,7 +1149,7 @@ fn gen_selector_chain(
         var arrayName = std.ArrayList(u8).init(ir.alloc);
         defer arrayName.deinit();
         const app_str = "_auf";
-        for (ir.getIdent(startRef.name)) |c| {
+        for (ir.getIdent(gen_name)) |c| {
             try arrayName.append(c);
         }
         for (app_str) |c| {
@@ -1128,12 +1162,12 @@ fn gen_selector_chain(
         const indexRef = try gen_expression(ir, ast, fun, bb, exprNode);
         const inst = Inst.gep(startRef.type, startRef, indexRef);
         var reg = try fun.addNamedInst(bb, inst, arrayNameID, indexRef.type);
-        var ref = IR.Ref.fromReg(reg);
+        var ref = IR.Ref.fromReg(reg, fun);
         return ref;
     }
     var chainName = std.ArrayList(u8).init(ir.alloc);
     defer chainName.deinit();
-    var startNameLit = ir.getIdent(startRef.name);
+    var startNameLit = ir.getIdent(gen_name);
     for (startNameLit) |c| {
         try chainName.append(c);
     }
@@ -1158,7 +1192,7 @@ fn gen_selector_chain(
     var inst = IR.Inst.gep(structType.getType(), startRef, IR.Ref.immu32(fieldIndex, .i32));
     var chainLinkNameID = ir.internIdent(try tmp_nae.toOwnedSlice());
     var reg = try fun.addNamedInst(bb, inst, chainLinkNameID, field.type);
-    var ref = IR.Ref.fromReg(reg);
+    var ref = IR.Ref.fromRegLocal(reg);
     var nextChainLink = chainLink.next;
     var prevField = field;
 
@@ -1184,8 +1218,8 @@ fn gen_selector_chain(
             utils.assert(exprNode.kind == .Expression, "chainLink.ident should be expression for chain off of int_array field", .{});
             const indexRef = try gen_expression(ir, ast, fun, bb, exprNode);
             inst = Inst.gep(startRef.type, startRef, indexRef);
-            reg = try fun.addNamedInst(bb, inst, startRef.name, indexRef.type);
-            ref = IR.Ref.fromReg(reg);
+            reg = try fun.addNamedInst(bb, inst, gen_name, indexRef.type);
+            ref = IR.Ref.fromRegLocal(reg);
             // if (selectorType == .Usage) {
             //     const loadInst = Inst.load(ref.type, ref);
             //     reg = try fun.addNamedInst(bb, loadInst, ref.name, ref.type);
@@ -1205,12 +1239,12 @@ fn gen_selector_chain(
             const loadInst = Inst.load(structType.getType(), ref);
             // maybe also have to change the name of the struct type here
             reg = try fun.addNamedInst(bb, loadInst, structType.name, structType.getType());
-            break :blk IR.Ref.fromReg(reg);
+            break :blk IR.Ref.fromReg(reg, fun);
         };
         inst = IR.Inst.gep(structType.getType(), loadRef, IR.Ref.immu32(fieldIndex, .i32));
 
         reg = try fun.addNamedInst(bb, inst, chainLinkNameID, field.type);
-        ref = IR.Ref.fromReg(reg);
+        ref = IR.Ref.fromReg(reg, fun);
     }
     return ref;
 }
