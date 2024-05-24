@@ -180,17 +180,12 @@ pub fn gen_function(
     fun.cfg = try IR.CfgFunction.generate(fun, ast, funNode, ir);
 
     var tmpTypesMap = std.AutoHashMap(IR.StrID, IR.Type).init(ir.alloc);
-    // generate map of decls to types in the function
-    var declsIter = funBody.iterLocalDecls(ast);
-    while (declsIter.next()) |declNode| {
-        const decl = declNode.kind.TypedIdentifier;
-        const declName = ir.internIdent(decl.getName(ast));
-        // check if ir.funcs contains declName
-        // if (ir.funcs.contains(declName)) {
-        //     return error.CannotNameVarSameAsFunction;
-        // }
-        const declType = ir.astTypeToIRType(decl.getType(ast));
-        try tmpTypesMap.put(declName, declType);
+
+    // add globals to the types map
+    for (ir.globals.items.items) |global| {
+        const name = global.name;
+        const typ = global.type;
+        try tmpTypesMap.put(name, typ);
     }
 
     // add the params to the types map
@@ -222,11 +217,18 @@ pub fn gen_function(
         try fun.paramRegs.put(name, parRegID);
     }
 
-    // add globals to the types map
-    for (ir.globals.items.items) |global| {
-        const name = global.name;
-        const typ = global.type;
-        try tmpTypesMap.put(name, typ);
+    // generate map of decls to types in the function
+    var declsIter = funBody.iterLocalDecls(ast);
+    while (declsIter.next()) |declNode| {
+        const decl = declNode.kind.TypedIdentifier;
+        const declName = ir.internIdent(decl.getName(ast));
+        // check if ir.funcs contains declName
+        // if (ir.funcs.contains(declName)) {
+        //     return error.CannotNameVarSameAsFunction;
+        // }
+        const declType = ir.astTypeToIRType(decl.getType(ast));
+        try tmpTypesMap.put(declName, declType);
+        try fun.declaredVars.put(declName, declType);
     }
 
     // convert the used decls into types
@@ -662,20 +664,20 @@ fn gen_statement(
             const toName = ir.internIdentNodeAt(ast, to.ident);
             // std.debug.print("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             var name = toName;
-            var selfRef = try fun.getNamedRefNoAdd(ir, toName, bb);
 
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).*;
+            // selfRef <- exprRef
             var exprRef = try gen_expression(ir, ast, fun, bb, exprNode);
+            var selfRef = try fun.getNamedRef(ir, toName, bb, true);
 
             // FIXME: handle selector chain
             if (to.chain) |chain| {
-                // if this is a selector chain, then it is assumed that there is a def prev
-                selfRef = try fun.getNamedRef(ir, toName, bb);
-                if (selfRef.?.kind == .global) {
+                // if it is a global we have to load it to access its fields
+                if (selfRef.kind == .global) {
                     // load it first
-                    const loadInst = Inst.load(selfRef.?.type, selfRef.?);
-                    var exprReg = try fun.addInst(bb, loadInst, selfRef.?.type);
+                    const loadInst = Inst.load(selfRef.type, selfRef);
+                    var exprReg = try fun.addInst(bb, loadInst, selfRef.type);
                     selfRef = IR.Ref.fromRegLocal(exprReg);
                 }
 
@@ -692,175 +694,185 @@ fn gen_statement(
                     exprRef, // from
                 );
                 try fun.addAnonInst(bb, inst);
-            } else {
-                var nullFlag: bool = false;
-                switch (exprRef.kind) {
-                    .local => {
-                        var immFlagGaurd = true;
-                        while (immFlagGaurd) {
-                            immFlagGaurd = false;
-                            if (selfRef != null and nullFlag == false) {
-                                switch (selfRef.?.kind) {
-                                    .local => {
-                                        _ = fun.renameRef(ir, exprRef, toName);
-                                        try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
-                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                                    },
-                                    .param => {
-                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                                    },
-                                    .global => {
-                                        const storeInst = Inst.store(selfRef.?, exprRef);
-                                        try fun.addAnonInst(bb, storeInst);
-                                    },
-                                    .immediate => {
-                                        // we are not doing no constant folding here, use the immediate information
-                                        if (immFlagGaurd == true) {
-                                            utils.todo("Cannot assign to an immediate\n", .{});
-                                        }
-                                        switch (selfRef.?.extraImm) {
-                                            ._invalid => {
-                                                selfRef = try fun.getNamedRef(ir, toName, bb);
-                                                // utils.todo("invalid extraImm\n", .{});
-                                            },
-                                            else => {},
-                                        }
-                                        selfRef.?.kind = selfRef.?.extraImm;
-                                        immFlagGaurd = true;
-                                    },
-                                    else => {
-                                        utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
-                                    },
-                                }
-                            } else {
-                                unreachable;
-                            }
-                        }
-                    },
-                    .param => {
-                        var immFlagGaurd = true;
-                        while (immFlagGaurd) {
-                            immFlagGaurd = false;
-                            if (selfRef != null and nullFlag == false) {
-                                switch (selfRef.?.kind) {
-                                    .local => {
-                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                                    },
-                                    .param => {
-                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                                    },
-                                    .global => {
-                                        const storeInst = Inst.store(selfRef.?, exprRef);
-                                        try fun.addAnonInst(bb, storeInst);
-                                    },
-                                    .immediate => {
-                                        // we are not doing no constant folding here, use the immediate information
-                                        if (immFlagGaurd == true) {
-                                            utils.todo("Cannot assign to an immediate\n", .{});
-                                        }
-                                        switch (selfRef.?.extraImm) {
-                                            ._invalid => {
-                                                selfRef = try fun.getNamedRef(ir, toName, bb);
-                                                // utils.todo("invalid extraImm\n", .{});
-                                            },
-                                            else => {},
-                                        }
-                                        selfRef.?.kind = selfRef.?.extraImm;
-                                        immFlagGaurd = true;
-                                    },
-                                    else => {
-                                        utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
-                                    },
-                                }
-                            } else {
-                                unreachable;
-                            }
-                        }
-                    },
-                    .global => {
-                        var immFlagGaurd = true;
-                        while (immFlagGaurd) {
-                            immFlagGaurd = false;
-                            if (selfRef != null and nullFlag == false) {
-                                switch (selfRef.?.kind) {
-                                    .local => {
-                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                                    },
-                                    .param => {
-                                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                                    },
-                                    .global => {
-                                        const storeInst = Inst.store(selfRef.?, exprRef);
-                                        try fun.addAnonInst(bb, storeInst);
-                                    },
-                                    .immediate => {
-                                        // we are not doing no constant folding here, use the immediate information
-                                        if (immFlagGaurd == true) {
-                                            utils.todo("Cannot assign to an immediate\n", .{});
-                                        }
-                                        switch (selfRef.?.extraImm) {
-                                            ._invalid => {
-                                                selfRef = try fun.getNamedRef(ir, toName, bb);
-                                                // utils.todo("invalid extraImm\n", .{});
-                                            },
-                                            else => {},
-                                        }
-                                        selfRef.?.kind = selfRef.?.extraImm;
-                                        immFlagGaurd = true;
-                                    },
-                                    else => {
-                                        utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
-                                    },
-                                }
-                            } else {
-                                unreachable;
-                            }
-                        }
-                    },
-                    .immediate => {
-                        switch (exprRef.type) {
-                            .null_ => {
-                                // if it null we need somewhere to assign it to!
-                                // var assignRef = try fun.getNamedRef(ir, toName, bb);
+                return false;
+            }
 
-                                // generate the store instruction
-                                // const nullInst = Inst.store(assignRef, exprRef);
-                                // try fun.addAnonInst(bb, nullInst);
-                                if (selfRef != null) {
-                                    switch (selfRef.?.kind) {
-                                        .local => {
-                                            _ = try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                                            exprRef.extraImm = selfRef.?.kind;
-                                        },
-                                        .param => {
-                                            _ = try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                                            exprRef.extraImm = selfRef.?.kind;
-                                        },
-                                        .global => {
-                                            const storeInst = Inst.store(selfRef.?, exprRef);
-                                            try fun.addAnonInst(bb, storeInst);
-                                        },
-                                        else => {
-                                            utils.todo("Cannot assign to an unknown param type\n", .{});
-                                        },
+            // if this is not a chain
+            var nullFlag: bool = false;
+            switch (selfRef.kind) {
+                .global => {
+                    // if we are assigning to a global then we need to store to it
+                    // note that gen expression covers the loading of the other global in that case
+                    const storeInst = Inst.store(selfRef, exprRef);
+                    try fun.addAnonInst(bb, storeInst);
+                },
+            }
+            switch (exprRef.kind) {
+                .local => {
+                    var immFlagGaurd = true;
+                    while (immFlagGaurd) {
+                        immFlagGaurd = false;
+                        if (selfRef != null and nullFlag == false) {
+                            switch (selfRef.?.kind) {
+                                .local => {
+                                    _ = fun.renameRef(ir, exprRef, toName);
+                                    try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
+                                    try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                },
+                                .param => {
+                                    try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                },
+                                .global => {
+                                    const storeInst = Inst.store(selfRef.?, exprRef);
+                                    try fun.addAnonInst(bb, storeInst);
+                                },
+                                .immediate => {
+                                    // we are not doing no constant folding here, use the immediate information
+                                    if (immFlagGaurd == true) {
+                                        utils.todo("Cannot assign to an immediate\n", .{});
                                     }
-                                }
-                                nullFlag = true;
-                            },
-                            else => {
-                                utils.todo("undefined behavior on imm assignment", .{});
-                            },
+                                    switch (selfRef.?.extraImm) {
+                                        ._invalid => {
+                                            selfRef = try fun.getNamedRef(ir, toName, bb);
+                                            // utils.todo("invalid extraImm\n", .{});
+                                        },
+                                        else => {},
+                                    }
+                                    selfRef.?.kind = selfRef.?.extraImm;
+                                    immFlagGaurd = true;
+                                },
+                                else => {
+                                    utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
+                                },
+                            }
+                        } else {
+                            unreachable;
                         }
-                    },
-                    else => {
-                        ast.printNodeLine(node.*);
-                        utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(exprRef.kind)});
-                    },
-                }
-                if (selfRef == null and nullFlag == false) {
-                    selfRef = try fun.getNamedRef(ir, toName, bb);
-                    utils.todo("Cannot assign to an unknown param type\n", .{});
-                }
+                    }
+                },
+                .param => {
+                    var immFlagGaurd = true;
+                    while (immFlagGaurd) {
+                        immFlagGaurd = false;
+                        if (selfRef != null and nullFlag == false) {
+                            switch (selfRef.?.kind) {
+                                .local => {
+                                    try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                },
+                                .param => {
+                                    try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                },
+                                .global => {
+                                    const storeInst = Inst.store(selfRef.?, exprRef);
+                                    try fun.addAnonInst(bb, storeInst);
+                                },
+                                .immediate => {
+                                    // we are not doing no constant folding here, use the immediate information
+                                    if (immFlagGaurd == true) {
+                                        utils.todo("Cannot assign to an immediate\n", .{});
+                                    }
+                                    switch (selfRef.?.extraImm) {
+                                        ._invalid => {
+                                            selfRef = try fun.getNamedRef(ir, toName, bb);
+                                            // utils.todo("invalid extraImm\n", .{});
+                                        },
+                                        else => {},
+                                    }
+                                    selfRef.?.kind = selfRef.?.extraImm;
+                                    immFlagGaurd = true;
+                                },
+                                else => {
+                                    utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
+                                },
+                            }
+                        } else {
+                            unreachable;
+                        }
+                    }
+                },
+                .global => {
+                    var immFlagGaurd = true;
+                    while (immFlagGaurd) {
+                        immFlagGaurd = false;
+                        if (selfRef != null and nullFlag == false) {
+                            switch (selfRef.?.kind) {
+                                .local => {
+                                    try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                },
+                                .param => {
+                                    try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                },
+                                .global => {
+                                    const storeInst = Inst.store(selfRef.?, exprRef);
+                                    try fun.addAnonInst(bb, storeInst);
+                                },
+                                .immediate => {
+                                    // we are not doing no constant folding here, use the immediate information
+                                    if (immFlagGaurd == true) {
+                                        utils.todo("Cannot assign to an immediate\n", .{});
+                                    }
+                                    switch (selfRef.?.extraImm) {
+                                        ._invalid => {
+                                            selfRef = try fun.getNamedRef(ir, toName, bb);
+                                            // utils.todo("invalid extraImm\n", .{});
+                                        },
+                                        else => {},
+                                    }
+                                    selfRef.?.kind = selfRef.?.extraImm;
+                                    immFlagGaurd = true;
+                                },
+                                else => {
+                                    utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(selfRef.?.kind)});
+                                },
+                            }
+                        } else {
+                            unreachable;
+                        }
+                    }
+                },
+                .immediate => {
+                    switch (exprRef.type) {
+                        .null_ => {
+                            // if it null we need somewhere to assign it to!
+                            // var assignRef = try fun.getNamedRef(ir, toName, bb);
+
+                            // generate the store instruction
+                            // const nullInst = Inst.store(assignRef, exprRef);
+                            // try fun.addAnonInst(bb, nullInst);
+                            if (selfRef != null) {
+                                switch (selfRef.?.kind) {
+                                    .local => {
+                                        _ = try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                        exprRef.extraImm = selfRef.?.kind;
+                                    },
+                                    .param => {
+                                        _ = try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                                        exprRef.extraImm = selfRef.?.kind;
+                                    },
+                                    .global => {
+                                        const storeInst = Inst.store(selfRef.?, exprRef);
+                                        try fun.addAnonInst(bb, storeInst);
+                                    },
+                                    else => {
+                                        utils.todo("Cannot assign to an unknown param type\n", .{});
+                                    },
+                                }
+                            }
+                            nullFlag = true;
+                        },
+                        else => {
+                            utils.todo("undefined behavior on imm assignment", .{});
+                        },
+                    }
+                },
+                else => {
+                    ast.printNodeLine(node.*);
+                    utils.todo("Cannot assign to an unknown param type {s}\n", .{@tagName(exprRef.kind)});
+                },
+            }
+            if (selfRef == null and nullFlag == false) {
+                selfRef = try fun.getNamedRef(ir, toName, bb);
+                utils.todo("Cannot assign to an unknown param type\n", .{});
             }
         },
         .Print => |print| {
@@ -979,8 +991,13 @@ fn gen_expression(
                     var ref = try fun.getNamedRef(ir, identID, bb);
                     switch (ref.kind) {
                         .global => {},
-                        else => {
+                        .param,
+                        .local,
+                        => {
                             try fun.bbs.get(bb).versionMap.put(identID, ref);
+                        },
+                        else => {
+                            utils.todo("Cannot give reference to an unknown param type\n", .{});
                         },
                     }
                     switch (ref.kind) {
@@ -990,6 +1007,7 @@ fn gen_expression(
                             // does not use the wrong name
                         },
                         .local => {
+                            // this already happens lol
                             ref.name = identID;
                         },
                         .global => {
@@ -1397,6 +1415,7 @@ fn gen_selector_chain(
             try tmp_nae.append(c);
         }
         chainLinkNameID = ir.internIdent(try tmp_nae.toOwnedSlice());
+        // fixme
         if (prevField.type == .int_arr) {
             // early return if we reach a field that is an array type as we know
             // that the chainLink is the index into the array and the result will be an
@@ -1783,9 +1802,15 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     std.debug.print("{s}\n", .{str});
 // }
 //
-test "phi_stats" {
-    errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/OptimizationBenchmark/OptimizationBenchmark.mini");
-    var str = try inputToIRStringHeader(name, testAlloc);
+// test "phi_stats" {
+//     errdefer log.print();
+//     const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/bert/bert.mini");
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+//
+test "phi_global_bert_prep" {
+    const in = "struct i { int i; }; struct node { int data; struct node next; }; struct tnode { int data; struct tnode left; struct tnode right; }; int a,b; struct i i; fun treeadd(struct tnode root, int toAdd) struct tnode { return root; } fun size(struct node list) int { if (list == null) { return 0; } return 1 + (size(list.next)); } fun buildTree(struct node list) struct tnode { int i; struct tnode root; root = null; i = 0; while (i < size(list)) { root = treeadd(root, get(list, i)); i = i + 1; } return root; }";
+    var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
 }
