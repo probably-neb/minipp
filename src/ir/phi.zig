@@ -1052,14 +1052,14 @@ fn gen_expression(
                     const _bitcast = ".bitcast";
                     var allocNameArr = std.ArrayList(u8).init(ir.alloc);
                     var bitcastNameArr = std.ArrayList(u8).init(ir.alloc);
-                    for (lenStr) |c| {
-                        try allocNameArr.append(c);
-                        try bitcastNameArr.append(c);
-                    }
                     for (_malloc) |c| {
                         try allocNameArr.append(c);
                     }
                     for (_bitcast) |c| {
+                        try bitcastNameArr.append(c);
+                    }
+                    for (lenStr) |c| {
+                        try allocNameArr.append(c);
                         try bitcastNameArr.append(c);
                     }
                     const allocNameStr = try allocNameArr.toOwnedSlice();
