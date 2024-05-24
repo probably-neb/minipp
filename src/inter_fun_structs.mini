@@ -7,7 +7,9 @@ struct Node {
 fun comparevalue(struct Node head) void {
 	struct Node currnode;
 	currnode = head;
-	print currnode.a endl;
+	if(head.a != 0){
+		print currnode.n.a endl;
+	}
 }
 
 fun main() void{

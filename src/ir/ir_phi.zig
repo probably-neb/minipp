@@ -221,6 +221,7 @@ pub const Function = struct {
     /// or add to this ordered list and then referer to it in the Basic Block
     insts: OrderedList(Inst),
     returnReg: ?Register.ID = null,
+    paramRegs: std.AutoHashMap(StrID, Register.ID),
     params: ParamsList,
     typesMap: std.AutoHashMap(StrID, Type),
     pub const entryBBID: usize = 0;
@@ -300,6 +301,7 @@ pub const Function = struct {
             .typesMap = std.AutoHashMap(StrID, Type).init(alloc),
             .bbsToCFG = std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t).init(alloc),
             .cfgToBBs = std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID).init(alloc),
+            .paramRegs = std.AutoHashMap(StrID, Register.ID).init(alloc),
             .exitBBID = 0,
             .defBlocks = std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)).init(alloc),
             .cfg = CfgFunction.init(alloc),
@@ -318,9 +320,6 @@ pub const Function = struct {
             .global => {
                 return self.renameGlobalRef(ir, ref, name);
             },
-            .localedParam => {
-                utils.todo("use renameParamRef", .{});
-            },
             else => {
                 std.debug.panic("Unknown ref kind: {any}\n", .{ref.kind});
             },
@@ -329,11 +328,10 @@ pub const Function = struct {
     }
 
     pub fn renameParamRef(self: *Function, ir: *IR, ref: Ref, name: StrID, inst: IR.Function.InstID) Ref {
+        utils.todo("This should be removed in refactoring to params as reg", .{});
         _ = self;
         _ = ir;
-        if (inst == 0) {
-            utils.todo("Tried to use base param this is not allowed", .{});
-        }
+        if (inst == 0) {}
         // ref.debugPrintWithName(ir);
         // utils.todo("Tried to rename a param, this is not allowed", .{});
         // const param = self.params.contains(ref.name);
@@ -359,7 +357,7 @@ pub const Function = struct {
         var reg = self.regs.get(ref.i);
         var inst = self.insts.get(reg.inst);
         reg.name = name;
-        inst.res = IR.Ref.fromReg(reg);
+        inst.res = IR.Ref.fromRegLocal(reg);
         self.regs.set(ref.i, reg);
         self.insts.set(reg.inst, inst.*);
         return inst.res;
@@ -519,11 +517,11 @@ pub const Function = struct {
         // we have not found it, we have traversed the tree all the way up! oh no!
 
         // checks the function's parameters
-        if (self.params.safeIndexOf(name)) |paramID| {
-            const param = self.params.entry(paramID);
-            return Ref.param(paramID, param.name, param.type);
+        if (self.paramRegs.contains(name)) {
+            const paramRegID = self.paramRegs.get(name).?;
+            const paramReg = self.regs.get(paramRegID);
+            return Ref.fromReg(paramReg, self);
         }
-
         // check if it is one of the defined items of the block
         if (self.typesMap.contains(name)) {
             return null;
@@ -590,9 +588,10 @@ pub const Function = struct {
         // we have not found it, we have traversed the tree all the way up! oh no!
 
         // checks the function's parameters
-        if (self.params.safeIndexOf(name)) |paramID| {
-            const param = self.params.entry(paramID);
-            return Ref.param(paramID, param.name, param.type);
+        if (self.paramRegs.contains(name)) {
+            const paramRegID = self.paramRegs.get(name).?;
+            const paramReg = self.regs.get(paramRegID);
+            return Ref.fromReg(paramReg, self);
         }
 
         // check if it is one of the defined items of the block
@@ -602,12 +601,12 @@ pub const Function = struct {
             const alloca = Inst.alloca(declType);
             const allocReg = try self.addNamedInst(Function.entryBBID, alloca, name, declType);
             // add a load to the current block
-            const allocRef = IR.Ref.fromReg(allocReg);
+            const allocRef = IR.Ref.fromReg(allocReg, self);
             const load = Inst.load(declType, allocRef);
             const loadReg = try self.addNamedInst(Function.entryBBID, load, name, declType);
-            const loadRef = IR.Ref.fromReg(loadReg);
+            const loadRef = IR.Ref.fromReg(loadReg, self);
             try self.bbs.get(Function.entryBBID).versionMap.put(name, loadRef);
-            return Ref.fromReg(loadReg);
+            return Ref.fromRegLocal(loadReg);
         }
 
         // okay she's nowhere...
@@ -2545,6 +2544,8 @@ pub const Op = enum {
     /// `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
     Phi,
 
+    Param,
+
     /// The condition of a cmp
     /// Placed in `Op` struct for namespacing
     pub const Cond = enum { Eq, NEq, Lt, Gt, GtEq, LtEq };
@@ -2734,7 +2735,6 @@ pub const Ref = struct {
         // this makes things simpler trust me bro
         immediate_u32,
         param,
-        localedParam,
         pub fn debugPrint(self: Kind) void {
             switch (self) {
                 .local => std.debug.print("local", .{}),
@@ -2743,12 +2743,18 @@ pub const Ref = struct {
                 .immediate => std.debug.print("immediate", .{}),
                 .immediate_u32 => std.debug.print("immediate_u32", .{}),
                 .param => std.debug.print("param", .{}),
-                .localedParam => std.debug.print("localedParam", .{}),
             }
         }
     };
 
-    pub inline fn fromReg(reg: Register) Ref {
+    pub inline fn fromRegLocal(reg: Register) Ref {
+        return Ref{ .i = reg.id, .kind = .local, .name = reg.name, .type = reg.type };
+    }
+
+    pub inline fn fromReg(reg: Register, fun: *Function) Ref {
+        if (fun.paramRegs.contains(reg.name)) {
+            return Ref{ .i = reg.id, .kind = .param, .name = reg.name, .type = reg.type };
+        }
         return Ref{ .i = reg.id, .kind = .local, .name = reg.name, .type = reg.type };
     }
 
@@ -2779,7 +2785,8 @@ pub const Ref = struct {
         return Ref{ .i = val, .kind = .immediate_u32, .name = InternPool.NULL, .type = ty };
     }
 
-    pub inline fn param(id: Function.Param.ID, name: StrID, ty: Type) Ref {
+    pub inline fn param(id: Register.ID, name: StrID, ty: Type, remove_me: u32) Ref {
+        _ = remove_me;
         return Ref{ .i = id, .kind = .param, .name = name, .type = ty };
     }
 
@@ -2902,6 +2909,7 @@ pub const Inst = struct {
         on: Ref,
         /// Function call arguments
         args: []Ref,
+
         /// Helper to use `none_` more elegantly
         pub fn none() Extra {
             return .{ .none_ = undefined };
@@ -2919,6 +2927,22 @@ pub const Inst = struct {
             else => false,
         };
     }
+
+    pub const Param = struct {
+        type: Type,
+        register: Ref,
+
+        pub fn get(inst: Inst) Param {
+            return .{
+                .type = inst.ty1,
+                .register = inst.res,
+            };
+        }
+
+        pub fn toInst(inst: Param) Inst {
+            return .{ .op = .Param, .ty1 = inst.type, .res = inst.register };
+        }
+    };
 
     /// Arithmetic struct
     pub const Binop = struct {
@@ -2954,6 +2978,9 @@ pub const Inst = struct {
 
     // WARN: ALL OF THESE HELPERS EXPECT TO BE CREATED WITH THE HELPERS IN
     // `Function` SO THE RES FIELD IS SET PROPERLY
+    pub inline fn param(res: Ref, ty: Type) Inst {
+        return .{ .op = .Param, .res = res, .ty1 = ty };
+    }
 
     /// `<result> = add <ty> <op1>, <op2>`
     pub inline fn add(lhs: Ref, rhs: Ref) Inst {
@@ -3337,6 +3364,10 @@ pub const Inst = struct {
             .Phi => {
                 const _phi = Inst.Phi.get(self);
                 return writer.print("{any}\n", .{_phi});
+            },
+            .Param => {
+                const _param = Inst.Param.get(self);
+                return writer.print("{any}\n", .{_param});
             },
         }
     }
