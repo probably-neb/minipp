@@ -621,6 +621,7 @@ fn gen_statement(
             const toName = ir.internIdentNodeAt(ast, to.ident);
             // std.debug.print("assign to: {s} [{d}]\n", .{ ast.getIdentValue(to.ident), toName });
             var name = toName;
+            var selfRef = try fun.getNamedRefNoAdd(ir, toName, bb);
 
             // FIXME: rhs could also be a `read` handle!
             const exprNode = ast.get(assign.rhs).*;
@@ -644,20 +645,33 @@ fn gen_statement(
                 switch (exprRef.kind) {
                     .local => {
                         _ = fun.renameRef(ir, exprRef, toName);
+                        try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
+                        try fun.bbs.get(bb).versionMap.put(name, exprRef);
                     },
-                    .param => {},
+                    .param => {
+                        // try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                    },
                     .global => {
-                        utils.todo("Need to implement storing to a global\n", .{});
+                        utils.todo("Need to implement loading from a global\n", .{});
                     },
                     else => {
                         utils.todo("Cannot assign to an unknown param type\n", .{});
                     },
                 }
-                if (exprRef.name != IR.InternPool.NULL) {
-                    // std.debug.print("exprRef name {s}\n", .{ir.getIdent(exprRef.name)});
+                if (selfRef != null) {
+                    switch (selfRef.?.kind) {
+                        .local => {},
+                        .param => {
+                            try fun.bbs.get(bb).versionMap.put(name, exprRef);
+                        },
+                        .global => {
+                            utils.todo("Need to implement storing to a global\n", .{});
+                        },
+                        else => {
+                            utils.todo("Cannot assign to an unknown param type\n", .{});
+                        },
+                    }
                 }
-                try fun.bbs.get(bb).versionMap.put(name, exprRef);
-                try fun.bbs.get(bb).versionMap.put(exprRef.name, exprRef);
             }
         },
         .Print => |print| {
@@ -1520,9 +1534,16 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     std.debug.print("{s}\n", .{str});
 // }
 
-test "phi.struct_killBubs" {
+// test "phi.struct_killBubs" {
+//     errdefer log.print();
+//     const name = "struct Node {struct Node n;}; fun main(struct Node in ) void {struct Node comp; comp = in; if(comp.n != in){ print 1 endl;}  }";
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
+//
+test "phi.struct_inter_funcs" {
     errdefer log.print();
-    const name = "struct Node {struct Node n;}; fun main(struct Node in ) void {struct Node comp; comp = in; if(comp.n != in){ print 1 endl;}  }";
+    const name = @embedFile("../inter_fun_structs.mini");
     var str = try inputToIRStringHeader(name, testAlloc);
     std.debug.print("{s}\n", .{str});
 }

@@ -313,10 +313,13 @@ pub const Function = struct {
                 return self.renameLocalRef(ref, name);
             },
             .param => {
-                return self.renameParamRef(ir, ref, name);
+                utils.todo("use renameParamRef", .{});
             },
             .global => {
                 return self.renameGlobalRef(ir, ref, name);
+            },
+            .localedParam => {
+                utils.todo("use renameParamRef", .{});
             },
             else => {
                 std.debug.panic("Unknown ref kind: {any}\n", .{ref.kind});
@@ -325,8 +328,12 @@ pub const Function = struct {
         unreachable;
     }
 
-    pub fn renameParamRef(self: *Function, ir: *IR, ref: Ref, name: StrID) Ref {
+    pub fn renameParamRef(self: *Function, ir: *IR, ref: Ref, name: StrID, inst: IR.Function.InstID) Ref {
+        _ = self;
         _ = ir;
+        if (inst == 0) {
+            utils.todo("Tried to use base param this is not allowed", .{});
+        }
         // ref.debugPrintWithName(ir);
         // utils.todo("Tried to rename a param, this is not allowed", .{});
         // const param = self.params.contains(ref.name);
@@ -334,8 +341,10 @@ pub const Function = struct {
         // self.params.set(ref.i, param);
         // return Ref.param(ref.i, name, param.type);
         var refCopy = ref;
-        refCopy.kind = .local;
-        return self.renameLocalRef(refCopy, name);
+        refCopy.kind = .localedParam;
+        refCopy.name = name;
+        refCopy.extra = inst;
+        return refCopy;
     }
 
     pub fn renameGlobalRef(self: *Function, ir: *IR, ref: Ref, name: StrID) Ref {
@@ -2669,6 +2678,7 @@ pub const Ref = struct {
     name: StrID,
     kind: Kind,
     type: Type,
+    extra: Function.InstID = 0,
     /// Ref used when no ref needed
     /// FIXME: add deadbeef here too
     pub const default = Ref.local(69420, InternPool.NULL, .void);
@@ -2724,6 +2734,7 @@ pub const Ref = struct {
         // this makes things simpler trust me bro
         immediate_u32,
         param,
+        localedParam,
         pub fn debugPrint(self: Kind) void {
             switch (self) {
                 .local => std.debug.print("local", .{}),
@@ -2732,6 +2743,7 @@ pub const Ref = struct {
                 .immediate => std.debug.print("immediate", .{}),
                 .immediate_u32 => std.debug.print("immediate_u32", .{}),
                 .param => std.debug.print("param", .{}),
+                .localedParam => std.debug.print("localedParam", .{}),
             }
         }
     };

@@ -580,6 +580,7 @@ pub fn stringify_ref(ir: *const IR, fun: *const IR.Function, ref: IR.Ref) Rope {
     switch (ref.kind) {
         .local => return stringify_reg(ir, fun, ref.i),
         .param => return Rope.pair("%", ir.getIdent(ref.name)),
+        .localedParam => return Rope.str_str_num("%", ir.getIdent(ref.name), ref.extra),
         .global => return Rope.pair("@", ir.getIdent(ref.name)),
         .label => return stringify_label_ref(fun, ref.i),
         // FIXME: i don't like that it's getIdent semantically
