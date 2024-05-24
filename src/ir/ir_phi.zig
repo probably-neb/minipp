@@ -527,6 +527,34 @@ pub const Function = struct {
         return namedRef;
     }
 
+    pub fn getNamedRefInner(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID, assignmentTOrAccessF: bool) NotFoundError!Ref {
+        var ref = try self.getNamedRefNoAdd(ir, name, bb);
+        if (ref != null) return ref.?;
+
+        // at this point we know that it is a declared variable, but it has not been used yet
+        // we can create a new register for it based on the passed (desired) outcome
+        if (assignmentTOrAccessF) {
+            // if this is anot assigned over -><- we boned
+            const declType = self.typesMap.get(name).?;
+            const refAss = Ref.local(0, name, declType);
+            return refAss;
+        } else {
+            // we need to create a new register for this in the entry block using alloca
+            const declType = self.typesMap.get(name).?;
+            const alloca = Inst.alloca(declType);
+            const allocReg = try self.addNamedInst(Function.entryBBID, alloca, name, declType);
+            // add a load also for those quircky girls
+            const allocRef = IR.Ref.fromReg(allocReg, self, ir);
+            const load = Inst.load(declType, allocRef);
+            const loadReg = try self.addNamedInst(Function.entryBBID, load, name, declType);
+            const loadRef = IR.Ref.fromReg(loadReg, self, ir);
+            try self.bbs.get(Function.entryBBID).versionMap.put(name, loadRef);
+            return Ref.fromRegLocal(loadReg);
+        }
+
+        return error.UnboundIdentifier;
+    }
+
     pub fn getNamedRefNoAdd(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!?Ref {
         // if (name != IR.InternPool.NULL) {
         //     std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
@@ -603,34 +631,6 @@ pub const Function = struct {
         std.debug.print("name not found := {s}\n", .{
             ir.getIdent(name),
         });
-        return error.UnboundIdentifier;
-    }
-
-    pub fn getNamedRefInner(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID, assignmentTOrAccessF: bool) NotFoundError!Ref {
-        var ref = try self.getNamedRefNoAdd(ir, name, bb);
-        if (ref != null) return ref.?;
-
-        // at this point we know that it is a declared variable, but it has not been used yet
-        // we can create a new register for it based on the passed (desired) outcome
-        if (assignmentTOrAccessF) {
-            // if this is anot assigned over -><- we boned
-            const declType = self.typesMap.get(name).?;
-            const refAss = Ref.local(0, name, declType);
-            return refAss;
-        } else {
-            // we need to create a new register for this in the entry block using alloca
-            const declType = self.typesMap.get(name).?;
-            const alloca = Inst.alloca(declType);
-            const allocReg = try self.addNamedInst(Function.entryBBID, alloca, name, declType);
-            // add a load also for those quircky girls
-            const allocRef = IR.Ref.fromReg(allocReg, self, ir);
-            const load = Inst.load(declType, allocRef);
-            const loadReg = try self.addNamedInst(Function.entryBBID, load, name, declType);
-            const loadRef = IR.Ref.fromReg(loadReg, self, ir);
-            try self.bbs.get(Function.entryBBID).versionMap.put(name, loadRef);
-            return Ref.fromRegLocal(loadReg);
-        }
-
         return error.UnboundIdentifier;
     }
 
@@ -1567,7 +1567,7 @@ pub const CfgFunction = struct {
         try self.reversePostOrderComp();
         try self.genDominance();
         // self.printallChildren();
-        try self.printDomFront();
+        // try self.printDomFront();
         // self.printOutFunAsDot(ir);
 
         // for every blocks's assignments add to the functions assignemnts
@@ -1649,8 +1649,8 @@ pub const CfgFunction = struct {
         while (statIter.nextInc()) |c_stat| {
             const statementIndex = c_stat.kind.Statement.statement;
             const statementNode = c_stat.kind.Statement;
-            self.printBlockName(cBlock);
-            ast.printNodeLine(c_stat);
+            // self.printBlockName(cBlock);
+            // ast.printNodeLine(c_stat);
             const innerNode = ast.get(statementIndex);
             const kind = innerNode.kind;
             const finalIndex = c_stat.kind.Statement.finalIndex;
@@ -1663,7 +1663,7 @@ pub const CfgFunction = struct {
                 // add the statement to the block
                 try self.blocks.items[cBlock].statements.append(c_stat);
                 // std.debug.print("items in block ", .{});
-                self.printBlockName(cBlock);
+                // self.printBlockName(cBlock);
                 // std.debug.print("{any}\n", .{self.blocks.items[cBlock].statements.items});
                 continue;
             }
