@@ -86,5 +86,45 @@ build-suite-test name *BUILD_ARGS: build
     {{minipp}} -i "$dir/${name}.mini" -o "$dir/{{name}}.ll" {{BUILD_ARGS}}
     clang "$dir/{{name}}.ll" -o "$dir/{{name}}"
 
+check-llvm path *BUILD_ARGS:
+    #!/usr/bin/env bash
+    set -euxo pipefail
+
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+
+    name="{{join(parent_directory(path), file_stem(path))}}"
+    clang "${name}.ll" -o "${name}"
+    input="${name}.input"
+    if [[ -f "{{join(parent_directory(path),'input')}}" ]] && [[ ! -f $input ]]; then
+        input="{{join(parent_directory(path),'input')}}"
+    fi
+    if [[ -f "${input}" ]]; then
+        ${name} < "${input}" > "${name}.output"
+    else
+        ${name} > "${name}.output"
+    fi
+    expected="${name}.expected"
+    if [[ -f "{{join(parent_directory(path),'output.expected')}}" ]] && [[ ! -f $expected ]]; then
+        expected="{{join(parent_directory(path),'output.expected')}}"
+    fi
+    if [[ -f ${expected} ]]; then
+        ok=0
+        comp=$(diff "${name}.output" "${expected}" || ok=1)
+        if [ $ok -eq 0 ]; then
+            echo -e "${GREEN}SUCCESS${NC}"
+            echo "Output file: ${ouput}"
+        else
+            echo -e "${RED}FAIL${NC}"
+            echo -e "${comp}"
+        fi
+    else
+        echo -e "${YELLOW}No output file found${NC}"
+        echo "Output file: ${ouput}"
+    fi
+
 nix:
     sudo nix develop --extra-experimental-features nix-command --extra-experimental-features flakes
