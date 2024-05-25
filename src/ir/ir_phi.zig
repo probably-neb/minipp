@@ -181,6 +181,10 @@ pub const GlobalsList = struct {
     pub fn len(self: *const GlobalsList) usize {
         return self.items.len;
     }
+
+    pub fn contains(self: *const GlobalsList, name: StrID) bool {
+        return self.items.contains(name);
+    }
 };
 
 pub const FunctionList = struct {
@@ -195,6 +199,10 @@ pub const FunctionList = struct {
     pub fn fill(self: *FunctionList, items: []Function) void {
         self.items = List.init(items);
     }
+
+    pub fn contains(self: *const FunctionList, name: StrID) bool {
+        return self.items.contains(name);
+    }
 };
 
 pub const Function = struct {
@@ -204,6 +212,7 @@ pub const Function = struct {
     bbsToCFG: std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t),
     cfgToBBs: std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID),
     defBlocks: std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)),
+    declaredVars: std.AutoHashMap(StrID, Type),
     bbs: OrderedList(BasicBlock),
     regs: LookupTable(Register.ID, Register, Register.getID),
     cfg: CfgFunction,
@@ -217,9 +226,30 @@ pub const Function = struct {
     /// or add to this ordered list and then referer to it in the Basic Block
     insts: OrderedList(Inst),
     returnReg: ?Register.ID = null,
+    paramRegs: std.AutoHashMap(StrID, Register.ID),
     params: ParamsList,
     typesMap: std.AutoHashMap(StrID, Type),
     pub const entryBBID: usize = 0;
+
+    pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type, params: []Param) Function {
+        return .{
+            .alloc = alloc,
+            .bbs = OrderedList(BasicBlock).init(alloc),
+            .name = name,
+            .returnType = returnType,
+            .regs = LookupTable(Register.ID, Register, Register.getID).init(alloc),
+            .params = ParamsList.init(params),
+            .insts = OrderedList(Inst).init(alloc),
+            .typesMap = std.AutoHashMap(StrID, Type).init(alloc),
+            .bbsToCFG = std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t).init(alloc),
+            .cfgToBBs = std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID).init(alloc),
+            .paramRegs = std.AutoHashMap(StrID, Register.ID).init(alloc),
+            .declaredVars = std.AutoHashMap(StrID, Type).init(alloc),
+            .exitBBID = 0,
+            .defBlocks = std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)).init(alloc),
+            .cfg = CfgFunction.init(alloc),
+        };
+    }
 
     pub fn identToType(self: *Function, ident: StrID) !Type {
         const protoType = self.typesMap.get(ident);
@@ -246,6 +276,20 @@ pub const Function = struct {
         }
     }
 
+    pub fn mapUsesBBFromCFG(self: *Function, ir: *IR) !void {
+        for (self.cfg.postOrder.items) |cfgBlockID| {
+            const cfgBock = self.cfg.blocks.items[cfgBlockID];
+            const bbID = self.cfgToBBs.get(cfgBlockID).?;
+            for (cfgBock.typedIdents.items) |ident| {
+                var redIdent = ir.reduceChainToFirstIdent(ident);
+                var bb = self.bbs.get(bbID);
+                if (!bb.uses.contains(redIdent)) {
+                    try bb.uses.put(redIdent, true);
+                }
+            }
+        }
+    }
+
     pub fn addPhiEntry(self: *Function, bbDest: BasicBlock.ID, ident: IR.StrId, bbFrom: Label, ref: Ref) !void {
         // check if an entry already exists
         // if it does, then just update the ref
@@ -266,7 +310,8 @@ pub const Function = struct {
         const instId = phiInstReg.inst;
 
         // add the phi inst to the block's phi map
-        try block.phiMap.put(ident, instId);
+        try block.addPhiInst(instId, ident);
+
         self.bbs.set(bbDest, block);
     }
 
@@ -284,34 +329,86 @@ pub const Function = struct {
         }
     };
 
-    pub fn init(alloc: std.mem.Allocator, name: StrID, returnType: Type, params: []Param) Function {
-        return .{
-            .alloc = alloc,
-            .bbs = OrderedList(BasicBlock).init(alloc),
-            .name = name,
-            .returnType = returnType,
-            .regs = LookupTable(Register.ID, Register, Register.getID).init(alloc),
-            .params = ParamsList.init(params),
-            .insts = OrderedList(Inst).init(alloc),
-            .typesMap = std.AutoHashMap(StrID, Type).init(alloc),
-            .bbsToCFG = std.AutoHashMap(BasicBlock.ID, CfgBlock.ID_t).init(alloc),
-            .cfgToBBs = std.AutoHashMap(CfgBlock.ID_t, BasicBlock.ID).init(alloc),
-            .exitBBID = 0,
-            .defBlocks = std.AutoHashMap(StrID, std.ArrayList(BasicBlock.ID)).init(alloc),
-            .cfg = CfgFunction.init(alloc),
-        };
+    pub fn renameRef(self: *Function, ir: *IR, ref: Ref, name: StrID) Ref {
+        // check the kind of the ref
+        switch (ref.kind) {
+            .local => {
+                return self.renameLocalRef(ref, name);
+            },
+            .param => {
+                utils.todo("use renameParamRef", .{});
+            },
+            .global => {
+                return self.renameGlobalRef(ir, ref, name);
+            },
+            else => {
+                std.debug.panic("Unknown ref kind: {any}\n", .{ref.kind});
+            },
+        }
+        unreachable;
     }
 
-    pub fn renameRef(self: *Function, ref: Ref, name: StrID) Ref {
+    pub fn renameRefAnon(
+        self: *Function,
+        ir: *IR,
+        ref: Ref,
+    ) Ref {
+        // check the kind of the ref
+        switch (ref.kind) {
+            .local => {
+                return self.renameLocalRef(ref, IR.InternPool.NULL);
+            },
+            .param => {
+                var ref_ = ref;
+                ref_.name = IR.InternPool.NULL;
+                return ref_;
+            },
+            .global => {
+                return self.renameGlobalRef(ir, ref, IR.InternPool.NULL);
+            },
+            else => {
+                std.debug.panic("Unknown ref kind: {any}\n", .{ref.kind});
+            },
+        }
+        unreachable;
+    }
+
+    pub fn renameParamRef(self: *Function, ir: *IR, ref: Ref, name: StrID, inst: IR.Function.InstID) Ref {
+        utils.todo("This should be removed in refactoring to params as reg", .{});
+        _ = self;
+        _ = ir;
+        if (inst == 0) {}
+        // ref.debugPrintWithName(ir);
+        // utils.todo("Tried to rename a param, this is not allowed", .{});
+        // const param = self.params.contains(ref.name);
+        // param.name = name;
+        // self.params.set(ref.i, param);
+        // return Ref.param(ref.i, name, param.type);
+        var refCopy = ref;
+        refCopy.kind = .localedParam;
+        refCopy.name = name;
+        refCopy.extra = inst;
+        return refCopy;
+    }
+
+    pub fn renameGlobalRef(self: *Function, ir: *IR, ref: Ref, name: StrID) Ref {
+        ref.debugPrintWithName(ir);
+        _ = name;
+        _ = self;
+        utils.todo("Tried to rename a gloabl ref, this is not implemented yet", .{});
+    }
+
+    pub fn renameLocalRef(self: *Function, ref: Ref, name: StrID) Ref {
         // get the register
         var reg = self.regs.get(ref.i);
         var inst = self.insts.get(reg.inst);
         reg.name = name;
-        inst.res = IR.Ref.fromReg(reg);
+        inst.res = IR.Ref.fromRegLocal(reg);
         self.regs.set(ref.i, reg);
         self.insts.set(reg.inst, inst.*);
         return inst.res;
     }
+
     pub fn getKey(self: Function) StrID {
         return self.name;
     }
@@ -421,8 +518,8 @@ pub const Function = struct {
 
     pub const NotFoundError = error{ OutOfMemory, UnboundIdentifier, AllocFailed };
 
-    pub fn getNamedRef(self: *Function, ir: *const IR, name: StrID, bb: BasicBlock.ID) NotFoundError!Ref {
-        const namedRef = try self.getNamedRefInner(ir, name, bb);
+    pub fn getNamedRef(self: *Function, ir: *IR, name: StrID, bb: BasicBlock.ID, assignmentTOrAccessF: bool) NotFoundError!Ref {
+        const namedRef = try self.getNamedRefInner(ir, name, bb, assignmentTOrAccessF);
         if (self.returnReg == null) return namedRef;
         if (namedRef.i == self.returnReg.?) {
             self.retRegUsed = true;
@@ -430,12 +527,40 @@ pub const Function = struct {
         return namedRef;
     }
 
-    pub fn getNamedRefInner(self: *Function, ir: *const IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!Ref {
-        if (name != IR.InternPool.NULL) {
-            std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
+    pub fn getNamedRefInner(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID, assignmentTOrAccessF: bool) NotFoundError!Ref {
+        var ref = try self.getNamedRefNoAdd(ir, name, bb);
+        if (ref != null) return ref.?;
+
+        // at this point we know that it is a declared variable, but it has not been used yet
+        // we can create a new register for it based on the passed (desired) outcome
+        if (assignmentTOrAccessF) {
+            // if this is anot assigned over -><- we boned
+            const declType = self.typesMap.get(name).?;
+            const refAss = Ref.local(0, name, declType);
+            return refAss;
         } else {
-            std.debug.print("getting ref for NULL\n", .{});
+            // we need to create a new register for this in the entry block using alloca
+            const declType = self.typesMap.get(name).?;
+            const alloca = Inst.alloca(declType);
+            const allocReg = try self.addNamedInst(Function.entryBBID, alloca, name, declType);
+            // add a load also for those quircky girls
+            const allocRef = IR.Ref.fromReg(allocReg, self, ir);
+            const load = Inst.load(declType, allocRef);
+            const loadReg = try self.addNamedInst(Function.entryBBID, load, name, declType);
+            const loadRef = IR.Ref.fromReg(loadReg, self, ir);
+            try self.bbs.get(Function.entryBBID).versionMap.put(name, loadRef);
+            return Ref.fromRegLocal(loadReg);
         }
+
+        return error.UnboundIdentifier;
+    }
+
+    pub fn getNamedRefNoAdd(self: *Function, ir: *IR, name: StrID, bb: IR.BasicBlock.ID) NotFoundError!?Ref {
+        // if (name != IR.InternPool.NULL) {
+        //     std.debug.print("getting ref for {s}\n", .{ir.getIdent(name)});
+        // } else {
+        //     std.debug.print("getting ref for NULL\n", .{});
+        // }
         // check if the register is in the current block
         if (self.bbs.get(bb).versionMap.contains(name)) {
             return self.bbs.get(bb).versionMap.get(name).?;
@@ -450,9 +575,9 @@ pub const Function = struct {
         try visited.put(bb, true);
         while (queue.items.len > 0) {
             const current = queue.orderedRemove(0);
-            std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
+            // std.debug.print("visiting {s}\n", .{self.bbs.get(current).name});
             if (self.bbs.get(current).versionMap.contains(name)) {
-                std.debug.print("found in block {d}\n", .{current});
+                // std.debug.print("found in block {d}\n", .{current});
                 return self.bbs.get(current).versionMap.get(name).?;
             }
             for (self.bbs.get(current).incomers.items) |incomer| {
@@ -463,30 +588,25 @@ pub const Function = struct {
                 try visited.put(incomer, true);
             }
         }
+
+        if (self.bbs.get(IR.Function.entryBBID).versionMap.contains(name)) {
+            return self.bbs.get(IR.Function.entryBBID).versionMap.get(name).?;
+        }
         // we have not found it, we have traversed the tree all the way up! oh no!
 
         // checks the function's parameters
-        if (self.params.safeIndexOf(name)) |paramID| {
-            const param = self.params.entry(paramID);
-            return Ref.param(paramID, param.name, param.type);
+        if (self.paramRegs.contains(name)) {
+            const paramRegID = self.paramRegs.get(name).?;
+            const paramReg = self.regs.get(paramRegID);
+            return Ref.fromReg(paramReg, self, ir);
         }
-
-        // check if it is one of the defined items of the block
-        if (self.typesMap.contains(name)) {
-            // add it to the entry block
-            const declType = self.typesMap.get(name).?;
-            const alloca = Inst.alloca(declType);
-            const allocReg = try self.addNamedInst(Function.entryBBID, alloca, name, declType);
-            // add a load to the current block
-            const allocRef = IR.Ref.fromReg(allocReg);
-            const load = Inst.load(declType, allocRef);
-            const loadReg = try self.addNamedInst(Function.entryBBID, load, name, declType);
-            const loadRef = IR.Ref.fromReg(loadReg);
-            try self.bbs.get(Function.entryBBID).versionMap.put(name, loadRef);
-            return Ref.fromReg(loadReg);
-        }
+        // now we have to check if its in the typesMap,
 
         // okay she's nowhere...
+        // if it is declared in this function return null, otherwise search on
+        if (self.declaredVars.contains(name)) {
+            return null;
+        }
         // check if its a function?
 
         if (ir.funcs.items.safeIndexOf(name)) |funcID| {
@@ -508,6 +628,9 @@ pub const Function = struct {
             return Ref.global(globalID, global.name, global.type);
         }
 
+        std.debug.print("name not found := {s}\n", .{
+            ir.getIdent(name),
+        });
         return error.UnboundIdentifier;
     }
 
@@ -868,7 +991,7 @@ pub const CfgFunction = struct {
     params: std.ArrayList(StrID),
     decls: std.ArrayList(StrID),
     declsUsed: std.AutoHashMap(StrID, bool),
-    assignments: std.AutoHashMap(StrID, bool),
+    assignments: std.AutoHashMap(StrID, std.AutoHashMap(CfgBlock.ID_t, bool)),
     paramsUsed: std.ArrayList(StrID),
     statements: std.ArrayList(Ast.Node),
     funNode: Ast.Node.Kind.FunctionType,
@@ -927,6 +1050,12 @@ pub const CfgFunction = struct {
             }
         }
 
+        // // std.debug.print("after init Dominators\n", .{});
+        // for (self.postOrder.items) |block| {
+        //     std.debug.print("block = {any}, ", .{block});
+        //     result.items[block].print();
+        //     std.debug.print("\n", .{});
+        // }
         // while changes in any Dom(n)
         //     for each n in N - {n0}:
         //         Dom(n) = {n} union with intersection over Dom(p) for all p in pred(n)
@@ -946,9 +1075,12 @@ pub const CfgFunction = struct {
                     var blockDom = result.items[block];
                     var intersection = try blockDom.intersectionOf(self.alloc, predDom);
                     _ = try intersection.add(self.alloc, block);
-                    // std.debug.print("block = {any}, pred = {any}\n", .{ block, pred });
+                    // std.debug.print("\nblock = {any}, pred = {any}\n", .{ block, pred });
+                    // std.debug.print("predDom\n", .{});
                     // predDom.print();
+                    // std.debug.print("blockDm\n", .{});
                     // blockDom.print();
+                    // std.debug.print("intersection\n", .{});
                     // intersection.print();
                     // std.debug.print("\n", .{});
                     var changedInter = intersection.eql(blockDom);
@@ -963,10 +1095,11 @@ pub const CfgFunction = struct {
             }
         }
         self.dominators = result;
+        // // std.debug.print("Dominators\n", .{});
         // for (self.postOrder.items) |block| {
-        //     // std.debug.print("block = {any}, ", .{block});
-        //     // self.dominators.items[block].print();
-        //     // std.debug.print("\n", .{});
+        //     std.debug.print("block = {any}, ", .{block});
+        //     self.dominators.items[block].print();
+        //     std.debug.print("\n", .{});
         // }
     }
 
@@ -1017,7 +1150,7 @@ pub const CfgFunction = struct {
                 }
 
                 if (doms_all) {
-                    // std.debug.print("block = {d}, idom = {d}\n", .{ block, d.key_ptr.* });
+                    // std.debug.print("idom adding block = {d}, idom = {d}\n", .{ block, d.key_ptr.* });
 
                     _ = try self.idoms.put(block, d.key_ptr.*);
                     break;
@@ -1048,6 +1181,25 @@ pub const CfgFunction = struct {
             }
         }
         return children;
+    }
+
+    pub fn printChildren(self: *CfgFunction, node: CfgBlock.ID_t) void {
+        // print block name
+        self.printBlockName(node);
+        const children = self.domChildren.get(node);
+        if (children == null) {
+            return;
+        }
+        for (children.?.items) |child| {
+            std.debug.print("{d} ", .{child});
+        }
+        std.debug.print("\n", .{});
+    }
+
+    pub fn printallChildren(self: *CfgFunction) void {
+        for (self.postOrder.items) |node| {
+            self.printChildren(node);
+        }
     }
 
     pub fn generateDomChildren(self: *CfgFunction) !void {
@@ -1129,7 +1281,7 @@ pub const CfgFunction = struct {
             .domFront = std.AutoHashMap(CfgBlock.ID_t, std.ArrayList(CfgBlock.ID_t)).init(alloc),
             .dominators = std.ArrayList(Set.Set(CfgBlock.ID_t)).init(alloc),
             .postOrderMap = std.AutoHashMap(CfgBlock.ID_t, usize).init(alloc),
-            .assignments = std.AutoHashMap(StrID, bool).init(alloc),
+            .assignments = std.AutoHashMap(StrID, std.AutoHashMap(CfgBlock.ID_t, bool)).init(alloc),
             .funNode = undefined,
             .exitID = 1,
             .alloc = alloc,
@@ -1414,8 +1566,20 @@ pub const CfgFunction = struct {
         try self.generateStatements(ast, ir, statIter, the_edge);
         try self.reversePostOrderComp();
         try self.genDominance();
+        // self.printallChildren();
         // try self.printDomFront();
-        // self.printOutFunAsDot(ir);
+        self.printOutFunAsDot(ir);
+
+        // for every blocks's assignments add to the functions assignemnts
+        for (self.postOrder.items) |blockID| {
+            for (self.blocks.items[blockID].assignments.items) |ident| {
+                if (!self.assignments.contains(ident)) {
+                    // init the assignments for the ident
+                    try self.assignments.put(ident, std.AutoHashMap(CfgBlock.ID_t, bool).init(self.alloc));
+                }
+                try self.assignments.getPtr(ident).?.put(blockID, true);
+            }
+        }
         return self;
     }
 
@@ -1427,7 +1591,9 @@ pub const CfgFunction = struct {
                 // get the edge
                 var outEdge = self.edges.items[out.?];
                 if (outEdge.dest == self.exitID) {
-                    continue;
+                    if (self.blocks.items[blockID].incomers.items.len == 0 and blockID != 0) {} else {
+                        continue;
+                    }
                 }
 
                 try outIDArr.append(self.edges.items[out.?].dest);
@@ -1437,8 +1603,10 @@ pub const CfgFunction = struct {
         }
         for (outIDArr.items) |outID| {
             if (outID == self.exitID) {
-                // self.blocks.items[blockID].outgoers[i] = outID;
-                continue;
+                // check if we have no incomers, check if we are not block 0
+                if (self.blocks.items[blockID].incomers.items.len == 0 and blockID != 0) {} else {
+                    continue;
+                }
             }
             var succIncomers = self.blocks.items[outID].incomers;
             var newSuccIncomers = std.ArrayList(Edge.ID_t).init(self.alloc);
@@ -1481,8 +1649,8 @@ pub const CfgFunction = struct {
         while (statIter.nextInc()) |c_stat| {
             const statementIndex = c_stat.kind.Statement.statement;
             const statementNode = c_stat.kind.Statement;
-            self.printBlockName(cBlock);
-            ast.printNodeLine(c_stat);
+            // self.printBlockName(cBlock);
+            // ast.printNodeLine(c_stat);
             const innerNode = ast.get(statementIndex);
             const kind = innerNode.kind;
             const finalIndex = c_stat.kind.Statement.finalIndex;
@@ -1494,9 +1662,9 @@ pub const CfgFunction = struct {
                 try self.blocks.items[cBlock].addIdentsFromStatement(ir, ast, c_stat);
                 // add the statement to the block
                 try self.blocks.items[cBlock].statements.append(c_stat);
-                std.debug.print("items in block ", .{});
-                self.printBlockName(cBlock);
-                std.debug.print("{any}\n", .{self.blocks.items[cBlock].statements.items});
+                // std.debug.print("items in block ", .{});
+                // self.printBlockName(cBlock);
+                // std.debug.print("{any}\n", .{self.blocks.items[cBlock].statements.items});
                 continue;
             }
 
@@ -1689,15 +1857,18 @@ pub const CfgFunction = struct {
                         for (wExitID..self.blocks.items.len) |id| {
                             for (self.blocks.items[id].typedIdents.items) |ident| {
                                 try self.blocks.items[wFillbackID].typedIdents.append(ident);
+                                try self.blocks.items[wFillbackID].assignments.append(ident);
                             }
                         }
                         // for the idents in body add them to the fillback block
                         for (self.blocks.items[wBodyID].typedIdents.items) |ident| {
                             try self.blocks.items[wFillbackID].typedIdents.append(ident);
+                            try self.blocks.items[wFillbackID].assignments.append(ident);
                         }
                         // for the idents in while cond2 add them to the fillback block
                         for (self.blocks.items[wCondID2].typedIdents.items) |ident| {
                             try self.blocks.items[wFillbackID].typedIdents.append(ident);
+                            try self.blocks.items[wFillbackID].assignments.append(ident);
                         }
                         statIter.skipTo(body_range.?[1]);
                     } else {
@@ -1786,7 +1957,7 @@ pub const BasicBlock = struct {
     incomers: std.ArrayList(Label),
     outgoers: [2]?Label,
     defs: Set.Set(StrID),
-    uses: Set.Set(StrID),
+    uses: std.AutoHashMap(StrID, bool),
     // a map of strID to the last definition within this block
     versionMap: std.AutoHashMap(StrID, Ref),
     // and ORDERED list of the instruction ids of the instructions in this block
@@ -1795,7 +1966,7 @@ pub const BasicBlock = struct {
     phiMap: std.AutoHashMap(StrID, Function.InstID),
 
     pub fn addRefToPhi(self: BasicBlock.ID, fun: *Function, ref: Ref, bbIn: BasicBlock.ID, name: StrID) !Function.InstID {
-        std.debug.print("ref.i {any}\n", .{ref.i});
+        // std.debug.print("ref.i {any}\n", .{ref.i});
         const bb = fun.bbs.get(self);
         var phiInstID = bb.getPhi(name);
         if (phiInstID == null) {
@@ -1803,12 +1974,65 @@ pub const BasicBlock = struct {
         }
         const phiInst = fun.insts.get(phiInstID.?);
         var phi = IR.Inst.Phi.get(phiInst.*);
-        std.debug.print("ref.i {any}\n", .{ref.i});
+        // std.debug.print("ref.i {any}\n", .{ref.i});
         try phi.entries.append(IR.PhiEntry{ .ref = ref, .bb = bbIn });
-        std.debug.print("entries: {any}\n", .{phi.entries.items});
+        // std.debug.print("entries: {any}\n", .{phi.entries.items});
         var updatedPhiInst = phi.toInst();
         fun.insts.set(phiInstID.?, updatedPhiInst);
         return phiInstID.?;
+    }
+
+    pub fn addRefToPhiReturn(self: BasicBlock.ID, fun: *Function, ref: Ref, bbIn: BasicBlock.ID, ir: *IR) !Function.InstID {
+        var name = ir.internIdent("return_reg");
+        // std.debug.print("ref.i {any}\n", .{ref.i});
+        const bb = fun.bbs.get(self);
+        var phiInstID = bb.getPhi(name);
+        if (phiInstID == null) {
+            phiInstID = try IR.BasicBlock.addEmptyPhiReturn(self, fun, ir);
+        }
+        const phiInst = fun.insts.get(phiInstID.?);
+        var phi = IR.Inst.Phi.get(phiInst.*);
+        // std.debug.print("ref.i {any}\n", .{ref.i});
+        try phi.entries.append(IR.PhiEntry{ .ref = ref, .bb = bbIn });
+        // std.debug.print("entries: {any}\n", .{phi.entries.items});
+        var updatedPhiInst = phi.toInst();
+        fun.insts.set(phiInstID.?, updatedPhiInst);
+        return phiInstID.?;
+    }
+
+    pub fn addEmptyPhiReturn(self: BasicBlock.ID, fun: *Function, ir: *IR) !Function.InstID {
+        var ident = ir.internIdent("return_reg");
+        const bbMap = fun.bbs.get(self).*.phiMap;
+        if (bbMap.contains(ident)) {
+            const contInst = bbMap.get(ident).?;
+            const fInst = fun.insts.get(contInst).*;
+            var phiInst = IR.Inst.Phi.get(fInst);
+            try phiInst.entries.resize(0);
+            const phiInstInst = phiInst.toInst();
+            fun.insts.set(contInst, phiInstInst);
+            try fun.bbs.get(self).versionMap.put(ident, fInst.res);
+            return contInst;
+        }
+        const identType = fun.typesMap.get(ident).?;
+        var phiEntries = std.ArrayList(IR.PhiEntry).init(fun.alloc);
+        const phi = Inst.phi(IR.Ref.default, identType, phiEntries);
+
+        // reserve
+        const regID = try fun.regs.add(undefined);
+        const instID = try fun.insts.add(undefined);
+
+        // construct the register to be added, using the reserved IDs
+        const reg = Register{ .id = regID, .inst = instID, .name = ident, .bb = self, .type = identType };
+        var inst = phi;
+        inst.res = Ref.local(regID, ident, identType); // update the reference of the incoming instruction
+
+        // save
+        fun.regs.set(regID, reg);
+        fun.insts.set(instID, inst); // in the inst array update the resulting instruction
+        try fun.bbs.get(self).versionMap.put(ident, inst.res);
+
+        try fun.bbs.get(self).addPhiInst(instID, ident);
+        return instID;
     }
 
     // creates a new instruction phi node and adds it to the block, adds it to the phiMap
@@ -1847,6 +2071,7 @@ pub const BasicBlock = struct {
         return instID;
     }
 
+    // ads aphi node with %name = phi [%undef, %pred block]
     pub fn addPhiWithPreds(bbID: BasicBlock.ID, fun: *Function, ident: StrID) !Function.InstID {
         const bb = fun.bbs.get(bbID);
         const currentPhiInstID = try BasicBlock.addEmptyPhiOrClear(bbID, fun, ident);
@@ -1854,16 +2079,16 @@ pub const BasicBlock = struct {
         var bbPhi = IR.Inst.Phi.get(bbPhiInst);
 
         for (bb.incomers.items) |it| {
-            const predBB = fun.bbs.get(it);
-            const predInst = predBB.versionMap.get(ident);
+            // const predBB = fun.bbs.get(it);
+            // const predInst = predBB.versionMap.get(ident);
             // if there is no phi for the pred block then continue
-            if (predInst == null) {
-                var phiEntryTemp = IR.PhiEntry{ .ref = IR.Ref.default, .bb = it };
-                phiEntryTemp.ref.name = ident;
-                try bbPhi.entries.append(phiEntryTemp);
-                continue;
-            }
-            try bbPhi.entries.append(IR.PhiEntry{ .ref = predInst.?, .bb = it });
+            // if (predInst == null) {
+            var phiEntryTemp = IR.PhiEntry{ .ref = IR.Ref.default, .bb = it };
+            phiEntryTemp.ref.name = ident;
+            try bbPhi.entries.append(phiEntryTemp);
+            // continue;
+            // }
+            // try bbPhi.entries.append(IR.PhiEntry{ .ref = predInst.?, .bb = it });
         }
 
         const phiInst = bbPhi.toInst();
@@ -1874,6 +2099,7 @@ pub const BasicBlock = struct {
     pub fn addPhiInst(self: *BasicBlock, instID: Function.InstID, ident: StrID) !void {
         try self.phiInsts.append(instID);
         try self.phiMap.put(ident, instID);
+        try self.uses.put(ident, true);
     }
 
     pub fn getPhi(self: *BasicBlock, ident: StrID) ?Function.InstID {
@@ -1892,7 +2118,7 @@ pub const BasicBlock = struct {
         return .{
             .incomers = std.ArrayList(Label).init(alloc),
             .defs = Set.Set(StrID).init(),
-            .uses = Set.Set(StrID).init(),
+            .uses = std.AutoHashMap(StrID, bool).init(alloc),
             .versionMap = std.AutoHashMap(StrID, Ref).init(alloc),
             .outgoers = [2]?Label{ null, null },
             .insts = List.init(alloc),
@@ -2013,6 +2239,9 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
                 items[i] = default;
             }
             return Self.init(items);
+        }
+        pub fn contains(self: Self, key: Key) bool {
+            return self.safeIndexOf(key) != null;
         }
     };
 }
@@ -2319,6 +2548,8 @@ pub const Op = enum {
     /// `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
     Phi,
 
+    Param,
+
     /// The condition of a cmp
     /// Placed in `Op` struct for namespacing
     pub const Cond = enum { Eq, NEq, Lt, Gt, GtEq, LtEq };
@@ -2380,6 +2611,20 @@ pub const Type = union(enum) {
         };
     }
 
+    pub fn debugPrint(self: Type) void {
+        switch (self) {
+            .void => std.debug.print("Type: void\n", .{}),
+            .int => std.debug.print("Type: int\n", .{}),
+            .bool => std.debug.print("Type: bool\n", .{}),
+            .strct => |structID| std.debug.print("Type: struct, StructID: {}\n", .{structID}),
+            .i8 => std.debug.print("Type: i8\n", .{}),
+            .i32 => std.debug.print("Type: i32\n", .{}),
+            .int_arr => std.debug.print("Type: int_arr\n", .{}),
+            .arr => |arrType| std.debug.print("Type: arr, Element Type: {}, Length: {}\n", .{ arrType.type, arrType.len }),
+            .null_ => std.debug.print("Type: null\n", .{}),
+        }
+    }
+
     /// WARN: returns sizeof(void*) for structs
     /// not the actual size of the struct
     pub fn sizeof(self: Type) u32 {
@@ -2438,9 +2683,50 @@ pub const Ref = struct {
     name: StrID,
     kind: Kind,
     type: Type,
+    // used for when a thing is assigned an immediate and then assigned something else
+    extraImm: Kind = ._invalid,
     /// Ref used when no ref needed
     /// FIXME: add deadbeef here too
     pub const default = Ref.local(69420, InternPool.NULL, .void);
+
+    pub fn debugPrintWithName(self: Ref, ir: *IR) void {
+        std.debug.print("Ref: {any}, Kind: ", .{self.i});
+        self.kind.debugPrint();
+        std.debug.print(", Type: ", .{});
+        self.type.debugPrint();
+        std.debug.print("\n", .{});
+        if (self.name != InternPool.NULL) {
+            const name = ir.getIdent(self.name);
+            std.debug.print("Name: {s}\n", .{name});
+        } else {
+            std.debug.print("Name: NULL\n", .{});
+        }
+        // id
+        if (self.i != 69420) {
+            std.debug.print("ID: {any}\n", .{self.i});
+        } else {
+            std.debug.print("ID: 69420\n", .{});
+        }
+    }
+    pub fn debugPrint(self: Ref) void {
+        std.debug.print("Ref: {any}, Kind: ", .{self.i});
+        self.kind.debugPrint();
+        std.debug.print(", Type: ", .{});
+        self.type.debugPrint();
+        std.debug.print("\n", .{});
+        // name
+        if (self.name != InternPool.NULL) {
+            std.debug.print("Name: {any}\n", .{self.name});
+        } else {
+            std.debug.print("Name: NULL\n", .{});
+        }
+        // id
+        if (self.i != 69420) {
+            std.debug.print("ID: {any}\n", .{self.i});
+        } else {
+            std.debug.print("ID: 69420\n", .{});
+        }
+    }
 
     pub const Kind = enum {
         local,
@@ -2454,9 +2740,31 @@ pub const Ref = struct {
         // this makes things simpler trust me bro
         immediate_u32,
         param,
+        _invalid,
+        pub fn debugPrint(self: Kind) void {
+            switch (self) {
+                .local => std.debug.print("local", .{}),
+                .global => std.debug.print("global", .{}),
+                .label => std.debug.print("label", .{}),
+                .immediate => std.debug.print("immediate", .{}),
+                .immediate_u32 => std.debug.print("immediate_u32", .{}),
+                .param => std.debug.print("param", .{}),
+                ._invalid => std.debug.print("_invalid", .{}),
+            }
+        }
     };
 
-    pub inline fn fromReg(reg: Register) Ref {
+    pub inline fn fromRegLocal(reg: Register) Ref {
+        return Ref{ .i = reg.id, .kind = .local, .name = reg.name, .type = reg.type };
+    }
+
+    pub inline fn fromReg(reg: Register, fun: *Function, ir: *IR) Ref {
+        if (fun.paramRegs.contains(reg.name)) {
+            return Ref{ .i = reg.id, .kind = .param, .name = reg.name, .type = reg.type };
+        }
+        if (ir.globals.contains(reg.name)) {
+            return Ref{ .i = reg.id, .kind = .global, .name = reg.name, .type = reg.type };
+        }
         return Ref{ .i = reg.id, .kind = .local, .name = reg.name, .type = reg.type };
     }
 
@@ -2487,7 +2795,8 @@ pub const Ref = struct {
         return Ref{ .i = val, .kind = .immediate_u32, .name = InternPool.NULL, .type = ty };
     }
 
-    pub inline fn param(id: Function.Param.ID, name: StrID, ty: Type) Ref {
+    pub inline fn param(id: Register.ID, name: StrID, ty: Type, remove_me: u32) Ref {
+        _ = remove_me;
         return Ref{ .i = id, .kind = .param, .name = name, .type = ty };
     }
 
@@ -2610,6 +2919,7 @@ pub const Inst = struct {
         on: Ref,
         /// Function call arguments
         args: []Ref,
+
         /// Helper to use `none_` more elegantly
         pub fn none() Extra {
             return .{ .none_ = undefined };
@@ -2627,6 +2937,22 @@ pub const Inst = struct {
             else => false,
         };
     }
+
+    pub const Param = struct {
+        type: Type,
+        register: Ref,
+
+        pub fn get(inst: Inst) Param {
+            return .{
+                .type = inst.ty1,
+                .register = inst.res,
+            };
+        }
+
+        pub fn toInst(inst: Param) Inst {
+            return .{ .op = .Param, .ty1 = inst.type, .res = inst.register };
+        }
+    };
 
     /// Arithmetic struct
     pub const Binop = struct {
@@ -2662,6 +2988,9 @@ pub const Inst = struct {
 
     // WARN: ALL OF THESE HELPERS EXPECT TO BE CREATED WITH THE HELPERS IN
     // `Function` SO THE RES FIELD IS SET PROPERLY
+    pub inline fn param(res: Ref, ty: Type) Inst {
+        return .{ .op = .Param, .res = res, .ty1 = ty };
+    }
 
     /// `<result> = add <ty> <op1>, <op2>`
     pub inline fn add(lhs: Ref, rhs: Ref) Inst {
@@ -3045,6 +3374,10 @@ pub const Inst = struct {
             .Phi => {
                 const _phi = Inst.Phi.get(self);
                 return writer.print("{any}\n", .{_phi});
+            },
+            .Param => {
+                const _param = Inst.Param.get(self);
+                return writer.print("{any}\n", .{_param});
             },
         }
     }
