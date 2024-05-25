@@ -2222,6 +2222,10 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
             return self.items[key];
         }
 
+        pub fn get(self: Self, key: Index) *Value {
+            return &self.items[key];
+        }
+
         /// Helper mainly for the `fromLUT` function for when the value is the key
         pub fn IDgetKeyHelper(val: anytype) @TypeOf(val) {
             return val;
