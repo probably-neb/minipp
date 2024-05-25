@@ -263,10 +263,6 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
         // print out phi inst then insts
         for (fun.bbs.items(), 0..) |bb, bbID| {
             buf.fmt("{}:\n", .{stringify_label(fun, @truncate(bbID))}) catch unreachable;
-            for (bb.phiInsts.items) |phiInstID| {
-                // print out the phi instruction
-                try stringify_inst(phiInstID, &buf, ir, fun, bb);
-            }
             // print out the rest of the instructions
             for (bb.insts.items()) |instID| {
                 try stringify_inst(instID, &buf, ir, fun, bb);
