@@ -34,6 +34,32 @@ pub fn mapStructs(ast: *Ast) !void {
     }
 }
 
+pub fn debugPrintAst(self: *const Ast) void {
+    var i: usize = 0;
+    const nodes = self.nodes.items;
+    std.debug.print("AST PRINT START\n", .{});
+    for (nodes) |node| {
+        const kind = node.kind;
+        const token = node.token;
+        std.debug.print("{d}: {s} {s}", .{ i, @tagName(kind), token._range.getSubStrFromStr(self.input) });
+        switch (kind) {
+            .BinaryOperation => {
+                const binOp = node.kind.BinaryOperation;
+                std.debug.print(" lhs: {any}\n", .{binOp.lhs});
+                std.debug.print(" rhs: {any}\n", .{binOp.rhs});
+            },
+            .Expression => {
+                const expr = node.kind.Expression;
+                const last = expr.last;
+                std.debug.print(" last: {d}", .{last});
+            },
+            else => {},
+        }
+        std.debug.print("\n", .{});
+        i += 1;
+    }
+    std.debug.print("AST PRINT END\n", .{});
+}
 pub fn printAst(self: *const Ast) void {
     var i: usize = 0;
     const nodes = self.nodes.items;
@@ -53,6 +79,104 @@ pub fn printAst(self: *const Ast) void {
         i += 1;
     }
     log.trace("AST PRINT END\n", .{});
+}
+
+pub fn arrayStringsToString(self: *const Ast, arr: std.ArrayList(u8)) ![]u8 {
+    var strbuff = std.ArrayList(u8).init(self.allocator);
+    defer strbuff.deinit();
+    for (arr.items) |str| {
+        try strbuff.append(str);
+    }
+    return try strbuff.toOwnedSlice();
+}
+
+pub fn selectorChainToString(self: *const Ast, chainID: ?usize) ![]u8 {
+    var cId = chainID;
+    var strbuff = std.ArrayList(u8).init(self.allocator);
+    defer strbuff.deinit();
+    while (cId != null) {
+        var chainNode = self.get(cId.?).*;
+        var ident = chainNode.kind.SelectorChain.ident;
+        var identNode = self.get(ident).*;
+        switch (identNode.kind) {
+            .Identifier => {
+                // const identss = identNode.kind.Identifier;
+                const identName = self.getIdentValue(ident);
+                try strbuff.append('.');
+                for (identName) |c| {
+                    try strbuff.append(c);
+                }
+                cId = chainNode.kind.SelectorChain.next;
+            },
+            else => {
+                return try self.arrayStringsToString(strbuff);
+            },
+        }
+    }
+    return try self.arrayStringsToString(strbuff);
+}
+
+pub fn lvalToString(self: *const Ast, lvalID: usize) ![]u8 {
+    const lvalNode = self.get(lvalID).*;
+    const lvalKind = lvalNode.kind;
+    var strbuff = std.ArrayList(u8).init(self.allocator);
+    defer strbuff.deinit();
+    switch (lvalKind) {
+        .LValue => {
+            const lval = lvalKind.LValue;
+            const identName = self.getIdentValue(lval.ident);
+            for (identName) |c| {
+                try strbuff.append(c);
+            }
+            if (lval.chain != null) {
+                const chainStr = try self.selectorChainToString(lval.chain.?);
+                for (chainStr) |c| {
+                    try strbuff.append(c);
+                }
+            }
+        },
+        else => {
+            unreachable;
+        },
+    }
+    return try self.arrayStringsToString(strbuff);
+}
+
+pub fn selectorToString(self: *const Ast, selectorId: usize) ![]u8 {
+    const selectorNode = self.get(selectorId).*;
+    const selectorKind = selectorNode.kind;
+    var strbuff = std.ArrayList(u8).init(self.allocator);
+    defer strbuff.deinit();
+    switch (selectorKind) {
+        .Selector => {
+            const selector = selectorKind.Selector;
+            const factor = selector.factor;
+            const factorNode = self.get(factor).*;
+            const factorFactor = factorNode.kind.Factor.factor;
+            const factorFactorNode = self.get(factorFactor).*;
+            switch (factorFactorNode.kind) {
+                .Identifier => {
+                    const identName = self.getIdentValue(factorFactor);
+                    for (identName) |c| {
+                        try strbuff.append(c);
+                    }
+                },
+                else => {
+                    return try self.arrayStringsToString(strbuff);
+                },
+            }
+            if (selector.chain != null) {
+                const chainStr = try self.selectorChainToString(selector.chain.?);
+                for (chainStr) |c| {
+                    try strbuff.append(c);
+                }
+            }
+        },
+        else => {
+            unreachable;
+        },
+    }
+    return try self.arrayStringsToString(strbuff);
 }
 
 pub fn mapFunctions(ast: *Ast) !void {
@@ -351,6 +475,72 @@ pub const Node = struct {
             /// Pointer to `Statement`
             /// null if only one statement
             lastStatement: ?Ref(.Statement) = null,
+
+            pub const EmptyStatementIter = StatementsIter.init(
+                undefined,
+                1,
+                0,
+            );
+            pub const StatementsIter = struct {
+                first: usize,
+                last: usize,
+                i: usize,
+                ast: *const Ast,
+
+                pub fn init(ast: *const Ast, firstStmt: usize, lastStmt: ?usize) StatementsIter {
+                    const last: usize = lastStmt orelse firstStmt + 1;
+                    const i: usize = firstStmt;
+
+                    return .{
+                        .first = i,
+                        .last = last,
+                        .i = i,
+                        .ast = ast,
+                    };
+                }
+                pub fn next(self: *StatementsIter) ?Ast.Node {
+                    if (self.i > self.last) {
+                        return null;
+                    }
+                    const stmt = self.ast.get(self.i).*;
+                    // Move to the next argument, considering nested Arguments and ArgumentEnds
+                    var cursor = self.i + 1;
+                    while (cursor <= self.last) : (cursor += 1) {
+                        const node = self.ast.get(cursor).*;
+                        if (node.kind == .Statement) {
+                            break;
+                        }
+                        if (node.kind == .StatementList) {
+                            cursor = (node.kind.StatementList.lastStatement orelse node.kind.StatementList.firstStatement);
+                        }
+                    }
+
+                    self.i = cursor;
+
+                    return stmt;
+                }
+
+                pub fn calculateLen(self: StatementsIter) usize {
+                    // create a copy of the iterator with the initial state
+                    // (i == first) so we do not mutate the original iterator
+                    var copy = StatementsIter{ .ast = self.ast, .i = self.first, .first = self.first, .last = self.last };
+                    var length: usize = 0;
+                    // the |_| is needed so zig realizes I want them to go until
+                    // next is null, otherwise get `expected bool` compile error
+                    while (copy.next()) |_| : (length += 1) {
+                        // do nothing
+                    }
+                    return length;
+                }
+            };
+
+            pub fn iter(self: @This(), ast: *const Ast) StatementsIter {
+                return StatementsIter.init(
+                    ast,
+                    self.firstStatement,
+                    self.lastStatement,
+                );
+            }
         },
         /// Statement holds only one field, the index of the actual statement
         /// it is still usefull, however, as the possible statements are vast,
@@ -369,6 +559,14 @@ pub const Node = struct {
                 .Invocation,
             }),
             finalIndex: usize,
+
+            pub fn isControlFlow(self: @This(), ast: *const Ast) bool {
+                const node = ast.get(self.statement);
+                switch (node.kind) {
+                    .ConditionalIf, .While, .Return, .Block => return true,
+                    else => return false,
+                }
+            }
         },
 
         Block: BlockType,
@@ -409,8 +607,8 @@ pub const Node = struct {
             ident: Ref(.Identifier),
             /// Pointer to `SelectorChain` (`{'.'id}*`)
             /// null if no selectors
-            chain: ?Ref(.SelectorChain) = null,
             // TODO: for adding the int_array access this will need to be changed
+            chain: ?Ref(.SelectorChain) = null,
         },
         Expression: ExpressionType,
         BinaryOperation: struct {
@@ -810,8 +1008,7 @@ pub const Node = struct {
                     .BoolType => return .Bool,
                     .IntType => return .Int,
                     .StructType => {
-                        const nameToken = ast.get(tyNode.structIdentifier.?).token;
-                        const name = nameToken._range.getSubStrFromStr(ast.input);
+                        const name = ast.getIdentValue(tyNode.structIdentifier.?);
                         return .{ .Struct = name };
                     },
                     .IntArrayType => return .IntArray,
@@ -893,6 +1090,13 @@ pub const Node = struct {
             }
         };
     };
+
+    pub fn isStatement(self: Node) bool {
+        return switch (self.kind) {
+            .Statement => true,
+            else => false,
+        };
+    }
 };
 
 pub const Type = union(enum) {
@@ -924,7 +1128,10 @@ pub const Type = union(enum) {
             // hurt right?
             //
             // right?
-            .Null => other == .Struct or other == .Null,
+            .Null => switch (other) {
+                .Struct, .Null => true,
+                else => false,
+            },
             else => @intFromEnum(self) == @intFromEnum(other),
         };
         // Dylan I see what you were going for here I just don't like it ;)
@@ -938,6 +1145,15 @@ pub const Type = union(enum) {
         //     return std.mem.eql(u8, self.Struct, other.Struct);
         // }
         // return tmp == 0;
+    }
+
+    pub fn isOneOf(self: Self, comptime others: anytype) bool {
+        inline for (others) |other| {
+            if (self.equals(other)) {
+                return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -953,7 +1169,7 @@ pub fn generateTypeInt() Type {
 // '<,'>g/: struct/norm f:dt{da{
 // '<,'>g://:d
 // '<,'>g:^\s*$:d
-const KindTagDupe = enum {
+pub const KindTagDupe = enum {
     Program,
     ProgramDeclarations,
     Types,
@@ -977,8 +1193,8 @@ const KindTagDupe = enum {
     ReturnType,
     FunctionBody,
     LocalDeclarations,
-    ReturnTypedIdentifier,
     TypedIdentifier,
+    ReturnTypedIdentifier,
     StatementList,
     Statement,
     Block,
@@ -1002,6 +1218,7 @@ const KindTagDupe = enum {
     True,
     False,
     New,
+    NewIntArray,
     Null,
     BackfillReserve,
 };
@@ -1024,6 +1241,10 @@ fn RefOneOf(comptime tags: anytype) type {
 /////////////
 
 const NodeKindTag = @typeInfo(Node.Kind).Union.tag_type.?;
+
+pub fn NodeKindType(comptime tag: NodeKindTag) type {
+    return @typeInfo(Node.Kind).Union.fields[@intFromEnum(tag)].type;
+}
 
 fn cmpNodeKindAndTag(node: Node, nkTag: NodeKindTag) bool {
     return @intFromEnum(node.kind) == @intFromEnum(nkTag);
@@ -1077,7 +1298,7 @@ pub fn findIndexWithin(ast: *const Ast, nodeKind: NodeKindTag, start: usize, end
     if (start >= ast.nodes.items.len) {
         return null;
     }
-    for (ast.nodes.items[start..end], start..) |node, i| {
+    for (ast.nodes.items[start..@min(end, ast.nodes.items.len)], start..) |node, i| {
         if (cmpNodeKindAndTag(node, nodeKind)) {
             return i;
         }
@@ -1159,7 +1380,21 @@ pub fn NodeIter(comptime tag: NodeKindTag) type {
                 return null;
             }
             // PERF: use a hashmap to store the indexes of the functions
-            const nodeIndex = self.ast.findIndex(tag, self.i);
+            const nodeIndex = self.ast.findIndexWithin(tag, self.i, self.last + 1);
+            if (nodeIndex) |i| {
+                self.i = i + 1;
+                const n = self.ast.nodes.items[i];
+                return n;
+            }
+            self.i = self.last + 1;
+            return null;
+        }
+        pub fn nextInc(self: *Self) ?Node {
+            if (self.i > self.last) {
+                return null;
+            }
+            // PERF: use a hashmap to store the indexes of the functions
+            const nodeIndex = self.ast.findIndexWithin(tag, self.i, self.last + 1);
             if (nodeIndex) |i| {
                 self.i = i + 1;
                 const n = self.ast.nodes.items[i];
@@ -1198,12 +1433,16 @@ pub fn iterFuncs(ast: *const Ast) FuncIter {
 }
 
 pub fn printNodeLine(ast: *const Ast, node: Node) void {
+    printNodeLineTo(ast, node, std.debug.print);
+}
+
+pub fn printNodeLineTo(ast: *const Ast, node: Node, comptime printer: fn (comptime fmt: []const u8, args: anytype) void) void {
     const input = ast.input;
     const tok = node.token;
     const tok_start = tok._range.start;
     const tok_end = tok._range.end;
     var line_start: usize = tok_start;
-    while (line_start >= 0 and input[line_start] != '\n') : (line_start -= 1) {}
+    while (line_start > 0 and input[line_start] != '\n') : (line_start -= 1) {}
     line_start += 1;
     var line_end: usize = tok_end;
     while (line_end < input.len and input[line_end] != '\n') : (line_end += 1) {}
@@ -1216,7 +1455,7 @@ pub fn printNodeLine(ast: *const Ast, node: Node) void {
         }
     }
     const col_no = tok_start - line_start;
-    std.debug.print("LINE {d}:{d} \"{s}\"\n", .{ line_no, col_no, line });
+    @call(.auto, printer, .{ "LINE {d}:{d} \"{s}\"\n", .{ line_no, col_no, line } });
 }
 
 const ting = std.testing;
@@ -1379,3 +1618,24 @@ test "ast.int_array_access" {
     var ast = try testMe(input);
     _ = ast;
 }
+
+// test "parser.printlvalue" {
+//     const source = "struct S{struct S s;}; fun main() void {struct S s; int_array a; s.s.s.s.s.s.s.s.s.s.s.s = 22+500 + a[0] + s.s.s.s.s; a = new int_array[10]; a[0] = 1;}";
+//     var ast = try testMe(source);
+//     var count: u32 = 0;
+//     ast.debugPrintAst();
+//     for (ast.nodes.items) |node| {
+//         switch (node.kind) {
+//             .LValue => {
+//                 const str = try ast.lvalToString(count);
+//                 std.debug.print("{s}\n", .{str});
+//             },
+//             .Selector => {
+//                 const str = try ast.selectorToString(count);
+//                 std.debug.print("{s}\n", .{str});
+//             },
+//             else => {},
+//         }
+//         count += 1;
+//     }
+// }
