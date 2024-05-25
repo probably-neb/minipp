@@ -144,6 +144,11 @@ pub fn getFun(self: *const IR, nameID: StrID) !Function {
     return error.NotFound;
 }
 
+pub fn parseInt(self: *const IR, id: StrID) !i64 {
+    const str = try self.safeGetIdent(id);
+    return std.fmt.parseInt(i64, str, 10);
+}
+
 pub fn getIdentID(self: *const IR, ident: []const u8) !StrID {
     return self.intern_pool.getIDOf(ident);
 }
