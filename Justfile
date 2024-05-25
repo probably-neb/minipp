@@ -128,3 +128,26 @@ check-llvm path *BUILD_ARGS:
 
 nix:
     sudo nix develop --extra-experimental-features nix-command --extra-experimental-features flakes
+
+
+par-run-suite *BUILD_ARGS: ensure-test-suite
+    #!/usr/bin/env bash
+    set -uo pipefail
+
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    NC='\033[0m'
+
+    run_test() {
+        test=$1
+        if just run-suite-test "$test" {{BUILD_ARGS}} > /dev/null 2>&1; then
+            echo -e "${GREEN}SUCCESS${NC} - ${test}"
+        else
+            echo -e "${RED}FAIL   ${NC} - ${test}"
+        fi
+    }
+
+    export -f run_test
+    export RED GREEN NC
+
+    ls {{TEST_SUITE}} | parallel run_test
