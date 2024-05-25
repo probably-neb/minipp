@@ -1290,7 +1290,7 @@ pub const CfgFunction = struct {
 
     pub fn printBlockName(self: *CfgFunction, id: CfgBlock.ID_t) void {
         const block = self.blocks.items[id];
-        std.debug.print("\"{s}_{d}\"", .{ block.name, id });
+        log.trace("\"{s}_{d}\"", .{ block.name, id });
     }
 
     pub fn assertEdgeBothSides(self: *CfgFunction, edgeID: Edge.ID_t) !void {
@@ -1568,7 +1568,7 @@ pub const CfgFunction = struct {
         try self.genDominance();
         // self.printallChildren();
         // try self.printDomFront();
-        self.printOutFunAsDot(ir);
+        // self.printOutFunAsDot(ir);
 
         // for every blocks's assignments add to the functions assignemnts
         for (self.postOrder.items) |blockID| {
@@ -1649,8 +1649,8 @@ pub const CfgFunction = struct {
         while (statIter.nextInc()) |c_stat| {
             const statementIndex = c_stat.kind.Statement.statement;
             const statementNode = c_stat.kind.Statement;
-            // self.printBlockName(cBlock);
-            // ast.printNodeLine(c_stat);
+            self.printBlockName(cBlock);
+            ast.printNodeLineTo(c_stat, log.trace);
             const innerNode = ast.get(statementIndex);
             const kind = innerNode.kind;
             const finalIndex = c_stat.kind.Statement.finalIndex;
