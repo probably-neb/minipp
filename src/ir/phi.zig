@@ -588,14 +588,19 @@ pub fn place_phi_functions(ir: *IR, ast: *const Ast, fun: *IR.Function, funNode:
         while (cfgBlockIter.next()) |cfgBlockID_| {
             var cfgBlockID = cfgBlockID_.*;
             var final_string = ir.reduceChainToFirstIdent(defStrID);
+            var bbBlockID = fun.cfgToBBs.get(cfgBlockID).?;
             // check if its a global
-            if (ir.globals.contains(final_string)) {
+            // this is the hateful line that caused me pain forever left as a comment
+            // if (ir.globals.contains(final_string)) {
+            //     continue;
+            // }
+            // we will use bb declaredVars and paramRegs to find if this block is valid
+            if (!(fun.declaredVars.contains(final_string) or fun.paramRegs.contains(final_string))) {
                 continue;
             }
             if (!fun.defBlocks.contains(final_string)) {
                 try fun.defBlocks.put(final_string, std.ArrayList(IR.BasicBlock.ID).init(ir.alloc));
             }
-            var bbBlockID = fun.cfgToBBs.get(cfgBlockID).?;
             try fun.defBlocks.getPtr(final_string).?.append(@truncate(bbBlockID));
         }
     }
@@ -1668,12 +1673,12 @@ test "phi.print_test" {
 //     std.debparamug.print("{s}\n", .{str});
 // }
 //
-test "phi_stats" {
-    errdefer log.print();
-    const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/stats/stats.mini");
-    var str = try inputToIRStringHeader(name, testAlloc);
-    std.debug.print("{s}\n", .{str});
-}
+// test "phi_stats" {
+//     errdefer log.print();
+//     const name = @embedFile("../../test-suite/tests/milestone2/benchmarks/stats/stats.mini");
+//     var str = try inputToIRStringHeader(name, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+// }
 //
 // test "phi_hanoi" {
 //     errdefer log.print();

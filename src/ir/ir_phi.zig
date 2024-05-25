@@ -1568,7 +1568,7 @@ pub const CfgFunction = struct {
         try self.genDominance();
         // self.printallChildren();
         // try self.printDomFront();
-        // self.printOutFunAsDot(ir);
+        self.printOutFunAsDot(ir);
 
         // for every blocks's assignments add to the functions assignemnts
         for (self.postOrder.items) |blockID| {
@@ -1857,15 +1857,18 @@ pub const CfgFunction = struct {
                         for (wExitID..self.blocks.items.len) |id| {
                             for (self.blocks.items[id].typedIdents.items) |ident| {
                                 try self.blocks.items[wFillbackID].typedIdents.append(ident);
+                                try self.blocks.items[wFillbackID].assignments.append(ident);
                             }
                         }
                         // for the idents in body add them to the fillback block
                         for (self.blocks.items[wBodyID].typedIdents.items) |ident| {
                             try self.blocks.items[wFillbackID].typedIdents.append(ident);
+                            try self.blocks.items[wFillbackID].assignments.append(ident);
                         }
                         // for the idents in while cond2 add them to the fillback block
                         for (self.blocks.items[wCondID2].typedIdents.items) |ident| {
                             try self.blocks.items[wFillbackID].typedIdents.append(ident);
+                            try self.blocks.items[wFillbackID].assignments.append(ident);
                         }
                         statIter.skipTo(body_range.?[1]);
                     } else {
