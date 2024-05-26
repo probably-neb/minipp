@@ -41,8 +41,23 @@ fn gen_function(buf: *Buf, fn_name: str, lines: *LineIter) !void {
 
     const MommysLittleHelper = struct {
         fn get_next_label(line_iter: *LineIter) !str {
-            const label_line = @This().next_non_empty(line_iter) orelse return error.ExpectedBBLabel;
-            return extract_bb_label(label_line) orelse return error.ExpectedBBLabel;
+            const label_line = @This().peek_next_non_empty(line_iter) orelse return error.ExpectedBBLabel;
+            if (extract_bb_label(label_line)) |label| {
+                _ = line_iter.next();
+                return label;
+            } else {
+                return error.ExpectedBBLabel;
+            }
+        }
+        fn peek_next_non_empty(line_iter: *LineIter) ?str {
+            while (line_iter.peek()) |line| {
+                if (line.len == 0 or std.mem.allEqual(u8, line, ' ')) {
+                    _ = line_iter.next();
+                    continue;
+                }
+                return line;
+            }
+            return null;
         }
         fn next_non_empty(line_iter: *LineIter) ?str {
             while (line_iter.next()) |line| {
@@ -61,6 +76,13 @@ fn gen_function(buf: *Buf, fn_name: str, lines: *LineIter) !void {
             try b.write(":\\n");
         }
         fn print_bb_end(b: *Buf) !void {
+            const start_i = std.mem.lastIndexOf(u8, b.str.items, " [label") orelse return;
+            const end_i = std.mem.lastIndexOf(u8, b.str.items, "];\n");
+            if (end_i) |end| {
+                if (start_i < end) {
+                    return;
+                }
+            }
             try b.write("\"];\n");
         }
 
@@ -110,7 +132,9 @@ fn gen_function(buf: *Buf, fn_name: str, lines: *LineIter) !void {
                 }
             }
 
-            const next_label = try MommysLittleHelper.get_next_label(lines);
+            const next_label = MommysLittleHelper.get_next_label(lines) catch {
+                continue;
+            };
             cur_bb_label = next_label;
             try MommysLittleHelper.print_bb_start(buf, fn_name, next_label);
             continue;
