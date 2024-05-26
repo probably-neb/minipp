@@ -83,6 +83,8 @@ build-suite-test name *BUILD_ARGS: build
     name="{{name}}"
     name="${name#array_}"
     dir="{{TEST_SUITE}}/{{name}}"
+    rm -f "{{TEST_SUITE}}/input"
+    rm -f "{{TEST_SUITE}}/input.longer"
     {{minipp}} -i "$dir/${name}.mini" -o "$dir/{{name}}.ll" {{BUILD_ARGS}}
     clang "$dir/{{name}}.ll" -o "$dir/{{name}}"
 
