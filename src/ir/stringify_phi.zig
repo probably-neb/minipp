@@ -276,7 +276,13 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
     return buf.str.items;
 }
 
-pub fn stringify_inst(instID: IR.Function.InstID, buf: *Buf, ir: *const IR, fun: *IR.Function, bb: IR.BasicBlock) !void {
+pub fn stringify_inst_to_str(instID: IR.Function.InstID, ir: *const IR, fun: *const IR.Function, bb: IR.BasicBlock) ![]const u8 {
+    var buf = Buf.init(ir.alloc);
+    try stringify_inst(instID, &buf, ir, fun, bb);
+    return buf.str.toOwnedSlice();
+}
+
+pub fn stringify_inst(instID: IR.Function.InstID, buf: *Buf, ir: *const IR, fun: *const IR.Function, bb: IR.BasicBlock) !void {
     _ = bb;
     var inst = fun.insts.get(instID).*;
     try buf.write(INDENT);
