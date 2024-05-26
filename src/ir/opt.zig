@@ -37,9 +37,20 @@ fn sccp(ir: *IR, fun: *Function) !void {
     var alloc = arena.allocator();
 
     const info = try SCCP.sccp(alloc, ir, fun);
-    log.trace("sccp info:\n{any}\n", .{info});
+    // log.trace("sccp info:\n{any}\n", .{info});
     // FIXME: handle updates here
 
+    for (info.values, fun.regs.items.items) |value, reg| {
+        std.debug.print("{s} [{?any}]\n", .{
+            try @import("stringify_phi.zig").stringify_inst_to_str(
+                reg.inst,
+                ir,
+                fun,
+                fun.bbs.get(reg.bb).*,
+            ),
+            value.constant,
+        });
+    }
     for (info.values, 0..) |value, regID_usize| {
         if (value.state != .constant) continue;
 
@@ -59,7 +70,6 @@ fn sccp(ir: *IR, fun: *Function) !void {
 
         remove_reg(fun, reg.*);
     }
-
     try remove_unreachable_blocks(alloc, fun, info.reachable);
 }
 
@@ -94,9 +104,11 @@ fn change_use_of_reg(ir: *const IR, inst: *Inst, reg: Reg, ref: Ref) void {
             if (refers_to_reg(binop.lhs, reg)) {
                 binop.lhs = ref;
                 inst.* = binop.toInst();
+                return;
             } else if (refers_to_reg(binop.rhs, reg)) {
                 binop.rhs = ref;
                 inst.* = binop.toInst();
+                return;
             }
             unreachable;
         },
@@ -105,17 +117,20 @@ fn change_use_of_reg(ir: *const IR, inst: *Inst, reg: Reg, ref: Ref) void {
             if (refers_to_reg(cmp.lhs, reg)) {
                 cmp.lhs = ref;
                 inst.* = cmp.toInst();
+                return;
             } else if (refers_to_reg(cmp.rhs, reg)) {
                 cmp.rhs = ref;
                 inst.* = cmp.toInst();
+                return;
             }
             unreachable;
         },
         .Zext, .Sext, .Trunc, .Bitcast => {
             var misc = Inst.Misc.get(inst.*);
-            if (refers_to_reg(misc.from, reg)) {
+            if (!refers_to_reg(misc.from, reg)) {
                 misc.from = ref;
                 inst.* = misc.toInst();
+                return;
             }
             unreachable;
         },
@@ -124,6 +139,7 @@ fn change_use_of_reg(ir: *const IR, inst: *Inst, reg: Reg, ref: Ref) void {
             if (refers_to_reg(load.ptr, reg)) {
                 load.ptr = ref;
                 inst.* = load.toInst();
+                return;
             }
             unreachable;
         },
@@ -132,9 +148,11 @@ fn change_use_of_reg(ir: *const IR, inst: *Inst, reg: Reg, ref: Ref) void {
             if (refers_to_reg(gep.ptrVal, reg)) {
                 gep.ptrVal = ref;
                 inst.* = gep.toInst();
+                return;
             } else if (refers_to_reg(gep.index, reg)) {
                 gep.index = ref;
                 inst.* = gep.toInst();
+                return;
             }
             unreachable;
         },
@@ -163,6 +181,7 @@ fn change_use_of_reg(ir: *const IR, inst: *Inst, reg: Reg, ref: Ref) void {
             if (refers_to_reg(ret.val, reg)) {
                 ret.val = ref;
                 inst.* = ret.toInst();
+                return;
             }
             unreachable;
         },
@@ -171,9 +190,11 @@ fn change_use_of_reg(ir: *const IR, inst: *Inst, reg: Reg, ref: Ref) void {
             if (refers_to_reg(store.from, reg)) {
                 store.from = ref;
                 inst.* = store.toInst();
+                return;
             } else if (refers_to_reg(store.to, reg)) {
                 store.to = ref;
                 inst.* = store.toInst();
+                return;
             }
             unreachable;
         },
@@ -220,6 +241,7 @@ fn refers_to_reg(ref: Ref, reg: Reg) bool {
 fn remove_unreachable_blocks(alloc: Alloc, fun: *Function, reachable: []bool) !void {
     const bbs = &fun.bbs;
     const insts = &fun.insts;
+    _ = insts;
 
     // for (bbs.items(), 0..) |bb, id| {
     //     const bbID = bbs.ids.items[id];
@@ -230,89 +252,150 @@ fn remove_unreachable_blocks(alloc: Alloc, fun: *Function, reachable: []bool) !v
     utils.assert(@as(usize, @intCast(bbs.len)) == reachable.len, "mismatch in block count", .{});
     for (reachable, 0..) |r, i| {
         const stringify_label = @import("stringify_phi.zig").stringify_label;
-        std.debug.print("{s} - {any}\n", .{ stringify_label(fun, bbs.ids()[i]), r });
+        const bbID = bbs.ids()[i];
+        std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), r });
     }
     for (reachable, bbs.ids()) |is_reachable, bbID| {
-        const bb = bbs.get(bbID);
-
         if (is_reachable) {
             continue;
         }
 
-        if (bb.incomers.items.len > 0) {
-            utils.assert(bb.outgoers[0] != null, "FUCK - have to handle case where removing bb has no outgoers\n", .{});
-            utils.assert(bb.outgoers[1] == null, "FUCK - have to handle case where removing bb has 2 outgoers\n", .{});
-
-            const outgoer = bb.outgoers[0].?;
-
-            var outgoerBB = bbs.get(outgoer);
-            // link parent to child
-            for (bb.incomers.items) |incomer| {
-                var incomerBB = bbs.get(incomer);
-                var incomerBRID = (ptr_to_last(InstID, incomerBB.insts.list.items) orelse unreachable).*;
-                var incomerBR = insts.get(incomerBRID);
-
-                std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
-
-                switch (incomerBR.*.op) {
-                    .Br => {
-                        var br = Inst.Br.get(incomerBR.*);
-                        std.debug.print("correcting br:\n{any}\n{d}\n", .{ br, outgoer });
-                        if (br.iftrue == bbID) {
-                            br.iftrue = outgoer;
-                        } else if (br.iffalse == bbID) {
-                            br.iffalse = outgoer;
-                        }
-                        incomerBR.* = br.toInst();
-                    },
-                    .Jmp => {
-                        var jmp = Inst.Jmp.get(incomerBR.*);
-                        jmp.dest = outgoer;
-                        std.debug.print("correcting jmp:\n{any}\n{d}\n", .{ jmp, outgoer });
-                        incomerBR.* = jmp.toInst();
-                    },
-                    else => unreachable,
-                }
-                std.mem.replaceScalar(?BBID, &incomerBB.outgoers, bbID, outgoer);
-                std.mem.replaceScalar(BBID, outgoerBB.incomers.items, bbID, incomer);
-            }
-            bb.incomers.clearAndFree();
-            bb.*.outgoers[0] = null;
-        }
-
-        // FIXME: assert the registers in the block are never used
-        // or are in a phi if so remove them from phi entries
-        // bbs.remove(bbID);
+        try remove_block_edges(fun, bbID);
     }
-    for (bbs.items(), bbs.ids()) |bb, bbID| {
-        std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
-        std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
-        std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
-    }
+    // for (bbs.items(), bbs.ids()) |bb, bbID| {
+    //     std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
+    //     std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
+    //     std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
+    // }
 
     var ids = try alloc.alloc(BBID, reachable.len);
     @memcpy(ids, bbs.ids());
 
-    std.debug.print("LEN={d}\n", .{bbs.len});
     for (reachable, ids) |is_reachable, bbID| {
-        if (is_reachable) continue;
+        if (is_reachable) {
+            continue;
+        }
         // std.debug.print("i-{d} ids-{d} bbID-{d}\n", .{ id, bbs.ids.items[id], bbID });
         // std.debug.print("i-{d} bbID-{d}\n", .{ id, bbID });
 
         // if (id == 5) bbs.remove(bbID);
-        std.debug.print("WATCH ME DELETE {d}\n", .{bbID});
+        // std.debug.print("WATCH ME DELETE {d}\n", .{bbID});
+        const stringify_label = @import("stringify_phi.zig").stringify_label;
+        std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), is_reachable });
         _ = bbs.remove(bbID);
     }
-    std.debug.print("LEN={d}\n", .{bbs.len});
+}
+
+fn remove_block_edges(fun: *Function, bbID: BBID) !void {
+    const bbs = &fun.bbs;
+    const insts = &fun.insts;
+
+    const bb = bbs.get(bbID);
+    if (bb.incomers.items.len > 0) {
+        utils.assert(bb.outgoers[0] != null, "FUCK - have to handle case where removing bb has no outgoers\n", .{});
+        utils.assert(bb.outgoers[1] == null, "FUCK - have to handle case where removing bb has 2 outgoers\n", .{});
+
+        const outgoer = bb.outgoers[0].?;
+
+        var outgoerBB = bbs.get(outgoer);
+        // link parent to child
+        for (bb.incomers.items) |incomer| {
+            var incomerBB = bbs.get(incomer);
+            var incomerBRID = (ptr_to_last(InstID, incomerBB.insts.list.items) orelse unreachable).*;
+            var incomerBR = insts.get(incomerBRID);
+
+            std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
+
+            const changed_dest = replace_branches_to_with(incomerBR, bbID, outgoer);
+            if (changed_dest) {
+                replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
+                replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
+            }
+        }
+    } else if (std.mem.count(?BBID, &bb.outgoers, &[_]?BBID{null}) < 2) {
+        // FIXME: just remove from incomers/outgoers
+    }
+    remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
+    bb.incomers.clearAndFree();
+    bb.*.outgoers = [_]?BBID{ null, null };
+}
+
+fn remove_phi_entires_in_children_of_dead_bb(fun: *Function, bb: *BasicBlock, bbID: BBID) void {
+    const bbs = &fun.bbs;
+    const insts = &fun.insts;
+
+    for (bb.outgoers) |maybe_outgoerID| {
+        if (maybe_outgoerID == null) continue;
+        const outgoerID = maybe_outgoerID.?;
+        var outgoer = bbs.get(outgoerID);
+        for (outgoer.insts.items()) |instID| {
+            const inst = insts.get(instID);
+            if (inst.op != .Phi) {
+                continue;
+            }
+            var phi = Inst.Phi.get(inst.*);
+            const entries = &phi.entries;
+            var i: usize = 0;
+            while (i < entries.items.len) {
+                const entry = entries.items[i];
+                if (entry.bb == bbID) {
+                    const stringify_label = @import("stringify_phi.zig").stringify_label;
+                    std.debug.print("[{d}] {s} removing entry referencing {s}\n", .{
+                        outgoerID,
+                        stringify_label(fun, outgoerID),
+                        stringify_label(fun, bbID),
+                    });
+                    _ = entries.orderedRemove(i);
+                } else {
+                    i += 1;
+                }
+            }
+            inst.* = phi.toInst();
+        }
+        remove_phi_entires_in_children_of_dead_bb(fun, outgoer, bbID);
+    }
+}
+
+fn replace_bb_in_outgoers_with(bb: *BasicBlock, from: BBID, to: BBID) void {
+    std.mem.replaceScalar(?BBID, &bb.outgoers, from, to);
+}
+
+fn replace_bb_in_incomers_with(bb: *BasicBlock, from: BBID, to: BBID) void {
+    std.mem.replaceScalar(BBID, bb.incomers.items, from, to);
+}
+
+fn replace_branches_to_with(inst: *Inst, from: BBID, to: BBID) bool {
+    switch (inst.op) {
+        .Br => {
+            var br = Inst.Br.get(inst.*);
+            // std.debug.print("correcting br:\n{any}\n{d}\n", .{ br, outgoer });
+            if (br.iftrue == from) {
+                br.iftrue = to;
+                inst.* = br.toInst();
+                return true;
+            } else if (br.iffalse == from) {
+                br.iffalse = to;
+                inst.* = br.toInst();
+                return true;
+            }
+        },
+        .Jmp => {
+            var jmp = Inst.Jmp.get(inst.*);
+            if (jmp.dest == from) {
+                jmp.dest = to;
+                inst.* = jmp.toInst();
+                return true;
+            }
+            // std.debug.print("correcting jmp:\n{any}\n{d}\n", .{ jmp, outgoer });
+        },
+        else => unreachable,
+    }
+    return false;
 }
 
 fn ptr_to_last(comptime T: type, elems: []T) ?*T {
     if (elems.len == 0) return null;
     return &elems[elems.len - 1];
-}
-
-fn change_ctrl_flow_dest(inst: *Inst) void {
-    _ = inst;
 }
 
 const ting = std.testing;
@@ -346,7 +429,6 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
     var alloc = arena.allocator();
 
     var ir = try testMe(input);
-
     // Run optimization passes
     inline for (fun_passes) |fun_pass| {
         const fun_name: []const u8 = @as([]const u8, fun_pass.@"0");
@@ -359,7 +441,6 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
             log.err("function {s} not found in IR\n", .{fun_name});
             return error.FunctionNotFound;
         };
-        std.debug.print("LEN BEFO = {d}\n", .{fun.bbs.len});
         inline for (passes) |pass| {
             switch (pass) {
                 .sccp => {
@@ -370,10 +451,9 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
                 },
             }
         }
-        std.debug.print("LEN AFTA = {d}\n", .{fun.bbs.len});
     }
-    try save_dot_to_file(&ir, "out.dot");
     const gotIRstr = try ir.stringify(alloc);
+    try save_dot_to_file(&ir, "out.dot");
 
     // NOTE: could use multiline strings for the
     // expected value but, that makes it so you can't put
