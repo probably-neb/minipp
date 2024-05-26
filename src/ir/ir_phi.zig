@@ -2381,12 +2381,13 @@ pub fn OrderedList(comptime T: type) type {
         }
 
         pub fn orderedRemove(self: *Self, idx: u32) T {
-            const actual = self.order.items[idx];
-            utils.assert(actual != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{idx});
-            self.order.items[idx] = Self.UNDEF;
-            const val = self.list.orderedRemove(actual);
-            if (actual + 1 < self.len) {
-                for (self.order.items[idx + 1 ..]) |*i| {
+            const val = self.list.orderedRemove(idx);
+            for (self.order.items) |*i| {
+                if (i.* == idx) {
+                    i.* = Self.UNDEF;
+                    continue;
+                }
+                if (i.* > idx) {
                     i.* -= 1;
                 }
             }
