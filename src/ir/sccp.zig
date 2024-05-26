@@ -24,6 +24,16 @@ const IMMEDIATE_ONE = IR.InternPool.ONE;
 
 const Values = []Value;
 
+pub const SCCPRes = struct {
+    /// a LUT where values[reg.id] indicates
+    /// the computed value of the register
+    /// if it is constant the inst+reg should be removed and
+    /// downstream uses should be updated
+    values: []Value,
+    /// a LUT where reachable[bb.id] indicates
+    /// if the block is reachable or can be removed
+    reachable: []bool,
+};
 /// Sparse Conditional Constant Propagation
 // TODO: make this run on a single function
 ////
@@ -69,19 +79,7 @@ const Values = []Value;
 /// eval_jmp [jmp b1] ->
 ///     if !reachable[b1]
 ///         CFGWorklist.push(b1)
-pub fn sccp(ir: *IR) !void {
-    var arena_alloc = std.heap.ArenaAllocator.init(ir.alloc);
-    var alloc = arena_alloc.allocator();
-    defer arena_alloc.deinit();
-
-    for (ir.funcs.items.items) |*fun| {
-        main_loop(alloc, ir, fun) catch |err| {
-            std.debug.print("Error: {any}\n", .{err});
-        };
-    }
-}
-
-pub fn main_loop(alloc: Alloc, ir: *const IR, fun: *const Function) !void {
+pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
     var reachable = exec: {
         var reachable = try alloc.alloc(bool, @intCast(fun.bbs.len));
         @memset(reachable, false);
@@ -228,6 +226,11 @@ pub fn main_loop(alloc: Alloc, ir: *const IR, fun: *const Function) !void {
             try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
         }
     }
+
+    return .{
+        .values = values,
+        .reachable = reachable,
+    };
 }
 
 inline fn has_res(op: OpCode) bool {
@@ -414,7 +417,7 @@ fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
     };
 }
 
-const Value = struct {
+pub const Value = struct {
     state: State = State.undef,
     constant: ?Constant = null,
 
@@ -643,8 +646,10 @@ fn refers_to_reg(ref: Ref, reg: Reg) bool {
 inline fn either_refers_to_reg(a: Ref, b: Ref, reg: Reg) bool {
     return refers_to_reg(a, reg) or refers_to_reg(b, reg);
 }
+var testAlloc = std.heap.page_allocator;
 
-const testAlloc = std.heap.page_allocator;
+const OPT = @import("opt.zig");
+const expectResultsInIR = OPT.expectResultsInIR;
 
 fn testMe(input: []const u8) !IR {
     const tokens = try @import("../lexer.zig").Lexer.tokenizeFromStr(input, testAlloc);
@@ -654,7 +659,16 @@ fn testMe(input: []const u8) !IR {
     return ir;
 }
 
+fn sccp_all_funs(ir: *const IR) !void {
+    const funs = ir.funcs.items.items;
+    for (funs) |*fun| {
+        _ = try sccp(testAlloc, ir, fun);
+    }
+}
+
 test "compilation" {
+    log.empty();
+    errdefer log.print();
     var ir = try testMe(
         \\fun main() void {
         \\  int a;
@@ -667,5 +681,60 @@ test "compilation" {
         \\  a = 2;
         \\}
     );
-    try sccp(&ir);
+    try sccp_all_funs(&ir);
+}
+
+test "sccp.removes-never-taken-if" {
+    log.empty();
+    errdefer log.print();
+
+    try expectResultsInIR(
+        \\fun main() void {
+        \\  int a;
+        \\  if (false) {
+        \\    a = 1;
+        \\  } else {
+        \\    a = 2;
+        \\  }
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  %a = alloca i64",
+        "  store i64 2, i64* %a",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    }, .{
+        .{ "main", .{.sccp} },
+    });
+}
+
+test "sccp.removes-nested-never-ran-while" {
+    log.empty();
+    errdefer log.print();
+    try expectResultsInIR(
+        \\fun main() void {
+        \\  int a;
+        \\  if (true) {
+        \\    while (false) {
+        \\      a = 1;
+        \\      a = 3;
+        \\    }
+        \\  }
+        \\  a = 2;
+        \\}
+    , .{
+        "define void @main() {",
+        "entry:",
+        "  %a = alloca i64",
+        "  store i64 2, i64* %a",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    }, .{
+        .{ "main", .{.sccp} },
+    });
 }
