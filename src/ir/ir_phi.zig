@@ -2405,7 +2405,7 @@ pub fn OrderedList(comptime T: type) type {
         /// A helper for iterating instead of `field.list.items`
         pub inline fn items(self: Self) []T {
             // return self.list.values();
-            return self.list.values()[0 .. self.len - self.removed];
+            return self.list.values();
         }
 
         // TODO: consider refactoring to return just `T`

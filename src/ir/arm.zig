@@ -5,13 +5,18 @@ const Ast = @import("../ast.zig");
 
 const IR = @import("ir_phi.zig");
 const Phi = @import("phi.zig");
+const Stringify = @import("stringify_arm.zig");
 
 pub const Arm = @This();
 
 pub const Imm = IR.StrID;
 
+pub var IMM_NAME: IR.StrID = undefined;
+
 program: Program,
 alloc: std.mem.Allocator,
+irBBtoARMBB: std.AutoHashMap(IR.BasicBlock.ID, BasicBlock.ID),
+armBBtoIRBB: std.AutoHashMap(BasicBlock.ID, IR.BasicBlock.ID),
 
 pub fn init(alloc: std.mem.Allocator) Arm {
     return Arm{
@@ -19,8 +24,11 @@ pub fn init(alloc: std.mem.Allocator) Arm {
             .functions = std.ArrayList(Function).init(alloc),
             .insts = std.ArrayList(Inst).init(alloc),
             .regs = std.ArrayList(Reg).init(alloc),
+            .alloc = alloc,
         },
         .alloc = alloc,
+        .irBBtoARMBB = std.AutoHashMap(IR.BasicBlock.ID, BasicBlock.ID).init(alloc),
+        .armBBtoIRBB = std.AutoHashMap(BasicBlock.ID, IR.BasicBlock.ID).init(alloc),
     };
 }
 
@@ -30,6 +38,7 @@ pub const Reg = struct {
     // kind: RegKind, this could be useed for vector type beat
     inst: ?Inst.ID, // the ID of the instruction that defines this register
     irID: IR.Register.ID,
+
     pub const ID = usize;
 };
 
@@ -41,6 +50,7 @@ pub const OperandKind = enum {
     MemPostInc, // addr = Xn, Xn = Xn + imm
     MemPreInc, // Xn = Xn + imm, addr = Xn
     Label,
+    invalid_,
 };
 
 // for the branch instructions
@@ -57,32 +67,35 @@ pub const Operand = struct {
     //     base: Reg,
     //     offset: Imm,
     // },
+
+    pub const Default = Operand{ .kind = .invalid_, .reg = undefined, .imm = undefined, .label = undefined };
+
     pub fn asOpReg(reg: Reg) Operand {
-        return Operand{ .kind = .Reg, .reg = reg };
+        return Operand{ .kind = .Reg, .reg = reg, .imm = undefined, .label = IR.InternPool.NULL };
     }
 
     pub fn asOpImm(imm: Imm) Operand {
-        return Operand{ .kind = .Imm, .imm = imm };
+        return Operand{ .kind = .Imm, .imm = imm, .reg = undefined, .label = IR.InternPool.NULL };
     }
 
     pub fn asOpMemReg(reg: Reg) Operand {
-        return Operand{ .kind = .MemReg, .reg = reg };
+        return Operand{ .kind = .MemReg, .reg = reg, .imm = undefined, .label = IR.InternPool.NULL };
     }
 
     pub fn asOpMemImm(reg: Reg, imm: Imm) Operand {
-        return Operand{ .kind = .MemImm, .reg = reg, .imm = imm };
+        return Operand{ .kind = .MemImm, .reg = reg, .imm = imm, .label = IR.InternPool.NULL };
     }
 
     pub fn asOpMemPostInc(reg: Reg, imm: Imm) Operand {
-        return Operand{ .kind = .MemPostInc, .reg = reg, .imm = imm };
+        return Operand{ .kind = .MemPostInc, .reg = reg, .imm = imm, .label = IR.InternPool.NULL };
     }
 
     pub fn asOpMemPreInc(reg: Reg, imm: Imm) Operand {
-        return Operand{ .kind = .MemPreInc, .reg = reg, .imm = imm };
+        return Operand{ .kind = .MemPreInc, .reg = reg, .imm = imm, .label = IR.InternPool.NULL };
     }
 
     pub fn asOpLabel(label: BasicBlock.ID) Operand {
-        return Operand{ .kind = .Label, .label = label };
+        return Operand{ .kind = .Label, .label = label, .reg = undefined, .imm = undefined };
     }
 
     pub fn getReg(operand: Operand) Reg {
@@ -143,6 +156,7 @@ pub const ConditionCode = enum {
     HI, // C == 1 and Z == 0
     LS, // C == 0 or Z == 1
     AL, // always
+    invalid_,
 };
 
 pub const Operation = enum {
@@ -171,14 +185,14 @@ pub const Operation = enum {
 pub const Inst = struct {
     oper: Operation,
     /// The resulting register
-    rd: Reg = Reg.default,
-    op1: Operand,
-    op2: Operand,
+    rd: Reg,
+    op1: Operand = Operand.Default,
+    op2: Operand = Operand.Default,
     id: ID,
 
     signed: bool = true,
     width: u32 = 64,
-    cc: ConditionCode,
+    cc: ConditionCode = .invalid_,
     pub const ID = usize;
 
     // helpers to construct the instructions
@@ -353,7 +367,7 @@ pub const Inst = struct {
     };
 
     pub const BL = struct {
-        label: BasicBlock.ID,
+        label: IR.StrID,
         pub fn toInst(inst: BL) Inst {
             return Inst{ .oper = .BL, .op1 = Operand.asOpLabel(inst.label) };
         }
@@ -414,94 +428,95 @@ pub const Inst = struct {
 
     pub const Neg = struct {
         rd: Reg,
-        op2: Operand,
+        op1: Operand,
         signed: bool,
         pub fn toInst(inst: Neg) Inst {
-            return Inst{ .oper = .NEG, .rd = inst.rd, .op2 = inst.op2, .signed = inst.signed };
+            return Inst{ .oper = .NEG, .rd = inst.rd, .op1 = inst.op1, .signed = inst.signed };
         }
         pub fn get(inst: Inst) Neg {
-            return Neg{ .rd = inst.rd, .op2 = inst.op2, .signed = inst.signed };
+            return Neg{ .rd = inst.rd, .op1 = inst.op1, .signed = inst.signed };
         }
     };
 
-    pub inline fn add(rd: Reg, rn: Reg, op2: Operand, signed: bool) Inst {
-        return Inst{ .oper = .ADD, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .signed = signed };
+    pub inline fn add(rd: Reg, rn: Reg, op2: Operand, signed: bool, id: Inst.ID) Inst {
+        return Inst{ .oper = .ADD, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .signed = signed, .id = id };
     }
 
-    pub inline fn sub(rd: Reg, rn: Reg, op2: Operand, signed: bool) Inst {
-        return Inst{ .oper = .SUB, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .signed = signed };
+    pub inline fn sub(rd: Reg, rn: Reg, op2: Operand, signed: bool, id: Inst.ID) Inst {
+        return Inst{ .oper = .SUB, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .signed = signed, .id = id };
     }
 
-    pub inline fn and_(rd: Reg, rn: Reg, op2: Operand) Inst {
-        return Inst{ .oper = .AND, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2 };
+    pub inline fn and_(rd: Reg, rn: Reg, op2: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .AND, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .id = id };
     }
 
-    pub inline fn orr(rd: Reg, rn: Reg, op2: Operand) Inst {
-        return Inst{ .oper = .ORR, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2 };
+    // need to add id as function param to this function and into the result as with add and sub, and_
+    pub inline fn orr(rd: Reg, rn: Reg, op2: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .ORR, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .id = id };
     }
 
-    pub inline fn eor(rd: Reg, rn: Reg, op2: Operand) Inst {
-        return Inst{ .oper = .EOR, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2 };
+    pub inline fn eor(rd: Reg, rn: Reg, op2: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .EOR, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .id = id };
     }
 
-    pub inline fn asr(rd: Reg, rn: Reg, op2: Operand) Inst {
-        return Inst{ .oper = .ASR, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2 };
+    pub inline fn asr(rd: Reg, rn: Reg, op2: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .ASR, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .id = id };
     }
 
-    pub inline fn lsl(rd: Reg, rn: Reg, op2: Operand) Inst {
-        return Inst{ .oper = .LSL, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2 };
+    pub inline fn lsl(rd: Reg, rn: Reg, op2: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .LSL, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .id = id };
     }
 
-    pub inline fn lsr(rd: Reg, rn: Reg, op2: Operand) Inst {
-        return Inst{ .oper = .LSR, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2 };
+    pub inline fn lsr(rd: Reg, rn: Reg, op2: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .LSR, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .id = id };
     }
 
-    pub inline fn mov(rd: Reg, op1: Operand) Inst {
-        return Inst{ .oper = .MOV, .rd = rd, .op1 = op1 };
+    pub inline fn mov(rd: Reg, op1: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .MOV, .rd = rd, .op1 = op1, .id = id };
     }
 
-    pub inline fn cmp(rd: Reg, op1: Operand) Inst {
-        return Inst{ .oper = .CMP, .rd = rd, .op1 = op1 };
+    pub inline fn cmp(rd: Reg, op1: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .CMP, .rd = rd, .op1 = op1, .id = id };
     }
 
-    pub inline fn mul(rd: Reg, rn: Reg, rm: Reg) Inst {
-        return Inst{ .oper = .MUL, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = Operand.asOpReg(rm) };
+    pub inline fn mul(rd: Reg, rn: Reg, rm: Reg, signed: bool, id: Inst.ID) Inst {
+        return Inst{ .oper = .MUL, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = Operand.asOpReg(rm), .signed = signed, .id = id };
     }
 
-    pub inline fn div(rd: Reg, rn: Reg, rm: Reg, signed: bool) Inst {
-        return Inst{ .oper = .DIV, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = Operand.asOpReg(rm), .signed = signed };
+    pub inline fn div(rd: Reg, rn: Reg, rm: Reg, signed: bool, id: Inst.ID) Inst {
+        return Inst{ .oper = .DIV, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = Operand.asOpReg(rm), .signed = signed, .id = id };
     }
 
-    pub inline fn b(label: BasicBlock.ID) Inst {
-        return Inst{ .oper = .B, .op1 = Operand.asOpLabel(label) };
+    pub inline fn b(label: BasicBlock.ID, id: Inst.ID) Inst {
+        return Inst{ .oper = .B, .op1 = Operand.asOpLabel(label), .id = id, .rd = undefined };
     }
 
-    pub inline fn bcc(label: BasicBlock.ID, cc: ConditionCode) Inst {
-        return Inst{ .oper = .Bcc, .op1 = Operand.asOpLabel(label), .cc = cc };
+    pub inline fn bcc(label: BasicBlock.ID, cc: ConditionCode, id: Inst.ID) Inst {
+        return Inst{ .oper = .Bcc, .op1 = Operand.asOpLabel(label), .cc = cc, .id = id, .rd = undefined };
     }
 
-    pub inline fn bl(label: BasicBlock.ID) Inst {
-        return Inst{ .oper = .BL, .op1 = Operand.asOpLabel(label) };
+    pub inline fn bl(label: IR.StrID, id: Inst.ID) Inst {
+        return Inst{ .oper = .BL, .op1 = Operand.asOpLabel(label), .id = id, .rd = undefined };
     }
 
-    pub inline fn ldp(rt: Reg, rt2: Reg, addr: Operand) Inst {
-        return Inst{ .oper = .LDP, .rd = rt, .op2 = Operand.asOpReg(rt2), .op1 = addr };
+    pub inline fn ldp(rt: Reg, rt2: Reg, addr: Operand, id: Inst.ID) Inst {
+        return Inst{ .oper = .LDP, .rd = rt, .op2 = Operand.asOpReg(rt2), .op1 = addr, .id = id };
     }
 
-    pub inline fn ldr(rt: Reg, addr: Operand, signed: bool) Inst {
-        return Inst{ .oper = .LDR, .rd = rt, .op1 = addr, .signed = signed };
+    pub inline fn ldr(rt: Reg, addr: Operand, signed: bool, id: Inst.ID) Inst {
+        return Inst{ .oper = .LDR, .rd = rt, .op1 = addr, .signed = signed, .id = id };
     }
 
-    pub inline fn stp(rt: Reg, rt2: Reg, addr: Operand, signed: bool) Inst {
-        return Inst{ .oper = .STP, .op1 = addr, .op2 = Operand.asOpReg(rt2), .rd = rt, .signed = signed };
+    pub inline fn stp(rt: Reg, rt2: Reg, addr: Operand, signed: bool, id: Inst.ID) Inst {
+        return Inst{ .oper = .STP, .op1 = addr, .op2 = Operand.asOpReg(rt2), .rd = rt, .signed = signed, .id = id };
     }
 
-    pub inline fn str(rt: Reg, addr: Operand, signed: bool) Inst {
-        return Inst{ .oper = .STR, .rd = rt, .op1 = addr, .signed = signed };
+    pub inline fn str(rt: Reg, addr: Operand, signed: bool, id: Inst.ID) Inst {
+        return Inst{ .oper = .STR, .rd = rt, .op1 = addr, .signed = signed, .id = id };
     }
 
-    pub inline fn neg(rd: Reg, op2: Operand, signed: bool) Inst {
-        return Inst{ .oper = .NEG, .rd = rd, .op2 = op2, .signed = signed };
+    pub inline fn neg(rd: Reg, op2: Operand, signed: bool, id: Inst.ID) Inst {
+        return Inst{ .oper = .NEG, .rd = rd, .op2 = op2, .signed = signed, .id = id };
     }
 };
 
@@ -517,7 +532,7 @@ pub const BasicBlock = struct {
         return BasicBlock{
             .name = name,
             .incomers = std.ArrayList(*BasicBlock).init(),
-            .outgoers = [_]*BasicBlock{ null, null },
+            .outgoers = [_]?*BasicBlock{ null, null },
             .insts = std.ArrayList(Inst.ID).init(),
             .id = id,
         };
@@ -525,21 +540,32 @@ pub const BasicBlock = struct {
 };
 
 pub const Function = struct {
-    name: []const u8,
+    name: IR.StrID,
     blocks: std.ArrayList(BasicBlock),
     insts: std.ArrayList(Inst.ID),
     id: ID,
     program: *Program,
+    params: std.ArrayList(Reg),
     pub const ID = usize;
 
-    pub fn init(program: *Program, name: []const u8, id: ID) Function {
+    pub fn init(program: *Program, name: IR.StrID, id: ID) Function {
         return Function{
             .name = name,
-            .blocks = std.ArrayList(BasicBlock.ID).init(program.alloc),
+            .blocks = std.ArrayList(BasicBlock).init(program.alloc),
             .insts = std.ArrayList(Inst.ID).init(program.alloc),
+            .params = std.ArrayList(Reg).init(program.alloc),
             .id = id,
             .program = program,
         };
+    }
+
+    pub fn addParams(self: *Function, ir: *IR, func: *IR.Function) !void {
+        _ = ir;
+        for (func.params.items) |param| {
+            var reg = Reg{ .id = self.program.regs.items.len, .name = param.name, .inst = null, .irID = undefined };
+            try self.program.addReg(reg);
+            try self.params.append(reg);
+        }
     }
 
     pub fn addInst(func: *Function, inst: Inst, bb: *BasicBlock) !void {
@@ -549,11 +575,11 @@ pub const Function = struct {
         // FIXME: possiblt add the panic if the regs inside the inst are wrong too
         try func.insts.append(inst.id);
         try func.program.insts.append(inst);
-        try bb.insts.append(inst);
+        try bb.insts.append(inst.id);
     }
 
     pub fn ensureBothReg(self: *Function, ir: *IR, bb: *BasicBlock, o1: *Operand, o2: *Operand) !void {
-        _ = ir;
+        const name = ir.internIdent("_");
         switch (o1.kind) {
             .Reg => {
                 switch (o2.kind) {
@@ -561,61 +587,54 @@ pub const Function = struct {
                         return;
                     },
                     .Imm => {
-                        const name = IR.InternPool.NULL;
                         var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = null, .irID = o2.imm };
                         try self.program.addReg(reg);
-                        var movInst = Inst.mov(reg, Operand.asOpImm(o2.imm));
-                        movInst.id = self.program.insts.items.len;
+                        var movInst = Inst.mov(reg, Operand.asOpImm(o2.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
                         o2.* = Operand.asOpReg(reg);
                     },
                     else => {
-                        return std.debug.panic("The second operand {d} was not a register", .{o2.kind});
+                        return std.debug.panic("The second operand {any} was not a register", .{o2});
                     },
                 }
             },
             .Imm => {
                 switch (o2.kind) {
                     .Reg => {
-                        const name = IR.InternPool.NULL;
                         var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = null, .irID = o1.imm };
                         try self.program.addReg(reg);
-                        var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm));
-                        movInst.id = self.program.insts.items.len;
+                        var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
                         o1.* = Operand.asOpReg(reg);
                         return;
                     },
                     .Imm => {
-                        const name = IR.InternPool.NULL;
                         var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = null, .irID = o1.imm };
                         try self.program.addReg(reg);
-                        var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm));
-                        movInst.id = self.program.insts.items.len;
+                        var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
                         o1.* = Operand.asOpReg(reg);
 
                         reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = null, .irID = o2.imm };
                         try self.program.addReg(reg);
-                        movInst = Inst.mov(reg, Operand.asOpImm(o2.imm));
-                        movInst.id = self.program.insts.items.len;
+                        movInst = Inst.mov(reg, Operand.asOpImm(o2.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
                         o2.* = Operand.asOpReg(reg);
                         return;
                     },
                     else => {
-                        return std.debug.panic("The second operand {d} was not a register", .{o2.kind});
+                        return std.debug.panic("The second operand {any} was not a register", .{o2});
                     },
                 }
             },
             else => {
-                return std.debug.panic("The first operand {d} was not a register", .{o1.kind});
+                return std.debug.panic("The first operand {any} was not a register", .{o1});
             },
         }
     }
 
-    pub fn ensureImmOrAtLeastOneRegNoSwap(self: *Function, ir: *IR, o1: *Operand, o2: *Operand) !void {
-        _ = ir;
+    pub fn ensureImmOrAtLeastOneRegNoSwap(self: *Function, armBB: *BasicBlock, ir: *IR, o1: *Operand, o2: *Operand) !void {
+        const name = ir.internIdent("_");
         // check if the operands are registers or immediates
         switch (o1.kind) {
             .Reg => {
@@ -627,17 +646,15 @@ pub const Function = struct {
                         return;
                     },
                     else => {
-                        return std.debug.panic("The second operand {d} was not a register or immediate", .{o2.kind});
+                        return std.debug.panic("The second operand {any} was not a register or immediate", .{o2});
                     },
                 }
             },
             .Imm => {
-                const name = IR.InternPool.NULL;
                 var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = null, .irID = o1.imm };
                 try self.program.addReg(reg);
-                var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm));
-                movInst.id = self.program.insts.items.len;
-                try self.addInst(movInst);
+                var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm), self.program.insts.items.len);
+                try self.addInst(movInst, armBB);
                 o1.* = Operand.asOpReg(reg);
                 switch (o2.kind) {
                     .Reg => {
@@ -647,17 +664,17 @@ pub const Function = struct {
                         return;
                     },
                     else => {
-                        return std.debug.panic("The second operand {d} was not a register or immediate", .{o2.kind});
+                        return std.debug.panic("The second operand {any} was not a register or immediate", .{o2});
                     },
                 }
             },
             else => {
-                return std.debug.panic("The first operand {d} was not a register or immediate", .{o1.kind});
+                return std.debug.panic("The first operand {any} was not a register or immediate", .{o1});
             },
         }
     }
     pub fn ensureImmOrAtLeastOneReg(self: *Function, ir: *IR, bb: *BasicBlock, o1: *Operand, o2: *Operand) !void {
-        _ = ir;
+        const name = ir.internIdent("_");
         // check if the operands are registers or immediates
         switch (o1.kind) {
             .Reg => {
@@ -669,7 +686,7 @@ pub const Function = struct {
                         return;
                     },
                     else => {
-                        return std.debug.panic("The second operand {d} was not a register or immediate", .{o2.kind});
+                        return std.debug.panic("The second operand {any} was not a register or immediate", .{o2});
                     },
                 }
             },
@@ -677,29 +694,27 @@ pub const Function = struct {
                 switch (o2.kind) {
                     .Reg => {
                         // swap the operands's values
-                        var temp = o1;
-                        o1 = o2;
-                        o2 = temp;
+                        var temp = o1.*;
+                        o1.* = o2.*;
+                        o2.* = temp;
                         return;
                     },
                     .Imm => {
                         // we need to create an instruction to mv o1 into a register, then change the operand to a register
-                        const name = IR.InternPool.NULL;
                         var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = null, .irID = o1.imm };
                         try self.program.addReg(reg);
-                        var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm));
-                        movInst.id = self.program.insts.items.len;
+                        var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
                         o1.* = Operand.asOpReg(reg);
                         return;
                     },
                     else => {
-                        return std.debug.panic("The second operand {d} was not a register or immediate", .{o2.kind});
+                        return std.debug.panic("The second operand {any} was not a register or immediate", .{o2});
                     },
                 }
             },
             else => {
-                return std.debug.panic("The first operand {d} was not a register or immediate", .{o1.kind});
+                return std.debug.panic("The first operand {any} was not a register or immediate", .{o1});
             },
         }
     }
@@ -709,11 +724,12 @@ pub const Program = struct {
     functions: std.ArrayList(Function),
     insts: std.ArrayList(Inst),
     regs: std.ArrayList(Reg),
+    alloc: std.mem.Allocator,
     pub const ID = usize;
 
     pub fn addReg(program: *Program, reg: Reg) !void {
         if (reg.id != program.regs.items.len) {
-            return std.debug.panic("The register {d} was not the next register in the program", .{reg.id});
+            return std.debug.panic("The register {any} was not the next register in the program", .{reg.id});
         }
         try program.regs.append(reg);
     }
@@ -721,7 +737,7 @@ pub const Program = struct {
     pub fn getOpfromIR(self: *Program, ref: IR.Ref, instID: ?usize) !Operand {
         switch (ref.kind) {
             .local, .param => {
-                var reg = Reg{ .id = self.regs.items.len, .name = ref.name, .inst = instID, .irID = ref.id };
+                var reg = Reg{ .id = self.regs.items.len, .name = ref.name, .inst = instID, .irID = ref.i };
                 try self.addReg(reg);
                 return Operand.asOpReg(reg);
             },
@@ -743,34 +759,43 @@ pub fn gen_program(ir: *IR) !Arm {
     var arm = Arm.init(ir.alloc);
     try arm.program.insts.append(undefined);
     _ = try gen_globals(ir, &arm);
-    _ = try gen_functions(ir, arm);
+    _ = try gen_functions(ir, &arm);
+    return arm;
 }
 
 pub fn gen_globals(ir: *IR, arm: *Arm) !bool {
     _ = arm;
     _ = ir;
+    return false;
 }
 
 pub fn gen_functions(ir: *IR, arm: *Arm) !bool {
-    for (ir.funcs.items.items) |func| {
-        try arm.program.functions.append(Function.init(&arm.program, "main", arm.program.functions.items.len));
-        var armFunc = &arm.program.functions.items[arm.program.functions.items.len - 1];
+    for (ir.funcs.items.items) |*func| {
+        try arm.program.functions.append(Function.init(&arm.program, func.name, arm.program.functions.items.len));
+    }
+
+    for (ir.funcs.items.items, 0..) |*func, armFuncIDX| {
+        var armFunc = &arm.program.functions.items[armFuncIDX];
+        try armFunc.addParams(ir, func);
         _ = try gen_function(arm, armFunc, ir, func);
     }
+    return false;
 }
 
-pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Func) !bool {
+pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) !bool {
     // naively create all of the basic blocks
 
-    var irBBtoARMBB = std.HashMap(BasicBlock.ID, BasicBlock.ID).init(ir.alloc);
-    var armBBtoIRBB = std.HashMap(BasicBlock.ID, BasicBlock.ID).init(ir.alloc);
-    for (func.bbs.items()) |block| {
+    var irBBtoARMBB = std.AutoHashMap(IR.BasicBlock.ID, BasicBlock.ID).init(ir.alloc);
+    var armBBtoIRBB = std.AutoHashMap(BasicBlock.ID, IR.BasicBlock.ID).init(ir.alloc);
+    for (func.bbs.items(), func.bbs.ids()) |block, bbID| {
         var bb = BasicBlock{
             .name = block.name,
             .id = armFunc.blocks.items.len,
+            .incomers = std.ArrayList(*BasicBlock).init(arm.alloc),
+            .outgoers = [_]?*BasicBlock{ null, null },
+            .insts = std.ArrayList(Inst.ID).init(arm.alloc),
         };
-        try armFunc.blocks.items.append(bb);
-        const bbID = func.bbs.order.items[bb.id];
+        try armFunc.blocks.append(bb);
         try irBBtoARMBB.put(bbID, bb.id);
         try armBBtoIRBB.put(bb.id, bbID);
     }
@@ -789,24 +814,28 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Func) !boo
         // for the outgoers
         for (bbOutgoers, 0..) |outgoer, i| {
             if (outgoer == null) {
-                arm.blocks.items[armBBID].outgoers[i] = null;
+                armFunc.blocks.items[armBBID].outgoers[i] = null;
                 continue;
             }
             const armOutBBID = irBBtoARMBB.get(outgoer.?).?;
             armFunc.blocks.items[armBBID].outgoers[i] = &armFunc.blocks.items[armOutBBID];
         }
     }
+    arm.irBBtoARMBB = irBBtoARMBB;
+    arm.armBBtoIRBB = armBBtoIRBB;
 
     // generate the instructions within them
     for (func.bbs.items(), 0..) |block, i| {
-        var armBlock = armFunc.blocks.items[i];
+        var armBlock = &armFunc.blocks.items[i];
         _ = try gen_block(arm, ir, func, armFunc, block, armBlock);
     }
 
     // go through and make the regs ids correct or throw errors!
+    //
+    return false;
 }
 
-pub fn gen_block(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock: IR.BasicBlock, armBlock: BasicBlock) !bool {
+pub fn gen_block(arm: *Arm, ir: *IR, func: *IR.Function, armFunc: *Function, irBlock: IR.BasicBlock, armBlock: *BasicBlock) !bool {
     var lastInstID: ?IR.Function.InstID = null;
     var skip: bool = false;
     for (irBlock.insts.items()) |instID| {
@@ -818,31 +847,62 @@ pub fn gen_block(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock
         skip = try gen_inst(arm, ir, func, armFunc, irBlock, lastInstID, instID, armBlock);
         lastInstID = instID;
     }
+    return false;
 }
 
-pub fn gen_inst(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock: IR.BasicBlock, instID_: ?IR.Function.InstID, nextID_: ?IR.Function.InstID, armBlock: BasicBlock) !bool {
+pub fn gen_inst(
+    arm: *Arm,
+    ir: *IR,
+    func: *IR.Function,
+    armFunc: *Function,
+    irBlock: IR.BasicBlock,
+    instID_: ?IR.Function.InstID,
+    nextID_: ?IR.Function.InstID,
+    armBlock: *BasicBlock,
+) !bool {
     _ = irBlock;
-    if (instID_ == null) {
-        return true;
+    var instID: IR.Function.InstID = undefined;
+    var res: bool = false;
+    // check if there are any instructions (there should be)
+    if (func.insts.len == 0) {
+        return false;
     }
-    var instID = instID_.?;
+    if (func.insts.len == 1) {
+        if (nextID_ == null) {
+            unreachable;
+        } else {
+            instID = nextID_.?;
+            res = true;
+        }
+    } else {
+        // len > 1
+        if (instID_ == null and nextID_ != null) {
+            instID = nextID_.?;
+            res = true;
+        } else if (instID_ == null and nextID_ == null) {
+            unreachable;
+        } else {
+            instID = instID_.?;
+            res = false;
+        }
+    }
 
     // its switching time baby
-    const irInst = func.insts.get(instID).?;
+    const irInst = func.insts.get(instID).*;
     switch (irInst.op) {
         .Binop => {
             const binopIr = IR.Inst.Binop.get(irInst);
 
+            std.debug.print("binop: {s}\n", .{@tagName(binopIr.op)});
             switch (binopIr.op) {
                 // order with two reg
                 .Mul => {
                     var mulRD = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
                     var mulRn = try arm.program.getOpfromIR(binopIr.lhs, null);
                     var mulRm = try arm.program.getOpfromIR(binopIr.rhs, null);
-                    try armFunc.ensureBothReg(ir, mulRn, mulRm);
+                    try armFunc.ensureBothReg(ir, armBlock, &mulRn, &mulRm);
 
-                    var mulInst = Inst.mul(mulRD.getReg(), mulRn.getReg(), mulRm.getReg());
-                    mulInst.id = arm.program.insts.items.len;
+                    var mulInst = Inst.mul(mulRD.getReg(), mulRn.getReg(), mulRm.getReg(), true, arm.program.insts.items.len);
                     try armFunc.addInst(mulInst, armBlock);
                 },
                 .Div => {
@@ -850,9 +910,8 @@ pub fn gen_inst(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock:
                     var divRn = try arm.program.getOpfromIR(binopIr.lhs, null);
                     var divRm = try arm.program.getOpfromIR(binopIr.rhs, null);
 
-                    try armFunc.ensureBothReg(ir, divRn, divRm);
-                    var divInst = Inst.div(divRD.getReg(), divRn.getReg(), divRm.getReg(), true);
-                    divInst.id = arm.program.insts.items.len;
+                    try armFunc.ensureBothReg(ir, armBlock, &divRn, &divRm);
+                    var divInst = Inst.div(divRD.getReg(), divRn.getReg(), divRm.getReg(), true, arm.program.insts.items.len);
                     try armFunc.addInst(divInst, armBlock);
                 },
                 // order with one imm
@@ -860,10 +919,9 @@ pub fn gen_inst(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock:
                     var subRD = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
                     var subRn = try arm.program.getOpfromIR(binopIr.lhs, null);
                     var subO2 = try arm.program.getOpfromIR(binopIr.rhs, null);
-                    try armFunc.ensureImmOrAtLeastOneRegNoSwap(ir, subRn, subO2);
+                    try armFunc.ensureImmOrAtLeastOneRegNoSwap(armBlock, ir, &subRn, &subO2);
 
-                    var subInst = Inst.sub(subRD.getReg(), subRn.getReg(), subO2, true);
-                    subInst.id = arm.program.insts.items.len;
+                    var subInst = Inst.sub(subRD.getReg(), subRn.getReg(), subO2, true, arm.program.insts.items.len);
                     try armFunc.addInst(subInst, armBlock);
                 },
                 // order does not matter
@@ -871,13 +929,13 @@ pub fn gen_inst(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock:
                     var rd = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
                     var rn = try arm.program.getOpfromIR(binopIr.lhs, null);
                     var o2 = try arm.program.getOpfromIR(binopIr.rhs, null);
-                    try armFunc.ensureImmOrAtLeastOneReg(ir, rn, o2);
+                    try armFunc.ensureImmOrAtLeastOneReg(ir, armBlock, &rn, &o2);
 
                     var the_inst = switch (binopIr.op) {
-                        .Add => Inst.add(rd.getReg(), rn.getReg(), o2, true),
-                        .And => Inst.and_(rd.getReg(), rn.getReg(), o2),
-                        .Or => Inst.orr(rd.getReg(), rn.getReg(), o2),
-                        .Xor => Inst.eor(rd.getReg(), rn.getReg(), o2),
+                        .Add => Inst.add(rd.getReg(), rn.getReg(), o2, true, undefined),
+                        .And => Inst.and_(rd.getReg(), rn.getReg(), o2, undefined),
+                        .Or => Inst.orr(rd.getReg(), rn.getReg(), o2, undefined),
+                        .Xor => Inst.eor(rd.getReg(), rn.getReg(), o2, undefined),
                         else => unreachable,
                     };
                     the_inst.id = arm.program.insts.items.len;
@@ -888,9 +946,9 @@ pub fn gen_inst(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock:
         .Cmp => {
             // just do no work, it will not be used
             if (nextID_ == null) {
-                return false;
+                return res or false;
             }
-            var nextInst = func.insts.get(nextID_.?);
+            var nextInst = func.insts.get(nextID_.?).*;
             switch (nextInst.op) {
                 .Br => {
                     const compIR = IR.Inst.Cmp.get(irInst);
@@ -901,67 +959,101 @@ pub fn gen_inst(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock:
                     // generate the cmp
                     var cmpRD = try arm.program.getOpfromIR(compIR.lhs, null);
                     var cmpO2 = try arm.program.getOpfromIR(compIR.rhs, null);
-                    try armFunc.ensureImmOrAtLeastOneRegNoSwap(ir, cmpRD, cmpO2);
+                    try armFunc.ensureImmOrAtLeastOneRegNoSwap(armBlock, ir, &cmpRD, &cmpO2);
 
                     // gen cmp
-                    var cmpInst = Inst.cmp(cmpRD.getReg(), cmpO2);
-                    cmpInst.id = arm.program.insts.items.len;
+                    var cmpInst = Inst.cmp(cmpRD.getReg(), cmpO2, arm.program.insts.items.len);
                     try armFunc.addInst(cmpInst, armBlock);
 
                     // branch to the true block
-                    var brTrue = try arm.program.getOpfromIR(brIR.iftrue, null);
-                    var brFalse = try arm.program.getOpfromIR(brIR.iffalse, null);
+                    var brTrue = Operand.asOpLabel(arm.irBBtoARMBB.get(brIR.iftrue).?);
+                    var brFalse = Operand.asOpLabel(arm.irBBtoARMBB.get(brIR.iffalse).?);
 
                     const CC = switch (compIR.cond) {
-                        .Eq => ConditionCode.EQ,
-                        .NEq => ConditionCode.NE,
-                        .GtEq => ConditionCode.GE,
-                        .LtEq => ConditionCode.LE,
-                        .Gt => ConditionCode.GT,
-                        .Lt => ConditionCode.LT,
-                        else => unreachable,
+                        .NEq => ConditionCode.EQ,
+                        .Eq => ConditionCode.NE,
+                        .Lt => ConditionCode.GE,
+                        .Gt => ConditionCode.LE,
+                        .LtEq => ConditionCode.GT,
+                        .GtEq => ConditionCode.LT,
                     };
 
-                    var bccInst = Inst.bcc(brTrue.getLabel(), CC);
-                    bccInst.id = arm.program.insts.items.len;
+                    var bccInst = Inst.bcc(brFalse.getLabel(), CC, arm.program.insts.items.len);
                     try armFunc.addInst(bccInst, armBlock);
-                    // jmp to the false block
-                    var bInst = Inst.b(brFalse.getLabel());
-                    bInst.id = arm.program.insts.items.len;
+                    // jmp to the True block
+                    var bInst = Inst.b(brTrue.getLabel(), arm.program.insts.items.len);
                     try armFunc.addInst(bInst, armBlock);
-                    return true;
+                    return res or true;
+                },
+                else => {
+                    return res or false;
                 },
             }
         },
         .Jmp => {
             const jmpIR = IR.Inst.Jmp.get(irInst);
-            var jmpInst = Inst.b(jmpIR.dest);
-            jmpInst.id = arm.program.insts.items.len;
+            var jmpInst = Inst.b(jmpIR.dest, arm.program.insts.items.len);
             try armFunc.addInst(jmpInst, armBlock);
-            return true;
+            return res or false;
         },
         .Load => {
             const loadIR = IR.Inst.Load.get(irInst);
-            var loadRD = try arm.program.getOpfromIR(loadIR.register, arm.program.insts.items.len);
-            var loadAddr = try arm.program.getOpfromIR(loadIR.addr, null);
+            var loadRD = try arm.program.getOpfromIR(loadIR.res, arm.program.insts.items.len);
+            var loadAddr = try arm.program.getOpfromIR(loadIR.ptr, null);
             loadAddr.kind = OperandKind.MemReg;
-            var loadInst = Inst.ldr(loadRD.getReg(), loadAddr, true);
-            _ = loadInst;
+            var loadInst = Inst.ldr(loadRD.getReg(), loadAddr, true, arm.program.insts.items.len);
+            try armFunc.addInst(loadInst, armBlock);
         },
         .Store => {
             const storeIR = IR.Inst.Store.get(irInst);
-            var storeRT = try arm.program.getOpfromIR(storeIR.register, arm.program.insts.items.len);
-            var storeAddr = try arm.program.getOpfromIR(storeIR.addr, null);
+            var storeRT = try arm.program.getOpfromIR(storeIR.to, arm.program.insts.items.len);
+            var storeAddr = try arm.program.getOpfromIR(storeIR.from, null);
             storeAddr.kind = OperandKind.MemReg;
-            var storeInst = Inst.str(storeRT.getReg(), storeAddr, true); //lololol always be signed
-            storeInst.id = arm.program.insts.items.len;
+            var storeInst = Inst.str(storeRT.getReg(), storeAddr, true, arm.program.insts.items.len); //lololol always be signed
             try armFunc.addInst(storeInst, armBlock);
+        },
+        .Call => {
+            // FIXME: this is not correct calling!
+            const callIR = IR.Inst.Call.get(irInst);
+            // do a bl inst to the function
+            // the name of the function is the fun name
+            var funName = callIR.fun.name;
+            var funF = armFunc;
+            // find the function in the program that has the same name
+            var funID: Function.ID = 0;
+            var found: bool = false;
+            for (arm.program.functions.items) |*fun| {
+                if (fun.name == funName) {
+                    funID = fun.id;
+                    funF = fun;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                std.debug.print("The function {s} was not found in the program", .{ir.getIdent(funName)});
+                return false;
+            }
+            // create a mov inst for each param
+            for (callIR.args, 0..) |irArg, idx| {
+                std.debug.print("The len args {d}\n", .{callIR.args.len});
+                std.debug.print("armFunc.params.items.len {d}\n", .{funF.params.items.len});
+                var armReg = funF.params.items[idx];
+                var arg = try arm.program.getOpfromIR(irArg, arm.program.insts.items.len);
+                var movInst = Inst.mov(armReg, arg, arm.program.insts.items.len);
+                try armFunc.addInst(movInst, armBlock);
+            }
+
+            // create the bl inst
+            var blInst = Inst.bl(funName, arm.program.insts.items.len);
+            try armFunc.addInst(blInst, armBlock);
         },
         else => {
             std.debug.print("The inst was {s}\n", .{@tagName(irInst.op)});
-            return;
+            return res or false;
         },
     }
+    return res or false;
 }
 
 /////////////
@@ -1077,4 +1169,8 @@ test "arm.fibonacci" {
     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
     var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
+    var ir = try testMe(in);
+    var arm = try gen_program(&ir);
+    var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+    std.debug.print("{s}\n", .{str2});
 }
