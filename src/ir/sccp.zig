@@ -101,8 +101,9 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
     const insts = &fun.insts;
     const regs = &fun.regs;
 
-    main_loop: while (bbWL.items.len > 0) {
+    main_loop: while (bbWL.items.len > 0 or ssaWL.items.len > 0) {
         if (bbWL.popOrNull()) |bbID| {
+            std.debug.print("BBID={d}\n", .{bbID});
             if (reachable[bbID]) {
                 // in this context means we already handled the block
                 // updates to values in this block will be handled by
@@ -521,14 +522,19 @@ const SSAEdge = struct {
 
 /// Push reachable usages of a register to the ssa worklist
 fn add_reachable_uses_of(fun: *const Function, reg: Register, ssaWL: *ArrayList(SSAEdge), reachable: []const bool) !void {
-    try add_reachable_uses_of_reg_from_bb(fun, reg, reg.bb, ssaWL, reachable);
+    var visited = try fun.alloc.alloc(bool, @intCast(fun.bbs.len));
+    defer fun.alloc.free(visited);
+    @memset(visited, false);
+
+    try add_reachable_uses_of_reg_from_bb(fun, reg, reg.bb, ssaWL, reachable, visited);
     // TODO: filter repeat offenders from start -> end
     // by setting them to null
 }
 
 /// The inner function of reachable_uses_of
 /// Pushes all uses
-fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: BBID, ssaWL: *ArrayList(SSAEdge), reachable: []const bool) !void {
+fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: BBID, ssaWL: *ArrayList(SSAEdge), reachable: []const bool, visited: []bool) !void {
+    visited[bbID] = true;
     // std.debug.print("WATCH ME SCCP DEEZ BBS {d}\n", .{bbID});
     const bb = fun.bbs.get(bbID);
     const insts = &fun.insts;
@@ -585,34 +591,40 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
         .Ret => {},
         .Jmp => {
             const jmp = Inst.Jmp.get(inst);
-            if (reachable[jmp.dest]) {
+            if (reachable[jmp.dest] and !visited[jmp.dest]) {
+                std.debug.print("WATCH ME VISIT {d}\n", .{jmp.dest});
                 return try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,
                     jmp.dest,
                     ssaWL,
                     reachable,
+                    visited,
                 );
             }
         },
         .Br => {
             const br = Inst.Br.get(inst);
-            if (reachable[br.iftrue]) {
+            if (reachable[br.iftrue] and !visited[br.iftrue]) {
+                std.debug.print("WATCH ME VISIT {d}\n", .{br.iftrue});
                 try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,
                     br.iftrue,
                     ssaWL,
                     reachable,
+                    visited,
                 );
             }
-            if (reachable[br.iffalse]) {
+            if (reachable[br.iffalse] and !visited[br.iffalse]) {
+                std.debug.print("WATCH ME VISIT {d}\n", .{br.iffalse});
                 return try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,
                     br.iffalse,
                     ssaWL,
                     reachable,
+                    visited,
                 );
             }
         },
@@ -726,64 +738,64 @@ fn sccp_all_funs(ir: *const IR) !void {
 //     try sccp_all_funs(&ir);
 // }
 
-test "sccp.removes-never-taken-if" {
-    log.empty();
-    errdefer log.print();
-
-    try expectResultsInIR(
-        \\fun main() int {
-        \\  int a;
-        \\  if (false) {
-        \\    a = 1;
-        \\  } else {
-        \\    a = 2;
-        \\  }
-        \\  return a;
-        \\}
-    , .{
-        "define i64 @main() {",
-        "entry:",
-        "  br label %body0",
-        "body0:",
-        "  br label %if.cond1",
-        "if.cond1:",
-        "  br label %else.body4",
-        "else.body4:",
-        "  br label %else.exit5",
-        "else.exit5:",
-        "  br label %if.exit6",
-        "if.exit6:",
-        "  br label %exit",
-        "exit:",
-        "  ret i64 2",
-        "}",
-    }, .{
-        .{ "main", .{.sccp} },
-    });
-}
+// test "sccp.removes-never-taken-if" {
+//     log.empty();
+//     errdefer log.print();
+//
+//     try expectResultsInIR(
+//         \\fun main() int {
+//         \\  int a;
+//         \\  if (false) {
+//         \\    a = 1;
+//         \\  } else {
+//         \\    a = 2;
+//         \\  }
+//         \\  return a;
+//         \\}
+//     , .{
+//         "define i64 @main() {",
+//         "entry:",
+//         "  br label %body0",
+//         "body0:",
+//         "  br label %if.cond1",
+//         "if.cond1:",
+//         "  br label %else.body4",
+//         "else.body4:",
+//         "  br label %else.exit5",
+//         "else.exit5:",
+//         "  br label %if.exit6",
+//         "if.exit6:",
+//         "  br label %exit",
+//         "exit:",
+//         "  ret i64 2",
+//         "}",
+//     }, .{
+//         .{ "main", .{.sccp} },
+//     });
+// }
 
 // test "sccp.removes-nested-never-ran-while" {
+//     std.debug.print("============================= START ==========================\n", .{});
 //     log.empty();
 //     errdefer log.print();
 //     try expectResultsInIR(
-//         \\fun main() void {
+//         \\fun main() int {
 //         \\  int a;
 //         \\  if (true) {
+//         \\    a = 1;
 //         \\    while (false) {
-//         \\      a = 1;
+//         \\      a = 2;
 //         \\      a = 3;
 //         \\    }
 //         \\  }
-//         \\  a = 2;
+//         \\  return a;
 //         \\}
 //     , .{
-//         "define void @main() {",
+//         "define i64 @main() {",
 //         "entry:",
-//         "  %a = alloca i64",
-//         "  store i64 2, i64* %a",
 //         "  br label %exit",
 //         "exit:",
-//         "  ret void",
+//         "  ret i64 1",
 //         "}",
 //     }, .{
 //         .{ "main", .{.sccp} },

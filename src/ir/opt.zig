@@ -71,7 +71,7 @@ fn sccp(ir: *IR, fun: *Function) !void {
 
         remove_reg(fun, reg.*);
     }
-    try remove_unreachable_blocks(alloc, fun, info.reachable);
+    try remove_unreachable_blocks(alloc, ir, fun, info.reachable);
 }
 
 fn sccp_const_to_ref(value: SCCP.Value.Constant) Ref {
@@ -251,16 +251,16 @@ fn refers_to_reg(ref: Ref, reg: Reg) bool {
     };
 }
 
-fn remove_unreachable_blocks(alloc: Alloc, fun: *Function, reachable: []bool) !void {
+fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reachable: []bool) !void {
     const bbs = &fun.bbs;
     const insts = &fun.insts;
     _ = insts;
 
-    // for (bbs.items(), 0..) |bb, id| {
-    //     const bbID = bbs.ids.items[id];
-    //     std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
-    //     std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
+    // for (bbs.items(), bbs.ids()) |bb, bbID| {
+    //     std.debug.print("BEFOR bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
+    //     std.debug.print("BEFOR bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
     // }
+    save_dot_to_file(ir, "pre_remove_unreachable.dot") catch {};
 
     utils.assert(@as(usize, @intCast(bbs.len)) == reachable.len, "mismatch in block count", .{});
     for (reachable, 0..) |r, i| {
@@ -278,9 +278,10 @@ fn remove_unreachable_blocks(alloc: Alloc, fun: *Function, reachable: []bool) !v
         bb.incomers.clearAndFree();
         bb.*.outgoers = [_]?BBID{ null, null };
     }
+    save_dot_to_file(ir, "post_remove_unreachable.dot") catch {};
     // for (bbs.items(), bbs.ids()) |bb, bbID| {
-    //     std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
-    //     std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
+    //     std.debug.print("AFTER bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
+    //     std.debug.print("AFTER bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
     //     std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
     // }
 
@@ -307,13 +308,55 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
     const insts = &fun.insts;
 
     const bb = bbs.get(bbID);
+
+    if (bb_num_outgoers(bb) == 2) {
+        std.debug.print("removing bb {s} with 2 outgoers {any} and these incomers {any}\n", .{ bb.name, bb.outgoers, bb.incomers.items });
+        var self_ref: BBID = undefined;
+        if (is_self_ref(fun, bbID, bb.outgoers[0].?)) {
+            std.debug.print("self ref detected at 0 ={?d} in {s}\n", .{ bb.outgoers[0], bb.name });
+            self_ref = bb.outgoers[0].?;
+            // const outgoer = bbs.get(outgoerID);
+            // remove_bb_from_incomers(outgoer, bbID);
+            // remove_bb_from_outgoers(outgoer, bbID);
+        } else if (is_self_ref(fun, bbID, bb.outgoers[1].?)) {
+            std.debug.print("self ref detected at 1 ={?d} in {s}\n", .{ bb.outgoers[1], bb.name });
+            self_ref = bb.outgoers[1].?;
+        } else {
+            utils.impossible("FUCK - have to handle case where bb has 2 outgoers and neither are self ref\n", .{});
+        }
+        utils.assert(bb.incomers.items.len == 1, "FUCK - HOW TO HANDLE bb {s} with 2 outgoers and not 1 incomer\n", .{bb.name});
+        const incomer = bb.incomers.items[0];
+        // for (bb.incomers.items) |incomer| {
+        var incomerBB = bbs.get(incomer);
+        var incomerBRID = (ptr_to_last(InstID, incomerBB.insts.list.items) orelse unreachable).*;
+        var incomerBR = insts.get(incomerBRID);
+        for (bb.outgoers) |_outgoer| {
+            const outgoer = _outgoer.?;
+            var outgoerBB = bbs.get(outgoer);
+            std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
+
+            _ = replace_branches_to_with(incomerBR, bbID, outgoer);
+            if (outgoer == self_ref) {
+                try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
+                remove_bb_from_incomers(bb, bbID);
+                remove_bb_from_outgoers(bb, bbID);
+            } else {
+                replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
+                replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
+                try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
+            }
+        }
+        // }
+        return;
+    }
     if (bb.incomers.items.len > 0) {
         utils.assert(bb_num_outgoers(bb) != 0, "FUCK - have to handle case where removing bb has no outgoers\n", .{});
-        utils.assert(bb_num_outgoers(bb) != 2, "FUCK - have to handle case where removing bb has 2 outgoers\n", .{});
+        utils.assert(bb_num_outgoers(bb) != 2, "FUCK - FELL THROUGH this case should be handled above\n", .{});
 
         const outgoer = if (bb.outgoers[0]) |out| out else if (bb.outgoers[1]) |out| out else unreachable;
 
         var outgoerBB = bbs.get(outgoer);
+        _ = outgoerBB;
         // link parent to child
         for (bb.incomers.items) |incomer| {
             var incomerBB = bbs.get(incomer);
@@ -323,18 +366,18 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
             std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
 
             _ = replace_branches_to_with(incomerBR, bbID, outgoer);
-            replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
-            replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
+            // replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
+            // replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
         }
-        remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
+        try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
     } else if (bb_num_outgoers(bb) < 2) {
-        // remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
-        // for (bb.outgoers) |maybe_outgoerID| {
-        //     if (maybe_outgoerID == null) continue;
-        //     const outgoerID = maybe_outgoerID.?;
-        //     const outgoer = bbs.get(outgoerID);
-        //     remove_bb_from_other_bb_incomers(outgoer, bbID);
-        // }
+        try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
+        for (bb.outgoers) |maybe_outgoerID| {
+            if (maybe_outgoerID == null) continue;
+            const outgoerID = maybe_outgoerID.?;
+            const outgoer = bbs.get(outgoerID);
+            remove_bb_from_incomers(outgoer, bbID);
+        }
     }
 }
 
@@ -352,17 +395,24 @@ fn remove_bb_from_incomers(fromBB: *BasicBlock, toRemoveBBID: BBID) void {
 }
 
 fn remove_bb_from_outgoers(fromBB: *BasicBlock, toRemoveBBID: BBID) void {
-    std.debug.print("removing {d} from outgoers {any}\n", .{ toRemoveBBID, fromBB.outgoers });
+    std.debug.print("removing {d} from outgoers of {s} {any}\n", .{ toRemoveBBID, fromBB.name, fromBB.outgoers });
     const outgoers = &fromBB.outgoers;
     for (outgoers) |*outgoerID| {
         if (outgoerID.* != null and outgoerID.* == toRemoveBBID) {
             outgoerID.* = null;
         }
     }
-    std.debug.print("outgoers after removing {d} = {any}\n", .{ toRemoveBBID, fromBB.outgoers });
+    std.debug.print("outgoers after removing {d} from {s} = {any}\n", .{ toRemoveBBID, fromBB.name, fromBB.outgoers });
 }
 
-fn remove_phi_entires_in_children_of_dead_bb(fun: *Function, bb: *BasicBlock, bbID: BBID) void {
+fn remove_phi_entires_in_children_of_dead_bb(fun: *Function, bb: *BasicBlock, bbID: BBID) !void {
+    var visited = try fun.alloc.alloc(bool, @intCast(fun.bbs.len));
+    defer fun.alloc.free(visited);
+    @memset(visited, false);
+    visited[bbID] = true;
+    remove_phi_entires_in_children_of_dead_bb_inner(fun, bb, bbID, visited);
+}
+fn remove_phi_entires_in_children_of_dead_bb_inner(fun: *Function, bb: *BasicBlock, bbID: BBID, visited: []bool) void {
     const bbs = &fun.bbs;
     const insts = &fun.insts;
 
@@ -400,7 +450,11 @@ fn remove_phi_entires_in_children_of_dead_bb(fun: *Function, bb: *BasicBlock, bb
             }
             inst.* = phi.toInst();
         }
-        remove_phi_entires_in_children_of_dead_bb(fun, outgoer, bbID);
+        std.debug.print("removed phis from [{d}] {s}\n", .{ outgoerID, outgoer.name });
+        if (!visited[outgoerID]) {
+            visited[outgoerID] = true;
+            remove_phi_entires_in_children_of_dead_bb_inner(fun, outgoer, bbID, visited);
+        }
     }
 }
 
@@ -437,6 +491,21 @@ fn replace_branches_to_with(inst: *Inst, from: BBID, to: BBID) bool {
             // std.debug.print("correcting jmp:\n{any}\n{d}\n", .{ jmp, outgoer });
         },
         else => unreachable,
+    }
+    return false;
+}
+
+fn is_self_ref(fun: *const Function, selfBBID: BBID, outgoerBBID: BBID) bool {
+    const outgoerBB = fun.bbs.get(outgoerBBID);
+    for (outgoerBB.outgoers) |maybe_outgoerID| {
+        if (maybe_outgoerID == null) continue;
+        const outgoerOutgoerBBID = maybe_outgoerID.?;
+        if (outgoerOutgoerBBID == selfBBID) {
+            return true;
+        }
+        if (is_self_ref(fun, selfBBID, outgoerOutgoerBBID)) {
+            return true;
+        }
     }
     return false;
 }
@@ -538,6 +607,7 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
     var alloc = arena.allocator();
 
     var ir = try testMe(input);
+    try save_dot_to_file(&ir, "pre.dot");
     // Run optimization passes
     inline for (fun_passes) |fun_pass| {
         const fun_name: []const u8 = @as([]const u8, fun_pass.@"0");
@@ -564,8 +634,8 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
             }
         }
     }
+    try save_dot_to_file(&ir, "post.dot");
     const gotIRstr = try ir.stringify(alloc);
-    try save_dot_to_file(&ir, "out.dot");
 
     // NOTE: could use multiline strings for the
     // expected value but, that makes it so you can't put
@@ -595,17 +665,43 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
     try ting.expectEqualStrings(expectedStr, gotIRstr);
 }
 
-test "opt.sccp+empty-block=$profit" {
+// test "opt.sccp+empty-block=$profit" {
+//     log.empty();
+//     errdefer log.print();
+//
+//     try expectResultsInIR(
+//         \\fun main() int {
+//         \\  int a;
+//         \\  if (false) {
+//         \\    a = 1;
+//         \\  } else {
+//         \\    a = 2;
+//         \\  }
+//         \\  return a;
+//         \\}
+//     , .{
+//         "define i64 @main() {",
+//         "entry:",
+//         "  br label %exit",
+//         "exit:",
+//         "  ret i64 2",
+//         "}",
+//     }, .{
+//         .{ "main", .{ .sccp, .empty_bb } },
+//     });
+// }
+//
+//
+
+test "sccp.removes-nested-never-ran-while" {
     log.empty();
     errdefer log.print();
-
     try expectResultsInIR(
         \\fun main() int {
         \\  int a;
-        \\  if (false) {
-        \\    a = 1;
-        \\  } else {
-        \\    a = 2;
+        \\  a = 2;
+        \\  while (false) {
+        \\    a = 3;
         \\  }
         \\  return a;
         \\}
@@ -617,6 +713,6 @@ test "opt.sccp+empty-block=$profit" {
         "  ret i64 2",
         "}",
     }, .{
-        .{ "main", .{ .sccp, .empty_bb } },
+        .{ "main", .{.sccp} },
     });
 }

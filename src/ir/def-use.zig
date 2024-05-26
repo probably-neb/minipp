@@ -32,14 +32,19 @@ pub const RegUsage = struct {
 
 /// Push reachable usages of a register to the ssa worklist
 pub fn uses_of(alloc: Alloc, fun: *const Function, reg: Reg) !ArrayList(RegUsage) {
+    var visited = try alloc.alloc(bool, @intCast(fun.bbs.len));
+    defer alloc.free(visited);
+    @memset(visited, false);
+
     var uses = ArrayList(RegUsage).init(alloc);
-    try uses_of_in_bb(fun, reg, reg.bb, &uses);
+    try uses_of_in_bb(fun, reg, reg.bb, &uses, visited);
     return uses;
 }
 
 /// The inner function of reachable_uses_of
 /// Pushes all uses
-fn uses_of_in_bb(fun: *const Function, reg: Register, bbID: BBID, uses: *ArrayList(RegUsage)) !void {
+fn uses_of_in_bb(fun: *const Function, reg: Register, bbID: BBID, uses: *ArrayList(RegUsage), visited: []bool) !void {
+    visited[bbID] = true;
     const bb = fun.bbs.get(bbID);
     const insts = &fun.insts;
     var instructionIDs = bb.insts.items();
@@ -79,27 +84,36 @@ fn uses_of_in_bb(fun: *const Function, reg: Register, bbID: BBID, uses: *ArrayLi
         .Ret => {},
         .Jmp => {
             const jmp = Inst.Jmp.get(inst);
-            return try uses_of_in_bb(
-                fun,
-                reg,
-                jmp.dest,
-                uses,
-            );
+            if (!visited[jmp.dest]) {
+                return try uses_of_in_bb(
+                    fun,
+                    reg,
+                    jmp.dest,
+                    uses,
+                    visited,
+                );
+            }
         },
         .Br => {
             const br = Inst.Br.get(inst);
-            try uses_of_in_bb(
-                fun,
-                reg,
-                br.iftrue,
-                uses,
-            );
-            return try uses_of_in_bb(
-                fun,
-                reg,
-                br.iffalse,
-                uses,
-            );
+            if (!visited[br.iftrue]) {
+                try uses_of_in_bb(
+                    fun,
+                    reg,
+                    br.iftrue,
+                    uses,
+                    visited,
+                );
+            }
+            if (!visited[br.iffalse]) {
+                return try uses_of_in_bb(
+                    fun,
+                    reg,
+                    br.iffalse,
+                    uses,
+                    visited,
+                );
+            }
         },
         else => unreachable,
     }
