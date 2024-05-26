@@ -221,18 +221,20 @@ fn remove_unreachable_blocks(fun: *Function, reachable: []bool) !void {
     const bbs = &fun.bbs;
     const insts = &fun.insts;
 
+    for (bbs.items(), 0..) |bb, id| {
+        const bbID = bbs.ids.items[id];
+        std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
+        std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
+    }
+
     utils.assert(@as(usize, @intCast(bbs.len)) == reachable.len, "mismatch in block count", .{});
     for (reachable, 0..) |r, i| {
-        std.debug.print("{d} - {any}\n", .{ bbs.order.items[i], r });
+        const stringify_label = @import("stringify_phi.zig").stringify_label;
+        std.debug.print("{s} - {any}\n", .{ stringify_label(fun, bbs.ids.items[i]), r });
     }
     for (reachable, 0..) |is_reachable, bbID_usize| {
-        const bbID: BBID = bbs.order.items[bbID_usize];
+        const bbID: BBID = bbs.ids.items[bbID_usize];
         const bb = bbs.get(bbID);
-
-        defer {
-            std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
-            std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
-        }
 
         if (is_reachable) {
             continue;
@@ -244,12 +246,15 @@ fn remove_unreachable_blocks(fun: *Function, reachable: []bool) !void {
 
             const outgoer = bb.outgoers[0].?;
 
+            var outgoerBB = bbs.get(outgoer);
             // link parent to child
             for (bb.incomers.items) |incomer| {
                 var incomerBB = bbs.get(incomer);
                 var incomerBRID = (ptr_to_last(InstID, incomerBB.insts.list.items) orelse unreachable).*;
                 var incomerBR = insts.get(incomerBRID);
-                std.mem.replaceScalar(BBID, incomerBB.insts.items(), bbID, outgoer);
+
+                std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
+
                 switch (incomerBR.*.op) {
                     .Br => {
                         var br = Inst.Br.get(incomerBR.*);
@@ -264,17 +269,36 @@ fn remove_unreachable_blocks(fun: *Function, reachable: []bool) !void {
                     .Jmp => {
                         var jmp = Inst.Jmp.get(incomerBR.*);
                         jmp.dest = outgoer;
+                        std.debug.print("correcting jmp:\n{any}\n{d}\n", .{ jmp, outgoer });
                         incomerBR.* = jmp.toInst();
                     },
                     else => unreachable,
                 }
+                std.mem.replaceScalar(?BBID, &incomerBB.outgoers, bbID, outgoer);
+                std.mem.replaceScalar(BBID, outgoerBB.incomers.items, bbID, incomer);
             }
+            bb.incomers.clearAndFree();
             bb.*.outgoers[0] = null;
         }
 
         // FIXME: assert the registers in the block are never used
         // or are in a phi if so remove them from phi entries
         // bbs.remove(bbID);
+    }
+    for (bbs.items(), 0..) |bb, id| {
+        const bbID = bbs.ids.items[id];
+        std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
+        std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
+        std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
+    }
+
+    for (reachable, 0..) |is_reachable, i| {
+        if (is_reachable) continue;
+        // std.debug.print("i-{d} ids-{d} bbID-{d}\n", .{ id, bbs.ids.items[id], bbID });
+        // std.debug.print("i-{d} bbID-{d}\n", .{ id, bbID });
+
+        // if (id == 5) bbs.remove(bbID);
+        _ = bbs.orderedRemove(@intCast(i));
     }
 }
 
@@ -301,6 +325,14 @@ fn testMe(input: []const u8) !IR {
 pub const OptPass = enum {
     sccp,
 };
+
+fn save_dot_to_file(ir: *const IR, file: []const u8) !void {
+    const dot = @import("../dot.zig");
+    var arena = std.heap.ArenaAllocator.init(ting.allocator);
+    defer arena.deinit();
+    var alloc = arena.allocator();
+    try std.fs.cwd().writeFile(file, try dot.generate(alloc, try ir.stringify(alloc)));
+}
 
 // NOTE: this is pub so it can be imported from files implementing a specific pass so they can use the mutations
 // defined above
@@ -334,6 +366,7 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
             }
         }
     }
+    try save_dot_to_file(&ir, "out.dot");
     const gotIRstr = try ir.stringify(alloc);
 
     // NOTE: could use multiline strings for the

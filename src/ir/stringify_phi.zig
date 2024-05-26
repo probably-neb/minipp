@@ -262,7 +262,7 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
         // print out the basic blocks in order
         // print out phi inst then insts
         for (fun.bbs.items(), 0..) |bb, i| {
-            const bbID = fun.bbs.order.items[i];
+            const bbID = fun.bbs.ids.items[i];
             buf.fmt("{}:\n", .{stringify_label(fun, @truncate(bbID))}) catch unreachable;
             // print out the rest of the instructions
             for (bb.insts.items()) |instID| {

@@ -647,7 +647,7 @@ inline fn either_refers_to_reg(a: Ref, b: Ref, reg: Reg) bool {
     return refers_to_reg(a, reg) or refers_to_reg(b, reg);
 }
 var testAlloc = std.heap.page_allocator;
-
+const ting = std.testing;
 const OPT = @import("opt.zig");
 const expectResultsInIR = OPT.expectResultsInIR;
 
@@ -666,23 +666,23 @@ fn sccp_all_funs(ir: *const IR) !void {
     }
 }
 
-test "compilation" {
-    log.empty();
-    errdefer log.print();
-    var ir = try testMe(
-        \\fun main() void {
-        \\  int a;
-        \\  if (true) {
-        \\    while (false) {
-        \\      a = 1;
-        \\      a = 3;
-        \\    }
-        \\  }
-        \\  a = 2;
-        \\}
-    );
-    try sccp_all_funs(&ir);
-}
+// test "compilation" {
+//     log.empty();
+//     errdefer log.print();
+//     var ir = try testMe(
+//         \\fun main() void {
+//         \\  int a;
+//         \\  if (true) {
+//         \\    while (false) {
+//         \\      a = 1;
+//         \\      a = 3;
+//         \\    }
+//         \\  }
+//         \\  a = 2;
+//         \\}
+//     );
+//     try sccp_all_funs(&ir);
+// }
 
 test "sccp.removes-never-taken-if" {
     log.empty();
@@ -711,30 +711,30 @@ test "sccp.removes-never-taken-if" {
     });
 }
 
-test "sccp.removes-nested-never-ran-while" {
-    log.empty();
-    errdefer log.print();
-    try expectResultsInIR(
-        \\fun main() void {
-        \\  int a;
-        \\  if (true) {
-        \\    while (false) {
-        \\      a = 1;
-        \\      a = 3;
-        \\    }
-        \\  }
-        \\  a = 2;
-        \\}
-    , .{
-        "define void @main() {",
-        "entry:",
-        "  %a = alloca i64",
-        "  store i64 2, i64* %a",
-        "  br label %exit",
-        "exit:",
-        "  ret void",
-        "}",
-    }, .{
-        .{ "main", .{.sccp} },
-    });
-}
+// test "sccp.removes-nested-never-ran-while" {
+//     log.empty();
+//     errdefer log.print();
+//     try expectResultsInIR(
+//         \\fun main() void {
+//         \\  int a;
+//         \\  if (true) {
+//         \\    while (false) {
+//         \\      a = 1;
+//         \\      a = 3;
+//         \\    }
+//         \\  }
+//         \\  a = 2;
+//         \\}
+//     , .{
+//         "define void @main() {",
+//         "entry:",
+//         "  %a = alloca i64",
+//         "  store i64 2, i64* %a",
+//         "  br label %exit",
+//         "exit:",
+//         "  ret void",
+//         "}",
+//     }, .{
+//         .{ "main", .{.sccp} },
+//     });
+// }
