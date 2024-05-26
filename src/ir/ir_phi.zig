@@ -1980,9 +1980,7 @@ pub fn OrderedArrayList(comptime T: type) type {
         // and create another `getPtr` for when you need a pointer
         // the `.*` everywhere is kinda annoying ngl
         pub inline fn get(self: Self, idx: u32) *T {
-            const actual = self.order.items[idx];
-            utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
-            return &self.list.items[actual];
+            return &self.list.items[idx];
         }
 
         /// Appends an item and returns the index

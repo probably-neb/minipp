@@ -741,13 +741,21 @@ test "sccp.removes-never-taken-if" {
         \\  return a;
         \\}
     , .{
-        "define void @main() {",
+        "define i64 @main() {",
         "entry:",
-        "  %a = alloca i64",
-        "  store i64 2, i64* %a",
+        "  br label %body0",
+        "body0:",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  br label %else.body4",
+        "else.body4:",
+        "  br label %else.exit5",
+        "else.exit5:",
+        "  br label %if.exit6",
+        "if.exit6:",
         "  br label %exit",
         "exit:",
-        "  ret void",
+        "  ret i64 2",
         "}",
     }, .{
         .{ "main", .{.sccp} },
