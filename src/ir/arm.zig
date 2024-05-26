@@ -2,7 +2,9 @@ pub const std = @import("std");
 const log = @import("../log.zig");
 const utils = @import("../utils.zig");
 
-const IR = @import("ir.zig");
+const IR = @import("ir_phi.zig");
+
+pub const Arm = @This();
 
 pub const Imm = IR.StrID;
 
@@ -11,8 +13,6 @@ pub const Reg = struct {
     name: IR.StrID, // the name of the register
     // kind: RegKind, this could be useed for vector type beat
     inst: Inst.ID, // the ID of the instruction that defines this register
-    bb: BasicBlock.ID, // the ID of the basic block that contains the instruction
-
     pub const ID = usize;
 };
 
@@ -162,6 +162,7 @@ pub const Inst = struct {
     cc: ConditionCode,
     pub const ID = usize;
 
+    // helpers to construct the instructions
     pub const Add = struct {
         rd: Reg,
         rn: Reg,
@@ -450,7 +451,36 @@ pub const Function = struct {
     name: []const u8,
     blocks: std.ArrayList(BasicBlock.ID),
     insts: std.ArrayList(Inst),
-    regs: std.ArrayList(Reg),
     id: ID,
     pub const ID = usize;
 };
+
+pub const Program = struct {
+    functions: std.ArrayList(Function),
+    insts: std.ArrayList(Inst),
+    regs: std.ArrayList(Reg),
+    pub const ID = usize;
+};
+
+pub fn gen_program(ir: *IR) !Arm {
+    var arm = Arm{};
+    _ = try gen_globals(ir, &arm);
+    _ = try gen_functions(ir, arm);
+}
+
+pub fn gen_globals(ir: *IR, arm: *Arm) !bool {
+    _ = arm;
+    _ = ir;
+}
+
+pub fn gen_functions(ir: *IR, arm: *Arm) !bool {
+    for (ir.funcs.items.items) |func| {
+        _ = try gen_function(arm, ir, func);
+    }
+}
+
+pub fn gen_function(arm: *Arm, ir: *IR, func: *IR.Func) !bool {
+    _ = arm;
+    _ = ir;
+    _ = func;
+}
