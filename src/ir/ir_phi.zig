@@ -2374,6 +2374,7 @@ pub fn OrderedList(comptime T: type) type {
             _ = try self.add(item);
         }
 
+        // actuall remove from ids and list
         pub fn remove(self: *Self, id: u32) void {
             const index = self.order.items[id];
             utils.assert(index != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{id});
@@ -2381,8 +2382,11 @@ pub fn OrderedList(comptime T: type) type {
             _ = self.list.orderedRemove(index);
             _ = self.ids.orderedRemove(index);
             if (index + 1 < self.len) {
-                for (self.order.items[index + 1 ..]) |*i| {
-                    i.* -= 1;
+                for (index + 1..self.len - 1) |i| {
+                    if (self.order.items[i] == Self.UNDEF) {
+                        continue;
+                    }
+                    self.order.items[i] -= 1;
                 }
             }
             self.len -= 1;
