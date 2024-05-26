@@ -60,7 +60,7 @@ fn sccp(ir: *IR, fun: *Function) !void {
         remove_reg(fun, reg.*);
     }
 
-    try remove_unreachable_blocks(fun, info.reachable);
+    try remove_unreachable_blocks(alloc, fun, info.reachable);
 }
 
 fn sccp_const_to_ref(value: SCCP.Value.Constant) Ref {
@@ -217,7 +217,7 @@ fn refers_to_reg(ref: Ref, reg: Reg) bool {
     };
 }
 
-fn remove_unreachable_blocks(fun: *Function, reachable: []bool) !void {
+fn remove_unreachable_blocks(alloc: Alloc, fun: *Function, reachable: []bool) !void {
     const bbs = &fun.bbs;
     const insts = &fun.insts;
 
@@ -292,13 +292,17 @@ fn remove_unreachable_blocks(fun: *Function, reachable: []bool) !void {
         std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
     }
 
-    for (reachable, 0..) |is_reachable, i| {
+    var ids = try alloc.alloc(BBID, reachable.len);
+    @memcpy(ids, bbs.ids.items);
+
+    for (reachable, ids) |is_reachable, bbID| {
         if (is_reachable) continue;
         // std.debug.print("i-{d} ids-{d} bbID-{d}\n", .{ id, bbs.ids.items[id], bbID });
         // std.debug.print("i-{d} bbID-{d}\n", .{ id, bbID });
 
         // if (id == 5) bbs.remove(bbID);
-        _ = bbs.orderedRemove(@intCast(i));
+        std.debug.print("WATCH ME DELETE {d}\n", .{bbID});
+        _ = bbs.remove(bbID);
     }
 }
 
