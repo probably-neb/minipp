@@ -633,45 +633,20 @@ pub fn gen_inst(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock:
                     var divInst = Inst.div(divRD.getReg(), divRn.getReg(), divRm.getReg(), true);
                     divInst.id = arm.program.insts.items.len;
                 },
-                .Add => {
-                    var addRD = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
-                    var addRn = try arm.program.getOpfromIR(binopIr.lhs, null);
-                    var addO2 = try arm.program.getOpfromIR(binopIr.rhs, null);
-                    var addInst = Inst.add(addRD.getReg(), addRn.getReg(), addO2, true);
-                    addInst.id = arm.program.insts.items.len;
-                    try armFunc.addInst(addInst);
-                },
-                .Sub => {
-                    var subRD = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
-                    var subRn = try arm.program.getOpfromIR(binopIr.lhs, null);
-                    var subO2 = try arm.program.getOpfromIR(binopIr.rhs, null);
-                    var subInst = Inst.sub(subRD.getReg(), subRn.getReg(), subO2, true);
-                    subInst.id = arm.program.insts.items.len;
-                    try armFunc.addInst(subInst);
-                },
-                .And => {
-                    var andRD = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
-                    var andRn = try arm.program.getOpfromIR(binopIr.lhs, null);
-                    var andO2 = try arm.program.getOpfromIR(binopIr.rhs, null);
-                    var andInst = Inst.and_(andRD.getReg(), andRn.getReg(), andO2, true);
-                    andInst.id = arm.program.insts.items.len;
-                    try armFunc.addInst(andInst);
-                },
-                .Or => {
-                    var orRD = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
-                    var orRn = try arm.program.getOpfromIR(binopIr.lhs, null);
-                    var orO2 = try arm.program.getOpfromIR(binopIr.rhs, null);
-                    var orInst = Inst.orr(orRD.getReg(), orRn.getReg(), orO2);
-                    orInst.id = arm.program.insts.items.len;
-                    try armFunc.addInst(orInst);
-                },
-                .Xor => {
-                    var xorRD = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
-                    var xorRn = try arm.program.getOpfromIR(binopIr.lhs, null);
-                    var xorO2 = try arm.program.getOpfromIR(binopIr.rhs, null);
-                    var xorInst = Inst.eor(xorRD.getReg(), xorRn.getReg(), xorO2);
-                    xorInst.id = arm.program.insts.items.len;
-                    try armFunc.addInst(xorInst);
+                .Add, .Sub, .And, .Or, .Xor => {
+                    var rd = try arm.program.getOpfromIR(binopIr.register, arm.program.insts.items.len);
+                    var rn = try arm.program.getOpfromIR(binopIr.lhs, null);
+                    var o2 = try arm.program.getOpfromIR(binopIr.rhs, null);
+
+                    var the_inst = switch (binopIr.op) {
+                        .Add => Inst.add(rd.getReg(), rn.getReg(), o2, true),
+                        .Sub => Inst.sub(rd.getReg(), rn.getReg(), o2, true),
+                        .And => Inst.and_(rd.getReg(), rn.getReg(), o2),
+                        .Or => Inst.orr(rd.getReg(), rn.getReg(), o2),
+                        .Xor => Inst.eor(rd.getReg(), rn.getReg(), o2),
+                    };
+                    the_inst.id = arm.program.insts.items.len;
+                    try armFunc.addInst(the_inst);
                 },
             }
         },
