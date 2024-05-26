@@ -2381,8 +2381,8 @@ pub fn OrderedList(comptime T: type) type {
             self.order.items[id] = Self.UNDEF;
             _ = self.list.orderedRemove(index);
             _ = self.ids.orderedRemove(index);
-            if (index + 1 < self.len) {
-                for (index + 1..self.len - 1) |i| {
+            if (id + 1 < self.order.items.len) {
+                for (id + 1..self.order.items.len) |i| {
                     if (self.order.items[i] == Self.UNDEF) {
                         continue;
                     }
@@ -2400,7 +2400,7 @@ pub fn OrderedList(comptime T: type) type {
                     i.* = Self.UNDEF;
                     continue;
                 }
-                if (i.* > idx) {
+                if (i.* > idx and i.* != Self.UNDEF) {
                     i.* -= 1;
                 }
             }
@@ -2408,19 +2408,22 @@ pub fn OrderedList(comptime T: type) type {
             return val;
         }
 
-        test "remove" {
+        test "ordered-list.remove" {
             const alloc = std.heap.page_allocator;
             var ol = OrderedList(u32).init(alloc);
-            const id0 = ol.add(0);
-            const id1 = ol.add(1);
-            const id2 = ol.add(2);
+            const id0 = try ol.add(0);
+            const id1 = try ol.add(1);
+            const id2 = try ol.add(2);
 
             ol.remove(1);
 
             const ting = std.testing;
             try ting.expectEqual(ol.order.items[id0], 0);
-            try ting.expectEqual(ol.order.items[id1], OrderedList.UNDEF);
+            try ting.expectEqual(ol.order.items[id1], OrderedList(u32).UNDEF);
             try ting.expectEqual(ol.order.items[id2], 1);
+
+            try ting.expectEqual(ol.list.items[0], 0);
+            try ting.expectEqual(ol.list.items[1], 2);
         }
     };
 }
