@@ -485,8 +485,6 @@ const SSAEdge = struct {
 
 /// Push reachable usages of a register to the ssa worklist
 fn add_reachable_uses_of(fun: *const Function, reg: Register, ssaWL: *ArrayList(SSAEdge), reachable: []const bool) !void {
-    const start = ssaWL.items.len;
-    _ = start;
     try add_reachable_uses_of_reg_from_bb(fun, reg, reg.bb, ssaWL, reachable);
     // TODO: filter repeat offenders from start -> end
     // by setting them to null
@@ -495,9 +493,17 @@ fn add_reachable_uses_of(fun: *const Function, reg: Register, ssaWL: *ArrayList(
 /// The inner function of reachable_uses_of
 /// Pushes all uses
 fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: BBID, ssaWL: *ArrayList(SSAEdge), reachable: []const bool) !void {
+    std.debug.print("WATCH ME SCCP DEEZ BBS {d}\n", .{bbID});
     const bb = fun.bbs.get(bbID);
     const insts = &fun.insts;
     var instructionIDs = bb.insts.items();
+    std.debug.print("INSTS={any}\nITEMS={any}\n", .{ bb.insts.list.items, bb.insts.items() });
+    for (instructionIDs) |instID| {
+        std.debug.print("INST={any}\n", .{insts.get(instID).*});
+    }
+    std.debug.print("RET?={any}\n", .{insts.get(10)});
+    var inst: Inst = undefined;
+
     if (reg.bb == bbID) {
         // use slice from reg inst to end of bb
         const regInstID = reg.inst;
@@ -507,19 +513,19 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
                 .{ reg, bb.name, reg.inst, instructionIDs, fun.insts.get(regInstID) },
             );
         };
-        utils.assert(
-            regInstIndex + 1 < instructionIDs.len,
-            "regInstIndex is last index in bb. Last inst in bb should be control flow not register assignment\nbb={s}\ninst={any}\n",
-            .{ bb.name, instructionIDs[regInstIndex] },
-        );
-        instructionIDs = instructionIDs[regInstIndex + 1 ..];
+        if (regInstIndex + 1 == instructionIDs.len) {
+            inst = insts.get(reg.inst).*;
+            instructionIDs = &[_]BBID{};
+        } else {
+            instructionIDs = instructionIDs[regInstIndex + 1 ..];
+        }
     }
 
     // following loop assumes the current bb is reachable
     // if we are checking it
     utils.assert(reachable[bbID], "reachable_uses_of_reg_from_bb expects the bb it is checking to be reachable\n", .{});
 
-    var inst: Inst = undefined;
+    std.debug.print("WATCH ME SCCP DEEZ {any}\n", .{instructionIDs});
     instLoop: for (instructionIDs) |instID| {
         inst = insts.get(instID).*;
         if (!inst_uses_reg(inst, reg)) {
@@ -536,7 +542,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
         }
         try ssaWL.append(ssaEdge);
     }
-    utils.assert(inst.isCtrlFlow(), "block does not end with ctrl flow statement (or possibly block is empty)\n", .{});
+    utils.assert(inst.isCtrlFlow(), "block does not end with ctrl flow statement (or possibly block is empty)\ninst={any}\n", .{inst});
 
     switch (inst.op) {
         // no more blocks to check from ret

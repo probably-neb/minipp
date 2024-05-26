@@ -468,7 +468,10 @@ pub fn gen_function(
 fn add_phis_to_bb_insts(fun: *IR.Function) !void {
     const bbs = fun.bbs.items();
     for (bbs) |*bb| {
-        try bb.insts.list.insertSlice(0, bb.phiInsts.items);
+        const len_b4 = bb.insts.len;
+        try bb.insts.insertSlice(0, bb.phiInsts.items);
+        const len_after = bb.insts.len;
+        utils.assert(len_after == len_b4 + bb.phiInsts.items.len, "failed to insert phi insts into bb\n", .{});
     }
 }
 

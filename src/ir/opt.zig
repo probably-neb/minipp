@@ -221,19 +221,18 @@ fn remove_unreachable_blocks(alloc: Alloc, fun: *Function, reachable: []bool) !v
     const bbs = &fun.bbs;
     const insts = &fun.insts;
 
-    for (bbs.items(), 0..) |bb, id| {
-        const bbID = bbs.ids.items[id];
-        std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
-        std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
-    }
+    // for (bbs.items(), 0..) |bb, id| {
+    //     const bbID = bbs.ids.items[id];
+    //     std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
+    //     std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
+    // }
 
     utils.assert(@as(usize, @intCast(bbs.len)) == reachable.len, "mismatch in block count", .{});
     for (reachable, 0..) |r, i| {
         const stringify_label = @import("stringify_phi.zig").stringify_label;
-        std.debug.print("{s} - {any}\n", .{ stringify_label(fun, bbs.ids.items[i]), r });
+        std.debug.print("{s} - {any}\n", .{ stringify_label(fun, bbs.ids()[i]), r });
     }
-    for (reachable, 0..) |is_reachable, bbID_usize| {
-        const bbID: BBID = bbs.ids.items[bbID_usize];
+    for (reachable, bbs.ids()) |is_reachable, bbID| {
         const bb = bbs.get(bbID);
 
         if (is_reachable) {
@@ -285,16 +284,16 @@ fn remove_unreachable_blocks(alloc: Alloc, fun: *Function, reachable: []bool) !v
         // or are in a phi if so remove them from phi entries
         // bbs.remove(bbID);
     }
-    for (bbs.items(), 0..) |bb, id| {
-        const bbID = bbs.ids.items[id];
+    for (bbs.items(), bbs.ids()) |bb, bbID| {
         std.debug.print("bb {d} incomers: {any}\n", .{ bbID, bb.incomers.items });
         std.debug.print("bb {d} outgoers: {any}\n", .{ bbID, bb.outgoers });
         std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
     }
 
     var ids = try alloc.alloc(BBID, reachable.len);
-    @memcpy(ids, bbs.ids.items);
+    @memcpy(ids, bbs.ids());
 
+    std.debug.print("LEN={d}\n", .{bbs.len});
     for (reachable, ids) |is_reachable, bbID| {
         if (is_reachable) continue;
         // std.debug.print("i-{d} ids-{d} bbID-{d}\n", .{ id, bbs.ids.items[id], bbID });
@@ -304,6 +303,7 @@ fn remove_unreachable_blocks(alloc: Alloc, fun: *Function, reachable: []bool) !v
         std.debug.print("WATCH ME DELETE {d}\n", .{bbID});
         _ = bbs.remove(bbID);
     }
+    std.debug.print("LEN={d}\n", .{bbs.len});
 }
 
 fn ptr_to_last(comptime T: type, elems: []T) ?*T {
@@ -359,16 +359,18 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
             log.err("function {s} not found in IR\n", .{fun_name});
             return error.FunctionNotFound;
         };
+        std.debug.print("LEN BEFO = {d}\n", .{fun.bbs.len});
         inline for (passes) |pass| {
             switch (pass) {
                 .sccp => {
-                    try sccp(&ir, &fun);
+                    try sccp(&ir, fun);
                 },
                 else => {
                     log.warn("unknown optimization pass: {s}\n", .{@tagName(pass)});
                 },
             }
         }
+        std.debug.print("LEN AFTA = {d}\n", .{fun.bbs.len});
     }
     try save_dot_to_file(&ir, "out.dot");
     const gotIRstr = try ir.stringify(alloc);

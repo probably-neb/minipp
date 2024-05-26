@@ -261,8 +261,8 @@ pub fn stringify(ir: *const IR, alloc: Alloc, cfg: Config) ![]const u8 {
 
         // print out the basic blocks in order
         // print out phi inst then insts
-        for (fun.bbs.items(), 0..) |bb, i| {
-            const bbID = fun.bbs.ids.items[i];
+        std.debug.print("WAAATCH ME STRINGIFY DEEZ: {any}\nREMOVED={d} && LEN={d}\n", .{ fun.bbs.ids(), fun.bbs.removed, fun.bbs.len });
+        for (fun.bbs.items(), fun.bbs.ids()) |bb, bbID| {
             buf.fmt("{}:\n", .{stringify_label(fun, @truncate(bbID))}) catch unreachable;
             // print out the rest of the instructions
             for (bb.insts.items()) |instID| {

@@ -134,8 +134,8 @@ pub fn getIdent(self: *const IR, id: StrID) []const u8 {
     return self.intern_pool.get(id) catch unreachable;
 }
 
-pub fn getFun(self: *const IR, nameID: StrID) !Function {
-    for (self.funcs.items.items) |func| {
+pub fn getFun(self: *const IR, nameID: StrID) !*Function {
+    for (self.funcs.items.items) |*func| {
         if (func.name == nameID) {
             return func;
         }
@@ -1957,6 +1957,71 @@ pub const CfgFunction = struct {
     }
 };
 
+pub fn OrderedArrayList(comptime T: type) type {
+    return struct {
+        list: std.ArrayList(T),
+        len: u32,
+
+        pub const Self = @This();
+
+        pub fn init(alloc: std.mem.Allocator) Self {
+            return .{
+                .list = std.ArrayList(T).init(alloc),
+                .len = 0,
+            };
+        }
+
+        /// A helper for iterating instead of `field.list.items`
+        pub inline fn items(self: Self) []T {
+            return self.list.items[0..self.len];
+        }
+
+        // TODO: consider refactoring to return just `T`
+        // and create another `getPtr` for when you need a pointer
+        // the `.*` everywhere is kinda annoying ngl
+        pub inline fn get(self: Self, idx: u32) *T {
+            const actual = self.order.items[idx];
+            utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            return &self.list.items[actual];
+        }
+
+        /// Appends an item and returns the index
+        pub fn add(self: *Self, item: T) !u32 {
+            const id = self.len;
+            try self.list.append(item);
+            self.len += 1;
+            return id;
+        }
+
+        pub inline fn set(self: *Self, idx: u32, item: T) void {
+            self.list.items[idx] = item;
+        }
+
+        /// same as add, but does not return the index
+        /// for when you just don't care yk?
+        pub fn append(self: *Self, item: T) !void {
+            _ = try self.add(item);
+        }
+
+        // actuall remove from ids and list
+        pub fn remove(self: *Self, idx: u32) void {
+            _ = self.list.orderedRemove(idx);
+            self.len -= 1;
+        }
+
+        pub fn orderedRemove(self: *Self, idx: u32) T {
+            const val = self.list.orderedRemove(idx);
+            self.len -= 1;
+            return val;
+        }
+
+        pub fn insertSlice(self: *Self, index: usize, values: []T) !void {
+            try self.list.insertSlice(index, values);
+            self.len += @intCast(values.len);
+        }
+    };
+}
+
 pub const BasicBlock = struct {
     name: []const u8,
     incomers: std.ArrayList(Label),
@@ -2117,7 +2182,7 @@ pub const BasicBlock = struct {
     /// everthing else in the IR because the order of the basic blocks
     pub const ID = u32;
 
-    pub const List = OrderedList(Function.InstID);
+    pub const List = OrderedArrayList(Function.InstID);
 
     pub fn init(alloc: std.mem.Allocator, name: []const u8) BasicBlock {
         return .{
@@ -2316,10 +2381,141 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
     };
 }
 
+pub fn OrderedList(comptime T: type) type {
+    return struct {
+        list: std.AutoArrayHashMap(u32, T),
+        len: u32,
+        removed: u32,
+
+        pub const Self = @This();
+        pub const UNDEF = std.math.maxInt(u32);
+
+        pub fn init(alloc: std.mem.Allocator) Self {
+            return .{
+                .list = std.AutoArrayHashMap(u32, T).init(alloc),
+                .len = 0,
+                .removed = 0,
+            };
+        }
+
+        pub fn ids(self: *const Self) []u32 {
+            return self.list.keys()[0 .. self.len - self.removed];
+        }
+
+        /// A helper for iterating instead of `field.list.items`
+        pub inline fn items(self: Self) []T {
+            // return self.list.values();
+            return self.list.values()[0 .. self.len - self.removed];
+        }
+
+        // TODO: consider refactoring to return just `T`
+        // and create another `getPtr` for when you need a pointer
+        // the `.*` everywhere is kinda annoying ngl
+        pub inline fn get(self: Self, idx: u32) *T {
+            return self.list.getPtr(idx) orelse unreachable;
+            // const actual = self.order.items[idx];
+            // utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            // return &self.list.items[actual];
+        }
+
+        /// Appends an item and returns the index
+        pub fn add(self: *Self, item: T) !u32 {
+            const id: u32 = @intCast(self.list.values().len);
+            try self.list.put(id, item);
+            self.len += 1;
+            return id;
+            // const id = self.len;
+            // try self.list.append(item);
+            // try self.ids.append(id);
+            // try self.order.append(id);
+            // self.len += 1;
+            // return id;
+        }
+
+        pub inline fn set(self: *Self, idx: u32, item: T) void {
+            self.list.put(idx, item) catch unreachable;
+            // const actual = self.order.items[idx];
+            // utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            // self.list.items[actual] = item;
+        }
+
+        /// same as add, but does not return the index
+        /// for when you just don't care yk?
+        pub fn append(self: *Self, item: T) !void {
+            const id = self.list.values().len;
+            try self.list.put(id, item);
+            self.len += 1;
+            // _ = try self.add(item);
+        }
+
+        // actuall remove from ids and list
+        pub fn remove(self: *Self, id: u32) void {
+            const ok = self.list.orderedRemove(id);
+            if (ok) {
+                self.len -= 1;
+                self.*.removed += 1;
+            }
+            // const index = self.order.items[id];
+            // utils.assert(index != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{id});
+            // self.order.items[id] = Self.UNDEF;
+            // _ = self.list.orderedRemove(index);
+            // _ = self.ids.orderedRemove(index);
+            // if (id + 1 < self.order.items.len) {
+            //     for (id + 1..self.order.items.len) |i| {
+            //         if (self.order.items[i] == Self.UNDEF) {
+            //             continue;
+            //         }
+            //         self.order.items[i] -= 1;
+            //     }
+            // }
+            // self.len -= 1;
+        }
+
+        pub fn orderedRemove(self: *Self, idx: u32) T {
+            const ok = self.list.orderedRemoveAt(idx);
+            if (ok) {
+                self.len -= 1;
+                self.*.removed += 1;
+            }
+            // const val = self.list.orderedRemove(idx);
+            // _ = self.ids.orderedRemove(idx);
+            // for (self.order.items) |*i| {
+            //     if (i.* == idx) {
+            //         i.* = Self.UNDEF;
+            //         continue;
+            //     }
+            //     if (i.* > idx and i.* != Self.UNDEF) {
+            //         i.* -= 1;
+            //     }
+            // }
+            // self.len -= 1;
+            // return val;
+        }
+
+        // test "ordered-list.remove" {
+        //     const alloc = std.heap.page_allocator;
+        //     var ol = OrderedList(u32).init(alloc);
+        //     const id0 = try ol.add(0);
+        //     const id1 = try ol.add(1);
+        //     const id2 = try ol.add(2);
+        //
+        //     ol.remove(1);
+        //
+        //     const ting = std.testing;
+        //     try ting.expectEqual(ol.order.items[id0], 0);
+        //     try ting.expectEqual(ol.order.items[id1], OrderedList(u32).UNDEF);
+        //     try ting.expectEqual(ol.order.items[id2], 1);
+        //
+        //     try ting.expectEqual(ol.list.items[0], 0);
+        //     try ting.expectEqual(ol.list.items[1], 2);
+        // }
+    };
+}
+
 /// A wrapper around `std.ArrayList` to provide a way to get
 /// the index when you append, and some other helpers TBD + nicer interface
 /// (.len field, .get method etc.)
-pub fn OrderedList(comptime T: type) type {
+pub fn _OrderedList(comptime T: type) type {
     return struct {
         list: std.ArrayList(T),
         len: u32,
@@ -2340,7 +2536,8 @@ pub fn OrderedList(comptime T: type) type {
 
         /// A helper for iterating instead of `field.list.items`
         pub inline fn items(self: Self) []T {
-            return self.list.items;
+            std.debug.print("maybe dis {d} maybe dat {d}\n", .{ self.list.items.len, self.len });
+            return self.list.items[0..self.len];
         }
 
         // TODO: consider refactoring to return just `T`
