@@ -1,8 +1,10 @@
 pub const std = @import("std");
 const log = @import("../log.zig");
 const utils = @import("../utils.zig");
+const Ast = @import("../ast.zig");
 
 const IR = @import("ir_phi.zig");
+const Phi = @import("phi.zig");
 
 pub const Arm = @This();
 
@@ -751,7 +753,9 @@ pub fn gen_globals(ir: *IR, arm: *Arm) !bool {
 
 pub fn gen_functions(ir: *IR, arm: *Arm) !bool {
     for (ir.funcs.items.items) |func| {
-        _ = try gen_function(arm, ir, func);
+        try arm.program.functions.append(Function.init(&arm.program, "main", arm.program.functions.items.len));
+        var armFunc = &arm.program.functions.items[arm.program.functions.items.len - 1];
+        _ = try gen_function(arm, armFunc, ir, func);
     }
 }
 
@@ -958,4 +962,119 @@ pub fn gen_inst(arm: *Arm, ir: *IR, func: *IR.Func, armFunc: *Function, irBlock:
             return;
         },
     }
+}
+
+/////////////
+// TESTING //
+/////////////
+
+const ting = std.testing;
+const testAlloc = std.heap.page_allocator;
+
+fn testMe(input: []const u8) !IR {
+    const tokens = try @import("../lexer.zig").Lexer.tokenizeFromStr(input, testAlloc);
+    const parser = try @import("../parser.zig").Parser.parseTokens(tokens, input, testAlloc);
+    const ast = try Ast.initFromParser(parser);
+    const ir = try Phi.generate(testAlloc, &ast);
+    return ir;
+}
+
+const ExpectedInst = struct {
+    inst: IR.Inst,
+    // TODO:
+    // name: []const u8,
+};
+
+// TODO: consider making `IR.Function.withInsts(insts: []inst)` or similar
+// that takes an array of insts and creates the function with them
+// then we can compare in much more detail
+fn expectIRMatches(fun: IR.Function, expected: []const Inst) !void {
+    const got = try fun.getOrderedInsts(ting.allocator);
+    defer ting.allocator.free(got);
+    for (expected, 0..) |expectedInst, i| {
+        if (i >= got.len) {
+            // bro what was copilot thinking with this one
+            // `try ting.expectEqualStrings("expected more insts", "got fewer insts")`;
+            log.err("expected more insts. Missing:\n{any}\n", .{expected[i..]});
+            // TODO: if op == Binop check extra.op on both
+            return error.NotEnoughInstructions;
+        }
+        var gotInst = got[i];
+        // NOTE: when expanding, must make sure the `res` field on the
+        // expected insts are set as they won't be by the helper creator
+        // functions
+        ting.expectEqual(expectedInst.op, gotInst.op) catch {
+            log.err("expected op: {s}, got: {s}\n", .{ @tagName(expectedInst.op), @tagName(gotInst.op) });
+            log.err("expected insts:\n\n{any}\n", .{expected});
+            log.err("got insts:\n\n{any}\n", .{got});
+            return error.InvalidInstruction;
+        };
+    }
+}
+
+fn expectResultsInIR(input: []const u8, expected: anytype) !void {
+    // NOTE: testing on the strings is really nice except when you
+    // add or remove an instruction and then all the registers are off
+    // this can be fixed by doing the following
+    // vim command with the lines selected:
+    // ```
+    // :'<,'>s/[\( i\d*\) ]\@<!\(\d\+\)/\=submatch(1)+1/g
+    // ```
+    // replacing the `+1` after the `submatch` with `-1` if
+    // you removed an instruction
+    // after that all of the alloca registers will be wrong
+    // (actually all references to registers defined before the new/removed line)
+    // but that's probably easier to fix
+    // the `[\( i\d*\) ]\@<!` part makes it so it doesn't change
+    // numbers prefixed with `i` or ` ` i.e. number types
+    // and indices respectively
+    var arena = std.heap.ArenaAllocator.init(ting.allocator);
+    defer arena.deinit();
+    var alloc = arena.allocator();
+
+    const ir = try testMe(input);
+    const gotIRstr = try ir.stringify(alloc);
+
+    // NOTE: could use multiline strings for the
+    // expected value but, that makes it so you can't put
+    // comments inbetween the lines
+    // idk rough tradeoff
+
+    // putting all lines in newline separated buf
+    // required because as far as I can tell, writing
+    // multiline strings in zig is a pain in the
+    // metaphorical ass
+    comptime var expectedLen: usize = 1;
+    inline for (expected) |e| {
+        expectedLen += e.len + 1;
+    }
+    var expectedStr = try alloc.alloc(u8, expectedLen);
+    comptime var i: usize = 0;
+    inline for (expected) |e| {
+        const end = i + e.len;
+        @memcpy(expectedStr[i..end], e);
+        expectedStr[end] = '\n';
+        i = end + 1;
+    }
+    // the stringify outputs an extra newline at the end.
+    // this is the easier fix sue me
+    expectedStr[i] = '\n';
+
+    try ting.expectEqualStrings(expectedStr, gotIRstr);
+}
+
+fn inputToIRString(input: []const u8, alloc: std.mem.Allocator) ![]const u8 {
+    const ir = try testMe(input);
+    return try ir.stringify(alloc);
+}
+fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u8 {
+    const ir = try testMe(input);
+    return try ir.stringifyWithHeader(alloc);
+}
+
+test "arm.fibonacci" {
+    errdefer log.print();
+    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+    var str = try inputToIRStringHeader(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
 }
