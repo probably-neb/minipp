@@ -129,16 +129,26 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                 // but I can't think of a case where the result is
                 // different than just going one by one
                 // and we shouldn't get cases where one depends on another
-                var value: Value = values[res.i];
-                for (phi.entries.items) |option| {
-                    // TODO: assert not depending on phi in same bb
-                    const ref = option.ref;
-                    const optionValue = ref_value(ir, ref, values);
-                    value = meet(value, optionValue);
-                }
+                const phi_entries = phi.entries.items;
+                const value = if (phi_entries.len == 1) single: {
+                    break :single ref_value(ir, phi_entries[0].ref, values);
+                } else if (phi_entries.len == 0) none: {
+                    // FIXME: is this logically sound?
+                    break :none Value.undef();
+                } else len_gt_1: {
+                    var value: Value = ref_value(ir, phi_entries[0].ref, values);
+                    for (phi_entries[1..]) |option| {
+                        // TODO: assert not depending on phi in same bb
+                        const ref = option.ref;
+                        const optionValue = ref_value(ir, ref, values);
+                        value = meet(value, optionValue);
+                    }
+                    break :len_gt_1 value;
+                };
                 utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
                 const reg = regs.get(res.i);
                 values[reg.id] = value;
+                dbg_new_val(ir, fun, reg, value);
                 try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
             }
 
@@ -158,7 +168,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     }
                     if (on.state == .unknown or on.is_bool(false)) {
                         if (!reachable[ifelse]) {
-                            try bbWL.append(ifthen);
+                            try bbWL.append(ifelse);
                         }
                     }
                     continue;
@@ -177,6 +187,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
                     const reg = regs.get(res.i);
                     values[reg.id] = inst_value;
+                    dbg_new_val(ir, fun, reg, inst_value);
                     try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
                 }
             }
@@ -223,14 +234,32 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
             utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
             const reg = regs.get(res.i);
             values[reg.id] = new_res_val;
+            // dbg_new_val(ir, fun, reg, new_res_val);
+
             try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
         }
+    }
+
+    if (fun.returnType == .void and !reachable[fun.exitBBID]) {
+        reachable[fun.exitBBID] = true;
     }
 
     return .{
         .values = values,
         .reachable = reachable,
     };
+}
+
+fn dbg_new_val(ir: *const IR, fun: *const Function, reg: Reg, val: Value) void {
+    std.debug.print("{s} <- [{?any}]\n", .{
+        std.mem.trim(u8, @import("stringify_phi.zig").stringify_inst_to_str(
+            reg.inst,
+            ir,
+            fun,
+            fun.bbs.get(reg.bb).*,
+        ) catch unreachable, "\n"),
+        val.constant,
+    });
 }
 
 inline fn has_res(op: OpCode) bool {
@@ -256,7 +285,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
                 if (rhs.constant) |rhs_val| {
                     // both are constants
                     const l = lhs_val.value;
-                    const r = lhs_val.value;
+                    const r = rhs_val.value;
                     const res = switch (op) {
                         .Mul => l * r,
                         .Add => l + r,
@@ -268,6 +297,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
                             utils.todo("Mistew Beawd... how do i evawuwate a divison by zewo...", .{});
                         },
                     };
+                    std.debug.print("======= EVAL =======\n{d} {s} {d} = {d}\n", .{ l, @tagName(op), r, res });
                     utils.assert(
                         lhs_val.kind == rhs_val.kind,
                         "lhs_val.kind == rhs_val.kind\n {s} != {s}\n",
@@ -403,7 +433,7 @@ fn meet(a: Value, b: Value) Value {
 }
 
 fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
-    return switch (ref.kind) {
+    const res = switch (ref.kind) {
         .local => values[ref.i],
         .immediate => switch (ref.type) {
             .bool => Value.const_bool(ref.i == IMMEDIATE_TRUE),
@@ -415,6 +445,12 @@ fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
         .global, .param => Value.unknown(),
         ._invalid, .label => unreachable,
     };
+    if (ref.kind == .immediate) {
+        std.debug.print("REF IMM {s} {any} {?any}\n", .{ ir.getIdent(ref.i), ref, res.constant });
+    } else if (ref.kind == .immediate_u32) {
+        std.debug.print("REF IMM U32 {s} {any} {?any}\n", .{ ir.getIdent(ref.i), ref, res.constant });
+    }
+    return res;
 }
 
 pub const Value = struct {
@@ -493,15 +529,15 @@ fn add_reachable_uses_of(fun: *const Function, reg: Register, ssaWL: *ArrayList(
 /// The inner function of reachable_uses_of
 /// Pushes all uses
 fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: BBID, ssaWL: *ArrayList(SSAEdge), reachable: []const bool) !void {
-    std.debug.print("WATCH ME SCCP DEEZ BBS {d}\n", .{bbID});
+    // std.debug.print("WATCH ME SCCP DEEZ BBS {d}\n", .{bbID});
     const bb = fun.bbs.get(bbID);
     const insts = &fun.insts;
     var instructionIDs = bb.insts.items();
-    std.debug.print("INSTS={any}\nITEMS={any}\n", .{ bb.insts.list.items, bb.insts.items() });
-    for (instructionIDs) |instID| {
-        std.debug.print("INST={any}\n", .{insts.get(instID).*});
-    }
-    std.debug.print("RET?={any}\n", .{insts.get(10)});
+    // std.debug.print("INSTS={any}\nITEMS={any}\n", .{ bb.insts.list.items, bb.insts.items() });
+    // for (instructionIDs) |instID| {
+    //     std.debug.print("INST={any}\n", .{insts.get(instID).*});
+    // }
+    // std.debug.print("RET?={any}\n", .{insts.get(10)});
     var inst: Inst = undefined;
 
     if (reg.bb == bbID) {
@@ -525,7 +561,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
     // if we are checking it
     utils.assert(reachable[bbID], "reachable_uses_of_reg_from_bb expects the bb it is checking to be reachable\n", .{});
 
-    std.debug.print("WATCH ME SCCP DEEZ {any}\n", .{instructionIDs});
+    // std.debug.print("WATCH ME SCCP DEEZ {any}\n", .{instructionIDs});
     instLoop: for (instructionIDs) |instID| {
         inst = insts.get(instID).*;
         if (!inst_uses_reg(inst, reg)) {
@@ -695,13 +731,14 @@ test "sccp.removes-never-taken-if" {
     errdefer log.print();
 
     try expectResultsInIR(
-        \\fun main() void {
+        \\fun main() int {
         \\  int a;
         \\  if (false) {
         \\    a = 1;
         \\  } else {
         \\    a = 2;
         \\  }
+        \\  return a;
         \\}
     , .{
         "define void @main() {",
