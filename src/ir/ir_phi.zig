@@ -2319,26 +2319,13 @@ pub fn OrderedList(comptime T: type) type {
     return struct {
         list: std.ArrayList(T),
         len: u32,
-
-        // TODO: the initial idea for this was to have an `order`
-        // array that just keeps the indexes of the items in `list`
-        // in order and can be updated however.
-        // so far I have not encountered a time I couldn't just make
-        // the basic blocks in order, and the instructions order is
-        // maintained by keeping the list of instructions
-        // added to the `insts` field in the basic block in order
-        // We might still need it though, I just haven't seen the reason
-        // to add the additional complexity it would introduce/
-        // refactors it would possibly require
-        // the field would look like:
-        // order: std.ArrayList(u32),
-        // and we'd just add some helper functions to ensure something
-        // comes after something else, do manipulations, etc.
+        order: std.ArrayList(u32),
 
         pub const Self = @This();
+        pub const UNDEF = std.math.maxInt(u32);
 
         pub fn init(alloc: std.mem.Allocator) Self {
-            return .{ .list = std.ArrayList(T).init(alloc), .len = 0 };
+            return .{ .list = std.ArrayList(T).init(alloc), .order = std.ArrayList(u32).init(alloc), .len = 0 };
         }
 
         /// A helper for iterating instead of `field.list.items`
@@ -2350,19 +2337,24 @@ pub fn OrderedList(comptime T: type) type {
         // and create another `getPtr` for when you need a pointer
         // the `.*` everywhere is kinda annoying ngl
         pub inline fn get(self: Self, idx: u32) *T {
-            return &self.list.items[idx];
+            const actual = self.order.items[idx];
+            utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            return &self.list.items[actual];
         }
 
         /// Appends an item and returns the index
         pub fn add(self: *Self, item: T) !u32 {
             const id = self.len;
             try self.list.append(item);
+            try self.order.append(id);
             self.len += 1;
             return id;
         }
 
         pub inline fn set(self: *Self, idx: u32, item: T) void {
-            self.list.items[idx] = item;
+            const actual = self.order.items[idx];
+            utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            self.list.items[actual] = item;
         }
 
         /// same as add, but does not return the index
@@ -2371,9 +2363,31 @@ pub fn OrderedList(comptime T: type) type {
             _ = try self.add(item);
         }
 
-        pub fn orderedRemove(self: *Self, idx: u32) T {
+        pub fn remove(self: *Self, idx: u32) void {
+            const actual = self.order.items[idx];
+            utils.assert(actual != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{idx});
+            self.order.items[idx] = Self.UNDEF;
+            _ = self.list.orderedRemove(actual);
+            if (actual + 1 < self.len) {
+                for (self.order.items[idx + 1 ..]) |*i| {
+                    i.* -= 1;
+                }
+            }
             self.len -= 1;
-            return self.list.orderedRemove(idx);
+        }
+
+        pub fn orderedRemove(self: *Self, idx: u32) T {
+            const actual = self.order.items[idx];
+            utils.assert(actual != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{idx});
+            self.order.items[idx] = Self.UNDEF;
+            const val = self.list.orderedRemove(actual);
+            if (actual + 1 < self.len) {
+                for (self.order.items[idx + 1 ..]) |*i| {
+                    i.* -= 1;
+                }
+            }
+            self.len -= 1;
+            return val;
         }
     };
 }
