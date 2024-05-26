@@ -2323,13 +2323,19 @@ pub fn OrderedList(comptime T: type) type {
     return struct {
         list: std.ArrayList(T),
         len: u32,
+        ids: std.ArrayList(u32),
         order: std.ArrayList(u32),
 
         pub const Self = @This();
         pub const UNDEF = std.math.maxInt(u32);
 
         pub fn init(alloc: std.mem.Allocator) Self {
-            return .{ .list = std.ArrayList(T).init(alloc), .order = std.ArrayList(u32).init(alloc), .len = 0 };
+            return .{
+                .list = std.ArrayList(T).init(alloc),
+                .order = std.ArrayList(u32).init(alloc),
+                .ids = std.ArrayList(u32).init(alloc),
+                .len = 0,
+            };
         }
 
         /// A helper for iterating instead of `field.list.items`
@@ -2350,6 +2356,7 @@ pub fn OrderedList(comptime T: type) type {
         pub fn add(self: *Self, item: T) !u32 {
             const id = self.len;
             try self.list.append(item);
+            try self.ids.append(id);
             try self.order.append(id);
             self.len += 1;
             return id;
@@ -2367,13 +2374,14 @@ pub fn OrderedList(comptime T: type) type {
             _ = try self.add(item);
         }
 
-        pub fn remove(self: *Self, idx: u32) void {
-            const actual = self.order.items[idx];
-            utils.assert(actual != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{idx});
-            self.order.items[idx] = Self.UNDEF;
-            _ = self.list.orderedRemove(actual);
-            if (actual + 1 < self.len) {
-                for (self.order.items[idx + 1 ..]) |*i| {
+        pub fn remove(self: *Self, id: u32) void {
+            const index = self.order.items[id];
+            utils.assert(index != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{id});
+            self.order.items[id] = Self.UNDEF;
+            _ = self.list.orderedRemove(index);
+            _ = self.ids.orderedRemove(index);
+            if (index + 1 < self.len) {
+                for (self.order.items[index + 1 ..]) |*i| {
                     i.* -= 1;
                 }
             }
@@ -2382,6 +2390,7 @@ pub fn OrderedList(comptime T: type) type {
 
         pub fn orderedRemove(self: *Self, idx: u32) T {
             const val = self.list.orderedRemove(idx);
+            _ = self.ids.orderedRemove(idx);
             for (self.order.items) |*i| {
                 if (i.* == idx) {
                     i.* = Self.UNDEF;
