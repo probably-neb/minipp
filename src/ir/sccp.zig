@@ -240,9 +240,9 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
         }
     }
 
-    if (fun.returnType == .void and !reachable[fun.exitBBID]) {
-        reachable[fun.exitBBID] = true;
-    }
+    // never remove entry and exit
+    reachable[fun.exitBBID] = true;
+    reachable[Function.entryBBID] = true;
 
     return .{
         .values = values,
