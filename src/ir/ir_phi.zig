@@ -2298,6 +2298,10 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
             return self.items.items[key];
         }
 
+        pub fn getPtr(self: Self, key: ID) *Value {
+            return &self.items.items[key];
+        }
+
         pub fn set(self: *Self, key: ID, value: Value) void {
             self.items.items[key] = value;
         }
@@ -2996,16 +3000,14 @@ pub const Inst = struct {
         }
 
         pub fn toInst(inst: Binop) Inst {
-            // NOTE: written by copilot - must be double checked
-            switch (inst.op) {
-                .Add => return Inst.add(inst.register, inst.lhs, inst.rhs),
-                .Mul => return Inst.mul(inst.register, inst.lhs, inst.rhs),
-                .Div => return Inst.div(inst.register, inst.lhs, inst.rhs),
-                .Sub => return Inst.sub(inst.register, inst.lhs, inst.rhs),
-                .And => return Inst.and_(inst.register, inst.lhs, inst.rhs),
-                .Or => return Inst.or_(inst.register, inst.lhs, inst.rhs),
-                .Xor => return Inst.xor(inst.register, inst.lhs, inst.rhs),
-            }
+            return Inst{
+                .op = .Binop,
+                .res = inst.register,
+                .ty1 = inst.returnType,
+                .op1 = inst.lhs,
+                .op2 = inst.rhs,
+                .extra = .{ .op = inst.op },
+            };
         }
     };
 
@@ -3068,7 +3070,7 @@ pub const Inst = struct {
         }
 
         pub inline fn toInst(inst: Cmp) Inst {
-            return Inst.cmp(inst.res, inst.cond, inst.lhs, inst.rhs);
+            return Inst.cmp(inst.cond, inst.lhs, inst.rhs);
         }
     };
     // Comparison and Branching
@@ -3136,7 +3138,12 @@ pub const Inst = struct {
             };
         }
         pub inline fn toInst(inst: Load) Inst {
-            return Inst.load(inst.res, inst.ty, inst.ptr);
+            return Inst{
+                .op = .Load,
+                .res = inst.res,
+                .ty1 = inst.ty,
+                .op1 = inst.ptr,
+            };
         }
     };
     // Loads & Stores
@@ -3144,7 +3151,11 @@ pub const Inst = struct {
     /// newer:
     /// `<result> = load <ty>, <ty>* <pointer>`
     pub inline fn load(ty: Type, ptr: Ref) Inst {
-        return .{ .op = .Load, .ty1 = ty, .op1 = ptr };
+        return .{
+            .op = .Load,
+            .ty1 = ty,
+            .op1 = ptr,
+        };
     }
 
     pub const Store = struct {
@@ -3162,13 +3173,25 @@ pub const Inst = struct {
         }
 
         pub inline fn toInst(inst: Store) Inst {
-            return Inst.store(inst.ty, inst.to, inst.fromType, inst.from);
+            return Inst{
+                .op = .Store,
+                .ty1 = inst.ty,
+                .op1 = inst.to,
+                .ty2 = inst.fromType,
+                .op2 = inst.from,
+            };
         }
     };
     /// `store {from.type} {from}, {to.type}* {to}`
     // TODO: remove type params and take them from ref
     pub inline fn store(to: Ref, from: Ref) Inst {
-        return .{ .op = .Store, .ty1 = to.type, .op1 = to, .ty2 = from.type.orelseIfNull(to.type), .op2 = from };
+        return .{
+            .op = .Store,
+            .ty1 = to.type,
+            .op1 = to,
+            .ty2 = from.type.orelseIfNull(to.type),
+            .op2 = from,
+        };
     }
 
     pub const Gep = struct {
@@ -3188,7 +3211,14 @@ pub const Inst = struct {
         }
 
         pub inline fn toInst(inst: Gep) Inst {
-            return Inst.gep(inst.res, inst.baseTy, inst.ptrTy, inst.ptrVal, inst.index);
+            return Inst{
+                .op = .Gep,
+                .res = inst.res,
+                .ty1 = inst.baseTy,
+                .ty2 = inst.ptrTy,
+                .op1 = inst.ptrVal,
+                .op2 = inst.index,
+            };
         }
     };
     /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
@@ -3300,12 +3330,18 @@ pub const Inst = struct {
             };
         }
         pub inline fn toInst(inst: Misc) Inst {
-            switch (inst.kind) {
-                .bitcast => Inst.bitcast(inst.from, inst.toType),
-                .trunc => Inst.trunc(inst.from, inst.toType),
-                .zext => Inst.zext(inst.from, inst.toType),
-                .sext => Inst.zext(inst.from, inst.toType),
-            }
+            return Inst{
+                .op = switch (inst.kind) {
+                    .bitcast => .Bitcast,
+                    .trunc => .Trunc,
+                    .zext => .Zext,
+                    .sext => .Sext,
+                },
+                .res = inst.res,
+                .ty1 = inst.fromType,
+                .ty2 = inst.toType,
+                .op1 = inst.from,
+            };
         }
     };
     // Miscellaneous
@@ -3339,7 +3375,12 @@ pub const Inst = struct {
             };
         }
         pub inline fn toInst(inst: Phi) Inst {
-            return Inst.phi(inst.res, inst.type, inst.entries);
+            return Inst{
+                .op = .Phi,
+                .res = inst.res,
+                .ty1 = inst.type,
+                .extra = .{ .phi = inst.entries },
+            };
         }
     };
     /// `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`
