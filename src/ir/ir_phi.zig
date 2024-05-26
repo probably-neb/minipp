@@ -2407,6 +2407,21 @@ pub fn OrderedList(comptime T: type) type {
             self.len -= 1;
             return val;
         }
+
+        test "remove" {
+            const alloc = std.heap.page_allocator;
+            var ol = OrderedList(u32).init(alloc);
+            const id0 = ol.add(0);
+            const id1 = ol.add(1);
+            const id2 = ol.add(2);
+
+            ol.remove(1);
+
+            const ting = std.testing;
+            try ting.expectEqual(ol.order.items[id0], 0);
+            try ting.expectEqual(ol.order.items[id1], OrderedList.UNDEF);
+            try ting.expectEqual(ol.order.items[id2], 1);
+        }
     };
 }
 
