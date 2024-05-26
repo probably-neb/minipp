@@ -2399,20 +2399,22 @@ pub fn OrderedList(comptime T: type) type {
         }
 
         pub fn ids(self: *const Self) []u32 {
-            return self.list.keys()[0 .. self.len - self.removed];
+            return self.list.keys();
         }
 
         /// A helper for iterating instead of `field.list.items`
         pub inline fn items(self: Self) []T {
             // return self.list.values();
-            return self.list.values()[0 .. self.len - self.removed];
+            return self.list.values();
         }
 
         // TODO: consider refactoring to return just `T`
         // and create another `getPtr` for when you need a pointer
         // the `.*` everywhere is kinda annoying ngl
         pub inline fn get(self: Self, idx: u32) *T {
-            return self.list.getPtr(idx) orelse unreachable;
+            return self.list.getPtr(idx) orelse {
+                utils.impossible("tried to access removed element in ordered list {d}\n", .{idx});
+            };
             // const actual = self.order.items[idx];
             // utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
             // return &self.list.items[actual];
