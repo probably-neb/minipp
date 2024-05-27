@@ -20,6 +20,8 @@ const OpCode = IR.Op;
 
 const SCCP = @import("./sccp.zig");
 
+const stringify_label = @import("stringify_phi.zig").stringify_label;
+
 pub fn optimize_program(ir: *IR) !void {
     const funcs = ir.funcs.items.items;
     for (funcs) |*func| {
@@ -254,17 +256,15 @@ fn refers_to_reg(ref: Ref, reg: Reg) bool {
 fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reachable: []bool) !void {
     const bbs = &fun.bbs;
     const insts = &fun.insts;
-    _ = insts;
 
     // for (bbs.items(), bbs.ids()) |bb, bbID| {
     //     std.debug.print("BEFOR bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
     //     std.debug.print("BEFOR bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
     // }
-    save_dot_to_file(ir, "pre_remove_unreachable.dot") catch {};
+    save_dot_to_file(ir, "pre_remove_edges.dot") catch {};
 
     utils.assert(@as(usize, @intCast(bbs.len)) == reachable.len, "mismatch in block count", .{});
     for (reachable, 0..) |r, i| {
-        const stringify_label = @import("stringify_phi.zig").stringify_label;
         const bbID = bbs.ids()[i];
         std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), r });
     }
@@ -278,12 +278,13 @@ fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reacha
         bb.incomers.clearAndFree();
         bb.*.outgoers = [_]?BBID{ null, null };
     }
-    save_dot_to_file(ir, "post_remove_unreachable.dot") catch {};
-    // for (bbs.items(), bbs.ids()) |bb, bbID| {
-    //     std.debug.print("AFTER bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
-    //     std.debug.print("AFTER bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
-    //     std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
-    // }
+    for (bbs.items(), bbs.ids()) |bb, bbID| {
+        std.debug.print("AFTER bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
+        std.debug.print("AFTER bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
+        std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
+    }
+
+    save_dot_to_file(ir, "post_remove_edges.dot") catch {};
 
     var ids = try alloc.alloc(BBID, reachable.len);
     @memcpy(ids, bbs.ids());
@@ -297,10 +298,11 @@ fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reacha
 
         // if (id == 5) bbs.remove(bbID);
         // std.debug.print("WATCH ME DELETE {d}\n", .{bbID});
-        const stringify_label = @import("stringify_phi.zig").stringify_label;
         std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), is_reachable });
         _ = bbs.remove(bbID);
     }
+
+    save_dot_to_file(ir, "post_remove_unreachable.dot") catch {};
 }
 
 fn remove_block_edges(fun: *Function, bbID: BBID) !void {
@@ -308,6 +310,8 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
     const insts = &fun.insts;
 
     const bb = bbs.get(bbID);
+    // brute_force_remove_block_edges(fun, bbID);
+    // brute_force_remove_phi_entires_referencing_dead_bb(fun, bbID);
 
     if (bb_num_outgoers(bb) == 2) {
         std.debug.print("removing bb {s} with 2 outgoers {any} and these incomers {any}\n", .{ bb.name, bb.outgoers, bb.incomers.items });
@@ -322,11 +326,13 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
             std.debug.print("self ref detected at 1 ={?d} in {s}\n", .{ bb.outgoers[1], bb.name });
             self_ref = bb.outgoers[1].?;
         } else {
-            utils.impossible("FUCK - have to handle case where bb has 2 outgoers and neither are self ref\n", .{});
+            utils.impossible("FUCK - have to handle case where bb [{d}] {s} has 2 outgoers and neither are self ref\n", .{ bbID, stringify_label(fun, bbID) });
+            return;
         }
+        // brute_force_remove_block_edges(fun, bbID);
+        // brute_force_remove_phi_entires_referencing_dead_bb(fun, bbID);
         utils.assert(bb.incomers.items.len == 1, "FUCK - HOW TO HANDLE bb {s} with 2 outgoers and not 1 incomer\n", .{bb.name});
         const incomer = bb.incomers.items[0];
-        // for (bb.incomers.items) |incomer| {
         var incomerBB = bbs.get(incomer);
         var incomerBRID = (ptr_to_last(InstID, incomerBB.insts.list.items) orelse unreachable).*;
         var incomerBR = insts.get(incomerBRID);
@@ -335,18 +341,29 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
             var outgoerBB = bbs.get(outgoer);
             std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
 
-            _ = replace_branches_to_with(incomerBR, bbID, outgoer);
             if (outgoer == self_ref) {
+                // self_ref could be self (bbID) or some other bb ID that
+                // eventually loops around
+
+                // remove phis just in case self_ref != self
                 try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
-                remove_bb_from_incomers(bb, bbID);
-                remove_bb_from_outgoers(bb, bbID);
+                // remove bb from incomers of outgoer (could be self)
+                remove_bb_from_incomers(outgoerBB, bbID);
+                // remove bb from outgoers of incomer (could be self)
+                remove_bb_from_outgoers(incomerBB, bbID);
+                remove_bb_from_outgoers(bb, self_ref);
+                const selfBRID = (ptr_to_last(InstID, bb.insts.list.items) orelse unreachable).*;
+                var selfBR = insts.get(selfBRID);
+                _ = replace_branches_to_with(selfBR, self_ref, bbID);
             } else {
+                _ = replace_branches_to_with(incomerBR, bbID, outgoer);
                 replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
                 replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
+                remove_bb_from_outgoers(incomerBB, bbID);
+                remove_bb_from_outgoers(outgoerBB, bbID);
                 try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
             }
         }
-        // }
         return;
     }
     if (bb.incomers.items.len > 0) {
@@ -420,7 +437,6 @@ fn remove_phi_entires_in_children_of_dead_bb_inner(fun: *Function, bb: *BasicBlo
         if (maybe_outgoerID == null) continue;
         const outgoerID = maybe_outgoerID.?;
         if (!bbs.list.contains(outgoerID)) {
-            const stringify_label = @import("stringify_phi.zig").stringify_label;
             log.warn("outgoer {d} not found in bbs but in {s} outgoers\n", .{ outgoerID, stringify_label(fun, bbID) });
             bb.*.outgoers[outgoer_index] = null;
             continue;
@@ -437,7 +453,6 @@ fn remove_phi_entires_in_children_of_dead_bb_inner(fun: *Function, bb: *BasicBlo
             while (i < entries.items.len) {
                 const entry = entries.items[i];
                 if (entry.bb == bbID) {
-                    const stringify_label = @import("stringify_phi.zig").stringify_label;
                     std.debug.print("[{d}] {s} removing entry referencing {s}\n", .{
                         outgoerID,
                         stringify_label(fun, outgoerID),
@@ -456,6 +471,55 @@ fn remove_phi_entires_in_children_of_dead_bb_inner(fun: *Function, bb: *BasicBlo
             remove_phi_entires_in_children_of_dead_bb_inner(fun, outgoer, bbID, visited);
         }
     }
+}
+
+fn brute_force_remove_block_edges(fun: *Function, badBBID: BBID) void {
+    const bbs = &fun.bbs;
+    const insts = &fun.insts;
+    _ = insts;
+
+    for (bbs.ids()) |bbID| {
+        const bb = bbs.get(bbID);
+        std.debug.print("removing {d} from incomers of {s} {any}\n", .{ badBBID, bb.name, bb.incomers.items });
+        remove_bb_from_incomers(bb, badBBID);
+        remove_bb_from_outgoers(bb, badBBID);
+    }
+}
+
+fn brute_force_remove_phi_entires_referencing_dead_bb(fun: *Function, badBBID: BBID) void {
+    const bbs = &fun.bbs;
+    const insts = &fun.insts;
+
+    for (bbs.items(), bbs.ids()) |*bb, bbID| {
+        for (bb.insts.items()) |instID| {
+            const inst = insts.get(instID);
+            if (inst.op != .Phi) {
+                continue;
+            }
+            var phi = Inst.Phi.get(inst.*);
+            const entries = &phi.entries;
+            var i: usize = 0;
+            while (i < entries.items.len) {
+                const entry = entries.items[i];
+                if (entry.bb == badBBID) {
+                    std.debug.print("[{d}] {s} brute force removing entry referencing {s}\n", .{
+                        bbID,
+                        stringify_label(fun, bbID),
+                        stringify_label(fun, badBBID),
+                    });
+                    _ = entries.orderedRemove(i);
+                } else {
+                    i += 1;
+                }
+            }
+            inst.* = phi.toInst();
+        }
+    }
+    // std.debug.print("removed phis from [{d}] {s}\n", .{ outgoerID, outgoer.name });
+    // if (!visited[outgoerID]) {
+    //     visited[outgoerID] = true;
+    //     remove_phi_entires_in_children_of_dead_bb_inner(fun, outgoer, bbID, visited);
+    // }
 }
 
 fn replace_bb_in_outgoers_with(bb: *BasicBlock, from: BBID, to: BBID) void {
@@ -496,6 +560,9 @@ fn replace_branches_to_with(inst: *Inst, from: BBID, to: BBID) bool {
 }
 
 fn is_self_ref(fun: *const Function, selfBBID: BBID, outgoerBBID: BBID) bool {
+    if (outgoerBBID == selfBBID) {
+        return true;
+    }
     const outgoerBB = fun.bbs.get(outgoerBBID);
     for (outgoerBB.outgoers) |maybe_outgoerID| {
         if (maybe_outgoerID == null) continue;
@@ -522,7 +589,6 @@ fn empty_block_removal_pass(fun: *Function) !void {
     var idsToRemove = std.ArrayList(BBID).init(fun.alloc);
     defer idsToRemove.deinit();
 
-    const stringify_label = @import("stringify_phi.zig").stringify_label;
     for (bbs.ids()) |bbID| {
         const bb = bbs.get(bbID);
 
@@ -713,6 +779,6 @@ test "sccp.removes-nested-never-ran-while" {
         "  ret i64 2",
         "}",
     }, .{
-        .{ "main", .{.sccp} },
+        .{ "main", .{ .sccp, .empty_bb } },
     });
 }

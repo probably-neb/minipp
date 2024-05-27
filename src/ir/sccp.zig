@@ -738,66 +738,81 @@ fn sccp_all_funs(ir: *const IR) !void {
 //     try sccp_all_funs(&ir);
 // }
 
-// test "sccp.removes-never-taken-if" {
-//     log.empty();
-//     errdefer log.print();
-//
-//     try expectResultsInIR(
-//         \\fun main() int {
-//         \\  int a;
-//         \\  if (false) {
-//         \\    a = 1;
-//         \\  } else {
-//         \\    a = 2;
-//         \\  }
-//         \\  return a;
-//         \\}
-//     , .{
-//         "define i64 @main() {",
-//         "entry:",
-//         "  br label %body0",
-//         "body0:",
-//         "  br label %if.cond1",
-//         "if.cond1:",
-//         "  br label %else.body4",
-//         "else.body4:",
-//         "  br label %else.exit5",
-//         "else.exit5:",
-//         "  br label %if.exit6",
-//         "if.exit6:",
-//         "  br label %exit",
-//         "exit:",
-//         "  ret i64 2",
-//         "}",
-//     }, .{
-//         .{ "main", .{.sccp} },
-//     });
-// }
+test "sccp.removes-never-taken-if" {
+    log.empty();
+    errdefer log.print();
 
-// test "sccp.removes-nested-never-ran-while" {
-//     std.debug.print("============================= START ==========================\n", .{});
-//     log.empty();
-//     errdefer log.print();
-//     try expectResultsInIR(
-//         \\fun main() int {
-//         \\  int a;
-//         \\  if (true) {
-//         \\    a = 1;
-//         \\    while (false) {
-//         \\      a = 2;
-//         \\      a = 3;
-//         \\    }
-//         \\  }
-//         \\  return a;
-//         \\}
-//     , .{
-//         "define i64 @main() {",
-//         "entry:",
-//         "  br label %exit",
-//         "exit:",
-//         "  ret i64 1",
-//         "}",
-//     }, .{
-//         .{ "main", .{.sccp} },
-//     });
-// }
+    try expectResultsInIR(
+        \\fun main() int {
+        \\  int a;
+        \\  if (false) {
+        \\    a = 1;
+        \\  } else {
+        \\    a = 2;
+        \\  }
+        \\  return a;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  br label %body0",
+        "body0:",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  br label %else.body4",
+        "else.body4:",
+        "  br label %else.exit5",
+        "else.exit5:",
+        "  br label %if.exit6",
+        "if.exit6:",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 2",
+        "}",
+    }, .{
+        .{ "main", .{.sccp} },
+    });
+}
+
+test "sccp.removes-nested-never-ran-while" {
+    std.debug.print("============================= START ==========================\n", .{});
+    log.empty();
+    errdefer log.print();
+    try expectResultsInIR(
+        \\fun main() int {
+        \\  int a;
+        \\  a = 4;
+        \\  if (true) {
+        \\    a = 1;
+        \\    while (false) {
+        \\      a = 2;
+        \\      a = 3;
+        \\    }
+        \\  }
+        \\  return a;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  br label %body0",
+        "body0:",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  br label %then.body2",
+        "then.body2:",
+        "  br label %while.cond13",
+        "while.cond13:",
+        "  br label %while.exit7",
+        "while.exit7:",
+        "  br label %then.exit8",
+        "then.exit8:",
+        "  br label %if.exit9",
+        "if.exit9:",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 1",
+        "}",
+    }, .{
+        .{ "main", .{.sccp} },
+    });
+}
