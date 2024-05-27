@@ -742,16 +742,18 @@ pub const Program = struct {
                 return Operand.asOpReg(reg);
             },
             .global => {
-                unreachable;
+                var reg = Reg{ .id = self.regs.items.len, .name = ref.name, .inst = instID, .irID = ref.i };
+                try self.addReg(reg);
+                return Operand.asOpReg(reg);
             },
             .immediate, .immediate_u32 => {
                 return Operand.asOpImm(ref.i);
             },
             else => {
-                unreachable;
+                std.debug.panic("The ref {any} was not expected in the program", .{ref});
             },
         }
-        unreachable;
+        std.debug.panic("The ref {any} was not expected in the program", .{ref});
     }
 };
 
@@ -1019,34 +1021,103 @@ pub fn gen_inst(
             // the name of the function is the fun name
             var funName = callIR.fun.name;
             var funF = armFunc;
-            // find the function in the program that has the same name
-            var funID: Function.ID = 0;
-            var found: bool = false;
-            for (arm.program.functions.items) |*fun| {
-                if (fun.name == funName) {
-                    funID = fun.id;
-                    funF = fun;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                std.debug.print("The function {s} was not found in the program", .{ir.getIdent(funName)});
-                return false;
-            }
-            // create a mov inst for each param
-            for (callIR.args, 0..) |irArg, idx| {
-                std.debug.print("The len args {d}\n", .{callIR.args.len});
-                std.debug.print("armFunc.params.items.len {d}\n", .{funF.params.items.len});
-                var armReg = funF.params.items[idx];
-                var arg = try arm.program.getOpfromIR(irArg, arm.program.insts.items.len);
-                var movInst = Inst.mov(armReg, arg, arm.program.insts.items.len);
-                try armFunc.addInst(movInst, armBlock);
-            }
+            if(funName == ir.internIdent("printf")) {
+                // adrp x0, .L.str.1
+                // add x0, x0, :lo12:.L.str.1
+                // mov w1, #70
+                // bl printf
+                //
+                //   .type .L.str,@object // @.str
+                //   .section .rodata.str1.1,"aMS",@progbits,1
+                // .L.str:
+                //   .asciz "%ld\n"
+                //   .size .L.str, 5
 
-            // create the bl inst
-            var blInst = Inst.bl(funName, arm.program.insts.items.len);
-            try armFunc.addInst(blInst, armBlock);
+                //   .type .L.str.1,@object // @.str.1
+                // .L.str.1:
+                //   .asciz "%lx"
+                //   .size .L.str.1, 4
+            } else if (funName == ir.internIdent("scanf")) {
+              // sp + #8 is the location of the argument being passed into scanf
+              // adrp x0, .L.str.1
+              // add x0, x0, :lo12:.L.str.1
+              // add x1, sp, #8 // =8
+              // bl __isoc99_scanf
+            } else if (funName == ir.internIdent("malloc")) {
+             // mov w0, #20
+             //  bl malloc
+             //  mov x19, x0
+              // result is in w0 / x0
+            } else if (funName == ir.internIdent("free")) {
+                // bl free
+                // depends on the value in w0 / x0 being the pointer that we want to free
+
+            } else {
+            
+
+                // find the function in the program that has the same name
+                var funID: Function.ID = 0;
+                var found: bool = false;
+                for (arm.program.functions.items) |*fun| {
+                    if (fun.name == funName) {
+                        funID = fun.id;
+                        funF = fun;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    std.debug.print("The function {s} was not found in the program", .{ir.getIdent(funName)});
+                    return false;
+                }
+                // create a mov inst for each param
+                for (callIR.args, 0..) |irArg, idx| {
+                    std.debug.print("The len args {d}\n", .{callIR.args.len});
+                    std.debug.print("armFunc.params.items.len {d}\n", .{funF.params.items.len});
+                    var armReg = funF.params.items[idx];
+                    var arg = try arm.program.getOpfromIR(irArg, arm.program.insts.items.len);
+                    var movInst = Inst.mov(armReg, arg, arm.program.insts.items.len);
+                    try armFunc.addInst(movInst, armBlock);
+                }
+
+                // create the bl inst
+                var blInst = Inst.bl(funName, arm.program.insts.items.len);
+                try armFunc.addInst(blInst, armBlock);
+            }
+        },
+        .Gep => {
+            // this is going to be the big kahuna
+            const gepIR = IR.Inst.Gep.get(irInst);
+            var getPtrVal = try arm.program.getOpfromIR(gepIR.ptrVal, null);
+            if(getPtrVal.reg.name == ir.internIdent(".println"){
+
+            } else if(getPtrVal.reg.name == ir.internIdent(".printl"){
+
+            } else if(getPtrVal.reg.name == ir.internIdent(".read"){
+
+            } else if(getPtrVal.reg.name == ir.internIdent(".read_scratch"){
+
+            } else {
+
+            }
+            var gepIdx = try arm.program.getOpfromIR(gepIR.index, null);
+            // mul gepIDX by the size of the type (8)
+            var imm = ir.internIdent("8");
+            var immOpt = Operand.asOpImm(imm);
+            try armFunc.ensureBothReg(ir, armBlock, &immOpt, &gepIdx);
+            // do the mul
+            var mulInst = Inst.mul(gepIdx.getReg(), gepIdx.getReg(), immOpt.getReg(), false, arm.program.insts.items.len);
+            try armFunc.addInst(mulInst, armBlock);
+
+            // add the ptr val and the idx
+            var gepRD = try arm.program.getOpfromIR(gepIR.res, arm.program.insts.items.len);
+            try armFunc.ensureBothReg(ir, armBlock, &getPtrVal, &gepRD);
+            try armFunc.ensureBothReg(ir, armBlock, &gepRD, &gepIdx);
+            if (gepRD.reg.name == IR.InternPool.NULL) {
+                gepRD.reg.name = ir.internIdent("gepRD");
+            }
+            var addInst = Inst.add(gepRD.getReg(), getPtrVal.getReg(), gepIdx, false, arm.program.insts.items.len);
+            try armFunc.addInst(addInst, armBlock);
         },
         else => {
             std.debug.print("The inst was {s}\n", .{@tagName(irInst.op)});
@@ -1164,9 +1235,20 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
     return try ir.stringifyWithHeader(alloc);
 }
 
-test "arm.fibonacci" {
+// test "arm.fibonacci" {
+//     errdefer log.print();
+//     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     var ir = try testMe(in);
+//     var arm = try gen_program(&ir);
+//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+//     std.debug.print("{s}\n", .{str2});
+// }
+
+test "phi.print_first_struct" {
     errdefer log.print();
-    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+    const in = "struct S {int a; struct S s;}; fun main() void { int a; struct S s; struct S b; s = new S; s.s = new S; s.s.a = 5; b = s.s; a = b.a; print a endl; }";
     var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
     var ir = try testMe(in);

@@ -187,6 +187,7 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
     try buf.write(INDENT);
     try stringify_operation(inst.oper, buf);
     // print out the buffer
+    // std.debug.print("inst: {s}\n", .{buf.str.items});
     switch (inst.oper) {
         .ADD, .SUB, .MUL, .DIV, .AND, .ORR, .EOR, .ASR, .LSL => {
             try stringify_register(inst.rd, ir, buf);
