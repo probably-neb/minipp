@@ -248,7 +248,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     const reg = regs.get(res.i);
                     values[reg.id] = inst_value;
                     // print out the instruction and the new value
-                    std.debug.print("inst {any} -> {any}\n", .{ inst, inst_value });
+                    // std.debug.print("inst {any} -> {any}\n", .{ inst, inst_value });
                     try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
                 }
             }
@@ -860,7 +860,6 @@ test "sccp.removes-never-taken-if" {
 }
 
 test "sccp.removes-nested-never-ran-while" {
-    std.debug.print("============================= START ==========================\n", .{});
     log.empty();
     errdefer log.print();
     try expectResultsInIR(
@@ -899,5 +898,56 @@ test "sccp.removes-nested-never-ran-while" {
         "}",
     }, .{
         .{ "main", .{.sccp} },
+    });
+}
+
+test "sccp.removes-nested-known-if" {
+    log.empty();
+    errdefer log.print();
+
+    try expectResultsInIR(
+        \\fun test (int param) int {
+        \\    int a, b, c, d;
+        \\    a = 1;
+        \\    b = 2;
+        \\    c = 3;
+        \\    d = 0;
+        \\
+        \\    if (param == 1) {
+        \\        b = 20;
+        \\        if (param == 1) {
+        \\            b = 200;
+        \\            c = 300;
+        \\        } else {
+        \\            a = 1;
+        \\            b = 2;
+        \\            c = 3;
+        \\        }
+        \\        d = b * c;
+        \\    }
+        \\
+        \\    return d;
+        \\}
+        \\fun main() void {
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  br label %body0",
+        "body0:",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  br label %else.body4",
+        "else.body4:",
+        "  br label %else.exit5",
+        "else.exit5:",
+        "  br label %if.exit6",
+        "if.exit6:",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 2",
+        "}",
+    }, .{
+        .{ "test", .{.sccp} },
     });
 }

@@ -97,7 +97,7 @@ fn sccp(ir: *IR, fun: *Function) !bool {
             var bb = fun.bbs.get(bbID_1);
             // var newInsts = IR.BasicBlock.List.init(fun.alloc);
             for (bb.insts.items(), 0..) |instID, instIDX| {
-                std.debug.print("WATCH WHAT I'm ABOUT TO DO TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+                // std.debug.print("WATCH WHAT I'm ABOUT TO DO TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
                 // defer std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
                 const inst = fun.insts.get(instID);
                 if (inst.op != .Phi) {
@@ -116,7 +116,7 @@ fn sccp(ir: *IR, fun: *Function) !bool {
                 var entreies_changed: bool = false;
                 // remove any entries that point to a non-reachable block
                 while (entries_changes) {
-                    std.debug.print("running phi node cleanup for inst {d} with entries {any}\n", .{ instID, entries.items });
+                    // std.debug.print("running phi node cleanup for inst {d} with entries {any}\n", .{ instID, entries.items });
                     entries_changes = false;
                     for (entries.items, 0..) |entry, entryI| {
                         if (!info.reachable[entry.bb]) {
@@ -1015,12 +1015,12 @@ test "no-panics-in-fib" {
     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
     var ir = try testMe(in);
     try save_dot_to_file(&ir, "pre_fib.dot");
-    const changed = try sccp(&ir, try ir.getFun(try ir.getIdentID("fib")));
+    _ = try sccp(&ir, try ir.getFun(try ir.getIdentID("fib")));
     try save_dot_to_file(&ir, "post_fib.dot");
     const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
     try std.fs.cwd().writeFile("fib.ll", str);
-    std.debug.print("CHANGED={any}\n", .{changed});
-    std.debug.print("{s}\n", .{str});
+    // std.debug.print("CHANGED={any}\n", .{changed});
+    log.trace("FIB\n{s}\n", .{str});
 }
 
 fn sccp_all_funs(ir: *IR) !void {
@@ -1042,5 +1042,5 @@ test "no-panics-in-killer-bubs" {
     const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
     try std.fs.cwd().writeFile("bubs.ll", str);
     // std.debug.print("CHANGED={any}\n", .{changed});
-    std.debug.print("{s}\n", .{str});
+    log.trace("KILLER BUBS\n{s}\n", .{str});
 }
