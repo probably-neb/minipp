@@ -2,7 +2,7 @@ minipp := "./zig-out/bin/minipp"
 TEST_SUITE := "./test-suite/tests/milestone2/benchmarks"
 
 test path="_" filter="":
-    zig {{ if path == "_" {"build test"} else { "test --main-pkg-path " + join(justfile_directory(), "src") + " " + join(justfile_directory(), "src", replace(parent_directory(path), "src", ""), file_stem(path)) + ".zig" + " --test-filter '" + filter + "'"} }}
+    zig {{ if path == "_" {"build test"} else { "test --main-pkg-path " + justfile_directory() + " " + join(justfile_directory(), "src", replace(parent_directory(path), "src", ""), file_stem(path)) + ".zig" + " --test-filter '" + filter + "'"} }}
 
 watch path="_" filter="":
     watchexec -e zig -- just test {{path}} {{filter}}
