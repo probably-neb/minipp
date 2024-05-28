@@ -139,47 +139,81 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
             reachable[bbID] = true;
 
             const bb = fun.bbs.get(bbID);
-            const phiInstructionIDs = bb.phiInsts.items;
             const instructionIDs = bb.insts.items();
-
-            for (phiInstructionIDs) |phiInstID| {
-                // visit_phi [x := phi(y, z)] -> Value[x] = y /\ z
-                const inst = insts.get(phiInstID).*;
-                utils.assert(inst.op == .Phi, "phi inst not phi??? ({s} instead) wtf dylan!\n", .{@tagName(inst.op)});
-                const phi = Inst.Phi.get(inst);
-
-                const res = phi.res;
-                utils.assert(res.kind == .local, "phi res not local is {s}\n", .{@tagName(res.kind)});
-
-                // WARN: these are supposed to be evaluated
-                // simultaneously (i.e. results of one would not impact others)
-                // but I can't think of a case where the result is
-                // different than just going one by one
-                // and we shouldn't get cases where one depends on another
-                const phi_entries = phi.entries.items;
-                const value = if (phi_entries.len == 1) single: {
-                    break :single ref_value(ir, phi_entries[0].ref, values);
-                } else if (phi_entries.len == 0) none: {
-                    // FIXME: is this logically sound?
-                    break :none Value.undef();
-                } else len_gt_1: {
-                    var value: Value = ref_value(ir, phi_entries[0].ref, values);
-                    for (phi_entries[1..]) |option| {
-                        // TODO: assert not depending on phi in same bb
-                        const ref = option.ref;
-                        const optionValue = ref_value(ir, ref, values);
-                        value = meet(value, optionValue);
-                    }
-                    break :len_gt_1 value;
-                };
-                utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
-                const reg = regs.get(res.i);
-                values[reg.id] = value;
-                try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
-            }
+            // const phiInstructionIDs = bb.phiInsts.items;
+            //
+            // for (phiInstructionIDs) |phiInstID| {
+            //     // visit_phi [x := phi(y, z)] -> Value[x] = y /\ z
+            //     const inst = insts.get(phiInstID).*;
+            //     utils.assert(inst.op == .Phi, "phi inst not phi??? ({s} instead) wtf dylan!\n", .{@tagName(inst.op)});
+            //     const phi = Inst.Phi.get(inst);
+            //
+            //     const res = phi.res;
+            //     utils.assert(res.kind == .local, "phi res not local is {s}\n", .{@tagName(res.kind)});
+            //
+            //     // WARN: these are supposed to be evaluated
+            //     // simultaneously (i.e. results of one would not impact others)
+            //     // but I can't think of a case where the result is
+            //     // different than just going one by one
+            //     // and we shouldn't get cases where one depends on another
+            //     const phi_entries = phi.entries.items;
+            //     const value = if (phi_entries.len == 1) single: {
+            //         break :single ref_value(ir, phi_entries[0].ref, values);
+            //     } else if (phi_entries.len == 0) none: {
+            //         // FIXME: is this logically sound?
+            //         break :none Value.undef();
+            //     } else len_gt_1: {
+            //         var value: Value = ref_value(ir, phi_entries[0].ref, values);
+            //         for (phi_entries[1..]) |option| {
+            //             // TODO: assert not depending on phi in same bb
+            //             const ref = option.ref;
+            //             const optionValue = ref_value(ir, ref, values);
+            //             value = meet(value, optionValue);
+            //         }
+            //         break :len_gt_1 value;
+            //     };
+            //     utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
+            //     const reg = regs.get(res.i);
+            //     values[reg.id] = value;
+            //     try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
+            // }
 
             for (instructionIDs) |instID| {
                 const inst = insts.get(instID).*;
+                if (inst.op == .Phi) {
+                    // visit_phi [x := phi(y, z)] -> Value[x] = y /\ z
+                    utils.assert(inst.op == .Phi, "phi inst not phi??? ({s} instead) wtf dylan!\n", .{@tagName(inst.op)});
+                    const phi = Inst.Phi.get(inst);
+
+                    const res = phi.res;
+                    utils.assert(res.kind == .local, "phi res not local is {s}\n", .{@tagName(res.kind)});
+
+                    // WARN: these are supposed to be evaluated
+                    // simultaneously (i.e. results of one would not impact others)
+                    // but I can't think of a case where the result is
+                    // different than just going one by one
+                    // and we shouldn't get cases where one depends on another
+                    const phi_entries = phi.entries.items;
+                    const value = if (phi_entries.len == 1) single: {
+                        break :single ref_value(ir, phi_entries[0].ref, values);
+                    } else if (phi_entries.len == 0) none: {
+                        // FIXME: is this logically sound?
+                        break :none Value.undef();
+                    } else len_gt_1: {
+                        var value: Value = ref_value(ir, phi_entries[0].ref, values);
+                        for (phi_entries[1..]) |option| {
+                            // TODO: assert not depending on phi in same bb
+                            const ref = option.ref;
+                            const optionValue = ref_value(ir, ref, values);
+                            value = meet(value, optionValue);
+                        }
+                        break :len_gt_1 value;
+                    };
+                    utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
+                    const reg = regs.get(res.i);
+                    values[reg.id] = value;
+                    try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
+                }
                 if (inst.op == .Br) {
                     const br = Inst.Br.get(inst);
                     const on = ref_value(ir, br.on, values);

@@ -40,10 +40,22 @@ fn sccp(ir: *IR, fun: *Function) !bool {
 
     var info = try SCCP.sccp(alloc, ir, fun);
 
-    if (std.mem.allEqual(bool, info.reachable, true) and for (info.values) |value| {
-        if (value.state == .constant) break false;
-    } else true) {
+    const allReachable = for (fun.bbs.ids()) |bbID| {
+        if (!info.reachable[bbID]) {
+            std.debug.print("found unreachable bb ID={d} label={s}\n", .{ bbID, fun.bbs.get(bbID).name });
+            break false;
+        }
+    } else true;
+    const noneConstant = for (info.values) |value| {
+        if (value.state == .constant) {
+            std.debug.print("found constant={any}\n", .{value});
+            break false;
+        }
+    } else true;
+    if (allReachable and noneConstant) {
         return false;
+    } else {
+        std.debug.print("running sccp\nnoneConstant={}\nallReachable={any}\n", .{ noneConstant, allReachable });
     }
     // update all of the registers
     for (info.values, 0..) |value, regID_usize| {
@@ -83,14 +95,20 @@ fn sccp(ir: *IR, fun: *Function) !bool {
             if (!info.reachable[bbID_1]) continue;
             std.debug.print("running phi node cleanup for bb {d}\n", .{bbID_1});
             var bb = fun.bbs.get(bbID_1);
-            var newInsts = IR.BasicBlock.List.init(fun.alloc);
-            for (bb.insts.items()) |instID| {
+            // var newInsts = IR.BasicBlock.List.init(fun.alloc);
+            for (bb.insts.items(), 0..) |instID, instIDX| {
+                std.debug.print("WATCH WHAT I'm ABOUT TO DO TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+                // defer std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
                 const inst = fun.insts.get(instID);
                 if (inst.op != .Phi) {
-                    try newInsts.append(instID);
+                    // try newInsts.append(instID);
                     continue;
                 }
                 std.debug.print("running phi node cleanup for inst {d}\n", .{instID});
+
+                var bbInsts = &bb.insts.list;
+                var bbLen = &bb.insts.len;
+
                 var phi = Inst.Phi.get(inst.*);
                 var phiReg = fun.regs.getPtr(phi.res.i);
                 var entries = phi.entries;
@@ -122,7 +140,9 @@ fn sccp(ir: *IR, fun: *Function) !bool {
                     // remove the phi node
                     //_ = fun.insts.remove(instID);
                     std.debug.print("removing empty phi node {d} in block {d}\n", .{ instID, bbID_1 });
-                    // bb.insts.remove(@intCast(instIDX));
+                    _ = bbInsts.*.orderedRemove(instIDX);
+                    bbLen.* -= 1;
+                    // bb.*.insts.remove(@intCast(instIDX));
                     changes = true;
                     break;
                 } else if (entries.items.len == 1) {
@@ -131,20 +151,30 @@ fn sccp(ir: *IR, fun: *Function) !bool {
                     const ref = &entries.items[0].ref;
                     try replace_all_uses(fun, ir, phiReg, ref.*, info.reachable);
                     // remove the phi node
-                    //_ = fun.insts.remove(instID);
-                    // bb.insts.remove(@intCast(instIDX));
+                    // _ = fun.insts.remove(instID);
+                    utils.assert(std.mem.indexOfScalar(BBID, bb.insts.items(), instID) != null, "bb has no inst {d}\n", .{instID});
+                    std.debug.print("WATCH ME REMOVE {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+                    _ = bbInsts.*.orderedRemove(instIDX);
+                    bbLen.* -= 1;
+                    // bb.*.insts.remove(@intCast(instIDX));
                     changes = true;
                     break;
                 } else {
                     std.debug.print("inst {d} has {d} entries\n", .{ instID, entries.items.len });
-                    try newInsts.append(instID);
+                    // try newInsts.append(instID);
                 }
+                if (changes) break;
             }
-            bb.insts.deinit();
-            bb.insts = newInsts;
+            // bb.insts.deinit();
+            // bb.insts = newInsts;
             if (changes) break;
         }
     }
+
+    // for (fun.bbs.ids()) |bbID| {
+    //     const bb = fun.bbs.get(bbID);
+    //     std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ bbID, bb.insts.items() });
+    // }
 
     // relink all of the basic blocks based off their jumps or branhces
     for (fun.bbs.ids()) |bbID| {
@@ -251,8 +281,6 @@ fn remove_reg(fun: *Function, reg: Reg) void {
 
 fn change_use_of_reg(fun: *Function, ir: *const IR, bbID: BBID, bb: *BasicBlock, inst: *Inst, reg: Reg, ref: Ref) void {
     _ = bb;
-    _ = bbID;
-    _ = fun;
     switch (inst.op) {
         .Binop => {
             var binop = Inst.Binop.get(inst.*);
@@ -389,12 +417,12 @@ fn change_use_of_reg(fun: *Function, ir: *const IR, bbID: BBID, bb: *BasicBlock,
                         inst.* = br.toInst();
                     },
                 }
-                // if (not_taken) |removed_outgoer_id| {
-                // remove_bb_from_outgoers(bb, removed_outgoer_id);
-                // // update phi entries in the not taken branch
-                // var not_taken_bb = fun.bbs.get(removed_outgoer_id);
-                // try remove_bb_from_bb2_phi_entries(fun, bbID, not_taken_bb, removed_outgoer_id);
-                // }
+                if (not_taken) |removed_outgoer_id| {
+                    // remove_bb_from_outgoers(bb, removed_outgoer_id);
+                    // update phi entries in the not taken branch
+                    var not_taken_bb = fun.bbs.get(removed_outgoer_id);
+                    try remove_bb_from_bb2_phi_entries(fun, bbID, not_taken_bb, removed_outgoer_id);
+                }
                 return;
             }
             unreachable;
@@ -883,7 +911,7 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
         inline for (passes, 0..) |pass, pass_no| {
             switch (pass) {
                 .sccp => {
-                    const changed = try sccp(&ir, fun);
+                    const changed = while (try sccp(&ir, fun)) {};
                     // if (changed)
                     log.trace("sccp changed the IR in pass {d}={any}\n", .{ pass_no, changed });
                     try save_dot_to_file(&ir, "sccp.dot");
@@ -981,38 +1009,38 @@ test "sccp.removes-nested-never-ran-while" {
     });
 }
 
-// test "no-panics-in-fib" {
-//     log.empty();
-//     errdefer log.print();
-//     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
-//     var ir = try testMe(in);
-//     try save_dot_to_file(&ir, "pre_fib.dot");
-//     const changed = try sccp(&ir, try ir.getFun(try ir.getIdentID("fib")));
-//     try save_dot_to_file(&ir, "post_fib.dot");
-//     const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
-//     try std.fs.cwd().writeFile("fib.ll", str);
-//     std.debug.print("CHANGED={any}\n", .{changed});
-//     std.debug.print("{s}\n", .{str});
-// }
+test "no-panics-in-fib" {
+    log.empty();
+    errdefer log.print();
+    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+    var ir = try testMe(in);
+    try save_dot_to_file(&ir, "pre_fib.dot");
+    const changed = try sccp(&ir, try ir.getFun(try ir.getIdentID("fib")));
+    try save_dot_to_file(&ir, "post_fib.dot");
+    const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
+    try std.fs.cwd().writeFile("fib.ll", str);
+    std.debug.print("CHANGED={any}\n", .{changed});
+    std.debug.print("{s}\n", .{str});
+}
 
-// fn sccp_all_funs(ir: *IR) !void {
-//     const funs = ir.funcs.items.items;
-//     for (funs) |*fun| {
-//         _ = try sccp(ir, fun);
-//     }
-// }
+fn sccp_all_funs(ir: *IR) !void {
+    const funs = ir.funcs.items.items;
+    for (funs) |*fun| {
+        _ = try sccp(ir, fun);
+    }
+}
 
-// test "no-panics-in-killer-bubs" {
-//     log.empty();
-//     errdefer log.print();
-//     const in = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
-//     var ir = try testMe(in);
-//     try save_dot_to_file(&ir, "pre_bubs.dot");
-//     try sccp_all_funs(&ir);
+test "no-panics-in-killer-bubs" {
+    log.empty();
+    errdefer log.print();
+    const in = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
+    var ir = try testMe(in);
+    try save_dot_to_file(&ir, "pre_bubs.dot");
+    try sccp_all_funs(&ir);
 
-//     try save_dot_to_file(&ir, "post_bubs.dot");
-//     const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
-//     try std.fs.cwd().writeFile("bubs.ll", str);
-//     // std.debug.print("CHANGED={any}\n", .{changed});
-//     std.debug.print("{s}\n", .{str});
-// }
+    try save_dot_to_file(&ir, "post_bubs.dot");
+    const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
+    try std.fs.cwd().writeFile("bubs.ll", str);
+    // std.debug.print("CHANGED={any}\n", .{changed});
+    std.debug.print("{s}\n", .{str});
+}
