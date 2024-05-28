@@ -3304,7 +3304,14 @@ pub const Inst = struct {
         }
 
         pub inline fn toInst(inst: Cmp) Inst {
-            return Inst.cmp(inst.cond, inst.lhs, inst.rhs);
+            return .{
+                .op = .Cmp,
+                .res = inst.res,
+                .ty1 = inst.opTypes,
+                .op1 = inst.lhs,
+                .op2 = inst.rhs,
+                .extra = .{ .cond = inst.cond },
+            };
         }
     };
     // Comparison and Branching
