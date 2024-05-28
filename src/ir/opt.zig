@@ -38,10 +38,7 @@ fn sccp(ir: *IR, fun: *Function) !void {
     defer arena.deinit();
     var alloc = arena.allocator();
 
-    var first: SCCP.SCCPRes = SCCP.SCCPRes.empty();
     var info = try SCCP.sccp(alloc, ir, fun);
-    while(!first.eq(info)){
-        first = info;
         // log.trace("sccp info:\n{any}\n", .{info});
         // FIXME: handle updates here
         // info.values is an array that is the size of the number of registers
@@ -162,8 +159,7 @@ fn sccp(ir: *IR, fun: *Function) !void {
                 }
                 if (changes) break;
             }
-        info = try SCCP.sccp(alloc, ir, fun);
-    }
+
 
 
     }

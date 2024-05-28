@@ -47,13 +47,13 @@ pub const SCCPRes = struct {
         if (self.reachable.len != other.reachable.len) {
             return false;
         }
-        for (self.values,0..) |val, i| {
+        for(self.values,0..) |val, i| {
             if (!val.eq(other.values[i])) {
                 return false;
             }
         }
-        for (self.reachable,0..) |reachable, i| {
-            if (reachable != other.reachable[i]) {
+        for(self.reachable,0..) |reach, i| {
+            if (reach != other.reachable[i]) {
                 return false;
             }
         }
@@ -493,6 +493,9 @@ pub const Value = struct {
             i64,
             i1,
         };
+        pub fn eq(self: Constant, other: Constant) bool {
+            return self.value == other.value and self.kind == other.kind;
+        }
     };
     pub const ID = IR.Register.ID;
 
@@ -535,6 +538,18 @@ pub const Value = struct {
 
     inline fn unknown() Value {
         return Value{ .state = .unknown };
+    }
+    pub fn eq(self: Value, other: Value) bool {
+        if (self.state != other.state) {
+            return false;
+        }
+        if(self.constant == null and other.constant == null)  {
+            return true;
+        }
+        if(self.constant == null or other.constant == null) {
+            return false;
+        }
+        return self.constant.?.eq(other.constant.?);
     }
 };
 
