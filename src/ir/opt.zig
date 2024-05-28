@@ -19,6 +19,7 @@ const Ref = IR.Ref;
 const OpCode = IR.Op;
 
 const SCCP = @import("./sccp.zig");
+pub const DeadCode = @import("./deadCodeElim.zig");
 
 const stringify_label = @import("stringify_phi.zig").stringify_label;
 
@@ -1053,6 +1054,9 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
             switch (pass) {
                 .sccp => {
                     try sccp(&ir, fun);
+                },
+                .dead_code_elim => {
+                    _ = try DeadCode.deadCodeElim(&ir, fun);
                 },
                 .empty_bb => {
                     try empty_block_removal_pass(fun);

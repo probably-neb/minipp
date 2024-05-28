@@ -138,9 +138,6 @@ pub fn run(mode: Args.Mode, infilePath: []const u8, outfilePath: []const u8, dot
             },
             .phi => {
                 var phi = try @import("ir/phi.zig").generate(backendAlloc, &ast);
-                for (phi.funcs.items.items) |*func| {
-                    while (try @import("ir/deadCodeElim.zig").deadCodeElim(&phi, func, false)) {}
-                }
                 break :ir try phi.stringify_cfg(backendAlloc, .{
                     .header = true,
                 });

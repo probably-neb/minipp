@@ -17,11 +17,13 @@ const RegID = Register.ID;
 const Ref = IR.Ref;
 const OpCode = IR.Op;
 
-pub fn deadCodeElim(ir: *IR, fun: *Function, print: bool) !bool {
+pub fn deadCodeElim(ir: *IR, fun: *Function) !bool {
     var arena_alloc = std.heap.ArenaAllocator.init(ir.alloc);
     var alloc = arena_alloc.allocator();
     var changed = false;
     defer arena_alloc.deinit();
+
+    var changed = false;
 
     var list = try markDeadCode(alloc, fun);
     for (fun.bbs.items()) |*bb| {
@@ -29,21 +31,11 @@ pub fn deadCodeElim(ir: *IR, fun: *Function, print: bool) !bool {
         while (i != bb.insts.items().len) {
             const inst = bb.insts.items()[i];
             if (!list[inst]) {
+                changed = true;
                 bb.insts.remove(i);
                 changed = true;
             } else {
                 i += 1;
-            }
-        }
-    }
-
-    if (print) {
-        std.debug.print("Dead code elimination for function {any}:\n", .{fun.name});
-        for (fun.bbs.items()) |bb| {
-            for (bb.insts.items()) |inst| {
-                if (!list[inst]) {
-                    std.debug.print("  {any}\n", .{fun.insts.get(inst).*});
-                }
             }
         }
     }
@@ -68,6 +60,7 @@ pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
     //       if the source is not marked in the criticalMarkList
     //          mark the source operation in the criticalMarkList
     //          mark the source operation in the workingList
+    const instructionCount = function.insts.len;
     var workingList = workingList: {
         // var workingList = try alloc.alloc(bool, function.insts.len);
         var workingList = ArrayList(InstID).init(alloc);
@@ -99,22 +92,20 @@ pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
     }
     const instrunctionCount = function.insts.len;
 
-    while (workingList.items.len != 0) {
-        const instID = workingList.pop();
+    while (workingList.popOrNull()) |instID| {
         const inst = insts.get(instID).*;
         const sources = try getSources(inst, alloc);
         for (sources.items) |source| {
-            switch (source.kind) {
-                .local => {
-                    if (source.i < instrunctionCount) {
-                        const sourceID = regs.get(source.i).inst;
-                        if (!critMarkList[sourceID]) {
-                            critMarkList[sourceID] = true;
-                            try workingList.append(sourceID);
-                        }
-                    }
-                },
-                .global, .label, .immediate, .immediate_u32, .param, ._invalid => {},
+            const sourceID = switch (source.kind) {
+                .local => regs.get(source.i).inst,
+                .immediate, .immediate_u32, .global, .param => continue,
+                ._invalid, .label => utils.impossible("found {s} in {any}\n", .{ @tagName(source.kind), source }),
+            };
+            utils.assert(source.i != 69420, "source != 69420\n", .{});
+            utils.assert(source.i < instructionCount, "source < instructionCount i.e. {d} < {d}\n", .{ source.i, instructionCount });
+            if (!critMarkList[sourceID]) {
+                critMarkList[sourceID] = true;
+                try workingList.append(sourceID);
             }
         }
     }
@@ -169,7 +160,8 @@ fn getSources(inst: Inst, alloc: Alloc) !ArrayList(Ref) {
         },
         .Ret => {
             const ret = Inst.Ret.get(inst);
-            try sources.append(ret.val);
+            if (ret.val.type != .void)
+                try sources.append(ret.val);
         },
         .Store => {
             const store = Inst.Store.get(inst);
@@ -184,6 +176,10 @@ fn getSources(inst: Inst, alloc: Alloc) !ArrayList(Ref) {
         .Alloc, .Param, .Jmp => {},
     }
     return sources;
+}
+
+fn is_reg(ref: Ref) bool {
+    return ref.kind == .local;
 }
 
 const ting = std.testing;
@@ -239,7 +235,7 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
                 //     try empty_block_removal_pass(fun);
                 // },
                 .dead_code_elim => {
-                    _ = try deadCodeElim(&ir, fun, false);
+                    _ = try deadCodeElim(&ir, fun);
                 },
                 else => {
                     log.warn("unknown optimization pass: {s}\n", .{@tagName(pass)});
@@ -278,71 +274,52 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
     try ting.expectEqualStrings(expectedStr, gotIRstr);
 }
 
-// test "opt.sccp+empty-block=$profit" {
-//     log.empty();
-//     errdefer log.print();
-//
-//     try expectResultsInIR(
-//         \\fun main() int {
-//         \\  int a;
-//         \\  if (false) {
-//         \\    a = 1;
-//         \\  } else {
-//         \\    a = 2;
-//         \\  }
-//         \\  return a;
-//         \\}
-//     , .{
-//         "define i64 @main() {",
-//         "entry:",
-//         "  br label %exit",
-//         "exit:",
-//         "  ret i64 2",
-//         "}",
-//     }, .{
-//         .{ "main", .{ .sccp, .empty_bb } },
-//     });
-// }
-//
-//
+test "mark-and-sweep.all-critical-insts-kept" {
+    log.empty();
+    errdefer log.print();
 
-// test "sccp.removes-nested-never-ran-while" {
-//     log.empty();
-//     errdefer log.print();
-//     try expectResultsInIR(
-//         \\int global1;
-//         \\fun main() int {
-//         \\  int a, b, c, d, e;
-//         \\  a = 4;
-//         \\  a = 5;
-//         \\  a = 7;
-//         \\  a = 8;
-//         \\  b = 6;
-//         \\  b = 9;
-//         \\  b = 12;
-//         \\  b = 8;
-//         \\  c = 10;
-//         \\  c = 13;
-//         \\  c = 9;
-//         \\  d = 45;
-//         \\  d = 12;
-//         \\  d = 3;
-//         \\  e = 23;
-//         \\  e = 10;
-//         \\  global1 = 11;
-//         \\  global1 = 5;
-//         \\  global1 = 9;
-//         \\  return a + b + c + d + e;
-//         \\}
-//     , .{
-//         "define i64 @main() {",
-//         "}",
-//     }, .{
-//         .{ "main", .{.dead_code_elim} },
-//     });
-// }
+    try expectResultsInIR(
+        \\fun main() int {
+        \\  int a;
+        \\  if (false) {
+        \\    a = 1;
+        \\  } else {
+        \\    a = 2;
+        \\  }
+        \\  return a;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  br label %body0",
+        "body0:",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_4 = or i1 0, 0",
+        "  br i1 %_4, label %then.body2, label %else.body4",
+        "then.body2:",
+        "  %a6 = add i64 1, 0",
+        "  br label %then.exit3",
+        "then.exit3:",
+        "  br label %if.exit6",
+        "else.body4:",
+        "  %a9 = add i64 2, 0",
+        "  br label %else.exit5",
+        "else.exit5:",
+        "  br label %if.exit6",
+        "if.exit6:",
+        "  %a0 = phi i64 [ %a6, %then.exit3 ], [ %a9, %else.exit5 ]",
+        "  br label %exit",
+        "exit:",
+        "  %return_reg12 = phi i64 [ %a0, %if.exit6 ]",
+        "  ret i64 %return_reg12",
+        "}",
+    }, .{
+        .{ "main", .{.dead_code_elim} },
+    });
+}
 
-test "sccp.bertonacchi" {
+test "mark-and-sweep.unused-var-removed" {
     log.empty();
     errdefer log.print();
     // try expectResultsInIR("fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }", .{
@@ -352,10 +329,41 @@ test "sccp.bertonacchi" {
         "entry:",
         "  br label %body0",
         "body0:",
-        "  %a2 = add i64 2, 0",
+        "  %b2 = add i64 2, 0",
         "  br label %exit",
         "exit:",
-        "  %return_reg4 = phi i64 [ %a2, %body0 ]",
+        "  %return_reg4 = phi i64 [ %b2, %body0 ]",
+        "  ret i64 %return_reg4",
+        "}",
+    }, .{
+        .{ "main", .{.dead_code_elim} },
+    });
+}
+
+test "mark-and-sweep.global-var-kept" {
+    log.empty();
+    errdefer log.print();
+    try expectResultsInIR(
+        \\int global;
+        \\fun main() int {
+        \\  int a,b,c;
+        \\  a = 2;
+        \\  b = a;
+        \\  c = global;
+        \\  return b;
+        \\}
+    , .{
+        "@global = global i64 undef, align 8",
+        "",
+        "define i64 @main() {",
+        "entry:",
+        "  br label %body0",
+        "body0:",
+        "  %b2 = add i64 2, 0",
+        "  %c3 = load i64, i64* @global",
+        "  br label %exit",
+        "exit:",
+        "  %return_reg4 = phi i64 [ %b2, %body0 ]",
         "  ret i64 %return_reg4",
         "}",
     }, .{
