@@ -33,151 +33,154 @@ pub fn optimize_function(fun: *Function) !void {
     _ = fun;
 }
 
-fn sccp(ir: *IR, fun: *Function) !void {
+fn sccp(ir: *IR, fun: *Function) !bool {
     var arena = std.heap.ArenaAllocator.init(ting.allocator);
     defer arena.deinit();
     var alloc = arena.allocator();
 
     var info = try SCCP.sccp(alloc, ir, fun);
-        // log.trace("sccp info:\n{any}\n", .{info});
-        // FIXME: handle updates here
-        // info.values is an array that is the size of the number of registers
-        // the index of the array is the register ID
-        // the value is a struct with the following fields:
-        //pub const Value = struct {
-        //     state: State = State.undef,
-        //     constant: ?Constant = null,
-        //
-        //     pub const State = enum { undef, unknown, constant };
-        //     pub const Constant = struct {
-        //         value: i64,
-        //         kind: Kind,
-        //
-        //         pub const Kind = enum {
-        //             i64,
-        //             i1,
-        //     };
-        // };
 
-        for (info.values, fun.regs.items.items) |value, reg| {
-            std.debug.print("{s} [{?any}]\n", .{
-                try @import("stringify_phi.zig").stringify_inst_to_str(
-                        reg.inst,
-                        ir,
-                        fun,
-                        fun.bbs.get(reg.bb).*,
-                ),
-                value.constant,
-            });
+    if (std.mem.allEqual(bool, info.reachable, true) and for (info.values) |value| {
+        if (value.state == .constant) break false;
+    } else true) {
+        return false;
+    }
+    // log.trace("sccp info:\n{any}\n", .{info});
+    // FIXME: handle updates here
+    // info.values is an array that is the size of the number of registers
+    // the index of the array is the register ID
+    // the value is a struct with the following fields:
+    //pub const Value = struct {
+    //     state: State = State.undef,
+    //     constant: ?Constant = null,
+    //
+    //     pub const State = enum { undef, unknown, constant };
+    //     pub const Constant = struct {
+    //         value: i64,
+    //         kind: Kind,
+    //
+    //         pub const Kind = enum {
+    //             i64,
+    //             i1,
+    //     };
+    // };
+
+    // for (info.values, fun.regs.items.items) |value, reg| {
+    //     std.debug.print("{s} [{?any}]\n", .{
+    //         try @import("stringify_phi.zig").stringify_inst_to_str(
+    //             reg.inst,
+    //             ir,
+    //             fun,
+    //             fun.bbs.get(reg.bb).*,
+    //         ),
+    //         value.constant,
+    //     });
+    // }
+    // update all of the registers
+    for (info.values, 0..) |value, regID_usize| {
+        if (value.state != .constant) continue;
+
+        const regID: RegID = @intCast(regID_usize);
+        var reg = fun.regs.getPtr(regID);
+        const constant = value.constant.?;
+
+        const ref = sccp_const_to_ref(constant);
+        const uses_list = try DefUse.uses_of(alloc, fun, reg.*);
+        const uses = uses_list.items;
+
+        for (uses) |use| {
+            const instID = use.instID;
+            var inst = fun.insts.get(instID);
+            var bb = fun.bbs.get(use.bb);
+            // FIXME: made change to phi here, this could be wrong
+            change_use_of_reg(fun, ir, use.bb, bb, inst, reg.*, ref);
         }
-        // update all of the registers
-        for (info.values, 0..) |value, regID_usize| {
-            if (value.state != .constant) continue;
+        remove_reg(fun, reg.*);
+    }
 
-            const regID: RegID = @intCast(regID_usize);
-            var reg = fun.regs.getPtr(regID);
-            const constant = value.constant.?;
-
-            const ref = sccp_const_to_ref(constant);
-            const uses_list = try DefUse.uses_of(alloc, fun, reg.*);
-            const uses = uses_list.items;
-
-            for (uses) |use| {
-                const instID = use.instID;
-                var inst = fun.insts.get(instID);
-                var bb = fun.bbs.get(use.bb);
-                // FIXME: made change to phi here, this could be wrong
-                change_use_of_reg(fun,ir, use.bb,bb, inst, reg.*, ref);
-            }
-            remove_reg(fun, reg.*);
-        }
-
-        // update all of the phi nodes
-        // track if a change has been made
-        // while changes
-        // for each one that has a entry that points to a non-reachable block, remove the block,
-        //  if the phi node only has one entry, replace all uses of the phi node with the value of the entry
-        //  remove the phi node
-        //  mark change
-        //  break
-        var changes: bool = true;
-        while (changes) {
-            std.debug.print("running phi node cleanup\n",.{});
-            changes = false;
-            for (fun.bbs.ids()) |bbID_1| {
-                std.debug.print("running phi node cleanup for bb {d}\n",.{bbID_1});
-                var bb = fun.bbs.get(bbID_1);
-                for (bb.insts.items(),0..) |instID,instIDX| {
-                    const inst = fun.insts.get(instID);
-                    if (inst.op != .Phi) continue;
-                    std.debug.print("running phi node cleanup for inst {d}\n",.{instID});
-                    var phi = Inst.Phi.get(inst.*);
-                    var phiReg = fun.regs.getPtr(phi.res.i);
-                    var entries = phi.entries;
-                    var entries_changes: bool = true;
-                    var entreies_changed: bool = false;
-                    // remove any entries that point to a non-reachable block
-                    while(entries_changes){
-                        std.debug.print("running phi node cleanup for inst {d} with entries {any}\n",.{instID, entries.items});
-                        entries_changes = false;
-                        for (entries.items,0..) |entry,entryI| {
-                            if(!info.reachable[entry.bb]){
-                                // remove the entry
-                                std.debug.print("removing entry {d} from phi node {d} in block {d}\n",.{entryI, instID, bbID_1});
-                                entries_changes = true;
-                                _ = entries.orderedRemove(entryI);
-                                entreies_changed = true;
-                                break;
-                            }
+    // update all of the phi nodes
+    // track if a change has been made
+    // while changes
+    // for each one that has a entry that points to a non-reachable block, remove the block,
+    //  if the phi node only has one entry, replace all uses of the phi node with the value of the entry
+    //  remove the phi node
+    //  mark change
+    //  break
+    var changes: bool = true;
+    while (changes) {
+        std.debug.print("running phi node cleanup\n", .{});
+        changes = false;
+        for (fun.bbs.ids()) |bbID_1| {
+            std.debug.print("running phi node cleanup for bb {d}\n", .{bbID_1});
+            var bb = fun.bbs.get(bbID_1);
+            for (bb.insts.items(), 0..) |instID, instIDX| {
+                const inst = fun.insts.get(instID);
+                if (inst.op != .Phi) continue;
+                std.debug.print("running phi node cleanup for inst {d}\n", .{instID});
+                var phi = Inst.Phi.get(inst.*);
+                var phiReg = fun.regs.getPtr(phi.res.i);
+                var entries = phi.entries;
+                var entries_changes: bool = true;
+                var entreies_changed: bool = false;
+                // remove any entries that point to a non-reachable block
+                while (entries_changes) {
+                    std.debug.print("running phi node cleanup for inst {d} with entries {any}\n", .{ instID, entries.items });
+                    entries_changes = false;
+                    for (entries.items, 0..) |entry, entryI| {
+                        if (!info.reachable[entry.bb]) {
+                            // remove the entry
+                            std.debug.print("removing entry {d} from phi node {d} in block {d}\n", .{ entryI, instID, bbID_1 });
+                            entries_changes = true;
+                            _ = entries.orderedRemove(entryI);
+                            entreies_changed = true;
+                            break;
                         }
                     }
-                    phi.entries = entries;
-                    fun.insts.set(instID, phi.toInst());
-                    if(entreies_changed){
-                        changes = true;
-                        break;
-                    }
-
-                    if(entries.items.len == 0){
-                        // remove the phi node
-                        //_ = fun.insts.remove(instID);
-                        std.debug.print("removing empty phi node {d} in block {d}\n",.{instID, bbID_1});
-                        bb.insts.remove(@truncate(instIDX));
-                        changes = true;
-                        break;
-                    } else if (entries.items.len == 1){
-                        std.debug.print("replacing phi node {d} in block {d} with entry {any}\n",.{instID, bbID_1, entries.items[0]});
-                        // replace all uses of the phi node with the value of the entry
-                        const ref = &entries.items[0].ref;
-                        try replace_all_uses(fun, ir, phiReg, ref.*);
-                        // remove the phi node
-                        //_ = fun.insts.remove(instID);
-                        bb.insts.remove(@truncate(instIDX));
-                        changes = true;
-                        break;
-                    }
                 }
-                if (changes) break;
+                phi.entries = entries;
+                fun.insts.set(instID, phi.toInst());
+                if (entreies_changed) {
+                    changes = true;
+                    break;
+                }
+
+                if (entries.items.len == 0) {
+                    // remove the phi node
+                    //_ = fun.insts.remove(instID);
+                    std.debug.print("removing empty phi node {d} in block {d}\n", .{ instID, bbID_1 });
+                    bb.insts.remove(@intCast(instIDX));
+                    changes = true;
+                    break;
+                } else if (entries.items.len == 1) {
+                    std.debug.print("replacing phi node {d} in block {d} with entry {any}\n", .{ instID, bbID_1, entries.items[0] });
+                    // replace all uses of the phi node with the value of the entry
+                    const ref = &entries.items[0].ref;
+                    try replace_all_uses(fun, ir, phiReg, ref.*);
+                    // remove the phi node
+                    //_ = fun.insts.remove(instID);
+                    bb.insts.remove(@intCast(instIDX));
+                    changes = true;
+                    break;
+                }
             }
-
-
-
+            if (changes) break;
+        }
     }
 
     // relink all of the basic blocks based off their jumps or branhces
-    for(fun.bbs.ids()) |bbID| {
+    for (fun.bbs.ids()) |bbID| {
         fun.bbs.get(bbID).outgoers[0] = null;
         fun.bbs.get(bbID).outgoers[1] = null;
         fun.bbs.get(bbID).reinitIncomers(fun);
     }
-    for(fun.bbs.ids()) |bbID| {
-        if(!info.reachable[bbID]) continue;
+    for (fun.bbs.ids()) |bbID| {
+        if (!info.reachable[bbID]) continue;
         var bb = fun.bbs.get(bbID);
         const instID = (ptr_to_last(InstID, bb.insts.list.items) orelse unreachable).*;
         var inst = fun.insts.get(instID);
-        if(!inst.isCtrlFlow()) continue;
+        if (!inst.isCtrlFlow()) continue;
 
-        if(inst.op == .Br){
+        if (inst.op == .Br) {
             var br = Inst.Br.get(inst.*);
             var ifTrueBB = fun.bbs.get(br.iftrue);
             var ifFalseBB = fun.bbs.get(br.iffalse);
@@ -185,15 +188,15 @@ fn sccp(ir: *IR, fun: *Function) !void {
             bb.outgoers[1] = br.iffalse;
             try ifTrueBB.incomers.append(bbID);
             try ifFalseBB.incomers.append(bbID);
-        } else if(inst.op == .Jmp){
+        } else if (inst.op == .Jmp) {
             var jmp = Inst.Jmp.get(inst.*);
             var jmpBB = fun.bbs.get(jmp.dest);
             bb.outgoers[0] = jmp.dest;
             try jmpBB.incomers.append(bbID);
-        } else if(inst.op == .Ret){
+        } else if (inst.op == .Ret) {
             // do nothing
         } else {
-            utils.todo("unexpected control flow instruction {s}\n",.{@tagName(inst.op)});
+            utils.todo("unexpected control flow instruction {s}\n", .{@tagName(inst.op)});
         }
     }
 
@@ -213,7 +216,7 @@ fn sccp(ir: *IR, fun: *Function) !void {
         std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), is_reachable });
         _ = fun.bbs.remove(bbID);
     }
-
+    return true;
 }
 
 fn replace_all_uses(fun: *Function, ir: *const IR, reg: *Reg, ref: Ref) !void {
@@ -270,153 +273,153 @@ fn remove_reg(fun: *Function, reg: Reg) void {
 
 fn change_use_of_reg_bool(fun: *Function, ir: *const IR, bbID: BBID, bb: *BasicBlock, inst: *Inst, reg: Reg, ref: Ref) bool {
     switch (inst.op) {
-    .Binop => {
-        var binop = Inst.Binop.get(inst.*);
-        if (refers_to_reg(binop.lhs, reg)) {
-            binop.lhs = ref;
-            inst.* = binop.toInst();
-            return true;
-        } else if (refers_to_reg(binop.rhs, reg)) {
-            binop.rhs = ref;
-            inst.* = binop.toInst();
-            return true;
-        }
-        return false;
-    },
-    .Cmp => {
-        var cmp = Inst.Cmp.get(inst.*);
-        if (refers_to_reg(cmp.lhs, reg)) {
-            cmp.lhs = ref;
-            inst.* = cmp.toInst();
-            return true;
-        } else if (refers_to_reg(cmp.rhs, reg)) {
-            cmp.rhs = ref;
-            inst.* = cmp.toInst();
-            return true;
-        }
-        return false;
-    },
-    .Zext, .Sext, .Trunc, .Bitcast => {
-        var misc = Inst.Misc.get(inst.*);
-        if (!refers_to_reg(misc.from, reg)) {
-            misc.from = ref;
-            inst.* = misc.toInst();
-            return true;
-        }
-        return false;
-    },
-    .Load => {
-        var load = Inst.Load.get(inst.*);
-        if (refers_to_reg(load.ptr, reg)) {
-            load.ptr = ref;
-            inst.* = load.toInst();
-            return true;
-        }
-        return false;
-    },
-    .Gep => {
-        var gep = Inst.Gep.get(inst.*);
-        if (refers_to_reg(gep.ptrVal, reg)) {
-            gep.ptrVal = ref;
-            inst.* = gep.toInst();
-            return true;
-        } else if (refers_to_reg(gep.index, reg)) {
-            gep.index = ref;
-            inst.* = gep.toInst();
-            return true;
-        }
-        return false;
-    },
-    .Call => {
-        var call = Inst.Call.get(inst.*);
-        for (call.args) |*arg| {
-            if (refers_to_reg(arg.*, reg)) {
-                arg.* = ref;
+        .Binop => {
+            var binop = Inst.Binop.get(inst.*);
+            if (refers_to_reg(binop.lhs, reg)) {
+                binop.lhs = ref;
+                inst.* = binop.toInst();
+                return true;
+            } else if (refers_to_reg(binop.rhs, reg)) {
+                binop.rhs = ref;
+                inst.* = binop.toInst();
                 return true;
             }
-        }
-        return false;
-    },
-    .Phi => {
-        var phi = Inst.Phi.get(inst.*);
-        var found:bool = false;
-        for (phi.entries.items) |*entry| {
-            if (refers_to_reg(entry.*.ref, reg)) {
-                entry.ref = ref;
-                found = true;
+            return false;
+        },
+        .Cmp => {
+            var cmp = Inst.Cmp.get(inst.*);
+            if (refers_to_reg(cmp.lhs, reg)) {
+                cmp.lhs = ref;
+                inst.* = cmp.toInst();
+                return true;
+            } else if (refers_to_reg(cmp.rhs, reg)) {
+                cmp.rhs = ref;
+                inst.* = cmp.toInst();
+                return true;
             }
-        }
-        inst.* = phi.toInst();
-        if(found) return true;
-        return false;
-    },
-    .Ret => {
-        var ret = Inst.Ret.get(inst.*);
-        if (refers_to_reg(ret.val, reg)) {
-            ret.val = ref;
-            inst.* = ret.toInst();
-            return true;
-        }
-        return false;
-    },
-    .Store => {
-        var store = Inst.Store.get(inst.*);
-        if (refers_to_reg(store.from, reg)) {
-            store.from = ref;
-            inst.* = store.toInst();
-            return true;
-        } else if (refers_to_reg(store.to, reg)) {
-            store.to = ref;
-            inst.* = store.toInst();
-            return true;
-        }
-        return false;
-    },
-    .Br => {
-        var br = Inst.Br.get(inst.*);
-        if (refers_to_reg(br.on, reg)) {
-            var not_taken: ?BBID = null;
-            switch (ref.kind) {
-            .immediate_u32 => {
-                var newDest: BBID = undefined;
-                if (ref.i != 0) {
-                    newDest = br.iftrue;
-                    not_taken = br.iffalse;
-                } else {
-                    newDest = br.iffalse;
-                    not_taken = br.iftrue;
+            return false;
+        },
+        .Zext, .Sext, .Trunc, .Bitcast => {
+            var misc = Inst.Misc.get(inst.*);
+            if (!refers_to_reg(misc.from, reg)) {
+                misc.from = ref;
+                inst.* = misc.toInst();
+                return true;
+            }
+            return false;
+        },
+        .Load => {
+            var load = Inst.Load.get(inst.*);
+            if (refers_to_reg(load.ptr, reg)) {
+                load.ptr = ref;
+                inst.* = load.toInst();
+                return true;
+            }
+            return false;
+        },
+        .Gep => {
+            var gep = Inst.Gep.get(inst.*);
+            if (refers_to_reg(gep.ptrVal, reg)) {
+                gep.ptrVal = ref;
+                inst.* = gep.toInst();
+                return true;
+            } else if (refers_to_reg(gep.index, reg)) {
+                gep.index = ref;
+                inst.* = gep.toInst();
+                return true;
+            }
+            return false;
+        },
+        .Call => {
+            var call = Inst.Call.get(inst.*);
+            for (call.args) |*arg| {
+                if (refers_to_reg(arg.*, reg)) {
+                    arg.* = ref;
+                    return true;
                 }
-                inst.* = Inst.jmp(Ref.label(newDest));
-            },
-            .immediate => {
-                var newDest: BBID = undefined;
-                const val = ir.parseInt(ref.i) catch return false;
-                if (val != 0) {
-                    newDest = br.iftrue;
-                    not_taken = br.iffalse;
-                } else {
-                    newDest = br.iffalse;
-                    not_taken = br.iftrue;
+            }
+            return false;
+        },
+        .Phi => {
+            var phi = Inst.Phi.get(inst.*);
+            var found: bool = false;
+            for (phi.entries.items) |*entry| {
+                if (refers_to_reg(entry.*.ref, reg)) {
+                    entry.ref = ref;
+                    found = true;
                 }
-                inst.* = Inst.jmp(Ref.label(newDest));
-            },
-            else => {
-                br.on = ref;
-                inst.* = br.toInst();
-            },
             }
-            if (not_taken) |removed_outgoer_id| {
-                remove_bb_from_outgoers(bb, removed_outgoer_id);
-                // update phi entries in the not taken branch
-                var not_taken_bb = fun.bbs.get(removed_outgoer_id);
-                try remove_bb_from_bb2_phi_entries(fun, bbID, not_taken_bb, removed_outgoer_id);
+            inst.* = phi.toInst();
+            if (found) return true;
+            return false;
+        },
+        .Ret => {
+            var ret = Inst.Ret.get(inst.*);
+            if (refers_to_reg(ret.val, reg)) {
+                ret.val = ref;
+                inst.* = ret.toInst();
+                return true;
             }
-            return true;
-        }
-        return false;
-    },
-    // no registers
-    .Alloc, .Param, .Jmp => {},
+            return false;
+        },
+        .Store => {
+            var store = Inst.Store.get(inst.*);
+            if (refers_to_reg(store.from, reg)) {
+                store.from = ref;
+                inst.* = store.toInst();
+                return true;
+            } else if (refers_to_reg(store.to, reg)) {
+                store.to = ref;
+                inst.* = store.toInst();
+                return true;
+            }
+            return false;
+        },
+        .Br => {
+            var br = Inst.Br.get(inst.*);
+            if (refers_to_reg(br.on, reg)) {
+                var not_taken: ?BBID = null;
+                switch (ref.kind) {
+                    .immediate_u32 => {
+                        var newDest: BBID = undefined;
+                        if (ref.i != 0) {
+                            newDest = br.iftrue;
+                            not_taken = br.iffalse;
+                        } else {
+                            newDest = br.iffalse;
+                            not_taken = br.iftrue;
+                        }
+                        inst.* = Inst.jmp(Ref.label(newDest));
+                    },
+                    .immediate => {
+                        var newDest: BBID = undefined;
+                        const val = ir.parseInt(ref.i) catch return false;
+                        if (val != 0) {
+                            newDest = br.iftrue;
+                            not_taken = br.iffalse;
+                        } else {
+                            newDest = br.iffalse;
+                            not_taken = br.iftrue;
+                        }
+                        inst.* = Inst.jmp(Ref.label(newDest));
+                    },
+                    else => {
+                        br.on = ref;
+                        inst.* = br.toInst();
+                    },
+                }
+                if (not_taken) |removed_outgoer_id| {
+                    remove_bb_from_outgoers(bb, removed_outgoer_id);
+                    // update phi entries in the not taken branch
+                    var not_taken_bb = fun.bbs.get(removed_outgoer_id);
+                    try remove_bb_from_bb2_phi_entries(fun, bbID, not_taken_bb, removed_outgoer_id);
+                }
+                return true;
+            }
+            return false;
+        },
+        // no registers
+        .Alloc, .Param, .Jmp => {},
     }
     return false;
 }
@@ -492,7 +495,7 @@ fn change_use_of_reg(fun: *Function, ir: *const IR, bbID: BBID, bb: *BasicBlock,
         },
         .Phi => {
             var phi = Inst.Phi.get(inst.*);
-            var found:bool = false;
+            var found: bool = false;
             for (phi.entries.items) |*entry| {
                 if (refers_to_reg(entry.*.ref, reg)) {
                     entry.ref = ref;
@@ -500,7 +503,7 @@ fn change_use_of_reg(fun: *Function, ir: *const IR, bbID: BBID, bb: *BasicBlock,
                 }
             }
             inst.* = phi.toInst();
-            if(found) return;
+            if (found) return;
             utils.impossible("phi {any} does not refer to reg {any}\nitems={any}\n", .{ phi, reg, phi.entries.items });
         },
         .Ret => {
@@ -704,7 +707,7 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
         return;
     }
     if (bb.incomers.items.len > 0) {
-        if(bbID != fun.exitBBID and bb_num_outgoers(bb) == 0){
+        if (bbID != fun.exitBBID and bb_num_outgoers(bb) == 0) {
             std.debug.print("removing {d} from incomers of {s} {any}\n", .{ bbID, bb.name, bb.incomers.items });
             for (bb.incomers.items) |incomerID| {
                 var incomerBB = bbs.get(incomerID);
@@ -716,7 +719,7 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
 
         utils.assert(bb_num_outgoers(bb) != 2, "FUCK - FELL THROUGH this case should be handled above\n", .{});
         printIncomersAndOutgoers(bb);
-        std.debug.print("we only have one outgoer\n",.{});
+        std.debug.print("we only have one outgoer\n", .{});
         const outgoer = if (bb.outgoers[0]) |out| out else if (bb.outgoers[1]) |out| out else unreachable;
 
         var outgoerBB = bbs.get(outgoer);
@@ -726,7 +729,7 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
             var incomerBRID = (ptr_to_last(InstID, incomerBB.insts.list.items) orelse unreachable).*;
             var incomerBR = insts.get(incomerBRID);
 
-            if(try is_self_ref(fun,incomer,bbID)){
+            if (try is_self_ref(fun, incomer, bbID)) {
                 remove_bb_from_outgoers(incomerBB, bbID);
                 continue;
             }
@@ -735,7 +738,7 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
 
             _ = replace_branches_to_with(incomerBR, bbID, outgoer);
             // replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
-             replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
+            replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
         }
         try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
     } else if (bb_num_outgoers(bb) < 2) {
@@ -1049,10 +1052,12 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
             log.err("function {s} not found in IR\n", .{fun_name});
             return error.FunctionNotFound;
         };
-        inline for (passes) |pass| {
+        inline for (passes, 0..) |pass, pass_no| {
             switch (pass) {
                 .sccp => {
-                    try sccp(&ir, fun);
+                    const changed = try sccp(&ir, fun);
+                    // if (changed)
+                    log.trace("sccp changed the IR in pass {d}={any}\n", .{ pass_no, changed });
                 },
                 .empty_bb => {
                     try empty_block_removal_pass(fun);
@@ -1142,6 +1147,20 @@ test "sccp.removes-nested-never-ran-while" {
         "  ret i64 2",
         "}",
     }, .{
-        .{ "main", .{ .sccp ,.empty_bb } },
+        .{ "main", .{ .sccp, .empty_bb } },
     });
+}
+
+test "no-panics-in-fib" {
+    log.empty();
+    errdefer log.print();
+    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+    var ir = try testMe(in);
+    try save_dot_to_file(&ir, "pre_fib.dot");
+    const changed = try sccp(&ir, try ir.getFun(try ir.getIdentID("fib")));
+    try save_dot_to_file(&ir, "post_fib.dot");
+    const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
+    try std.fs.cwd().writeFile("fib.ll", str);
+    std.debug.print("CHANGED={any}\n", .{changed});
+    std.debug.print("{s}\n", .{str});
 }
