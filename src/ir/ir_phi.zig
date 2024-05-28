@@ -1971,6 +1971,10 @@ pub fn OrderedArrayList(comptime T: type) type {
             };
         }
 
+        pub fn deinit(self: Self) void {
+            self.list.deinit();
+        }
+
         /// A helper for iterating instead of `field.list.items`
         pub inline fn items(self: Self) []T {
             return self.list.items[0..self.len];

@@ -32,7 +32,7 @@ pub const RegUsage = struct {
 
 /// Push reachable usages of a register to the ssa worklist
 pub fn uses_of(alloc: Alloc, fun: *const Function, reg: Reg) !ArrayList(RegUsage) {
-    var visited = try alloc.alloc(bool, @intCast(fun.bbs.len));
+    var visited = try alloc.alloc(bool, @intCast(fun.bbs.len + fun.bbs.removed));
     defer alloc.free(visited);
     @memset(visited, false);
 
@@ -44,7 +44,7 @@ pub fn uses_of(alloc: Alloc, fun: *const Function, reg: Reg) !ArrayList(RegUsage
 /// The inner function of reachable_uses_of
 /// Pushes all uses
 fn uses_of_in_bb(fun: *const Function, reg: Register, bbID: BBID, uses: *ArrayList(RegUsage), visited: []bool) !void {
-    if (visited[bbID] == true){
+    if (visited[bbID] == true) {
         return;
     }
     visited[bbID] = true;
@@ -98,7 +98,7 @@ fn uses_of_in_bb(fun: *const Function, reg: Register, bbID: BBID, uses: *ArrayLi
             );
         },
         .Br => {
-        const br = Inst.Br.get(inst);
+            const br = Inst.Br.get(inst);
             try uses_of_in_bb(
                 fun,
                 reg,

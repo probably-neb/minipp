@@ -175,7 +175,6 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                 utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
                 const reg = regs.get(res.i);
                 values[reg.id] = value;
-                //dbg_new_val(ir, fun, reg, value);
                 try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
             }
 
@@ -214,7 +213,8 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
                     const reg = regs.get(res.i);
                     values[reg.id] = inst_value;
-                    // dbg_new_val(ir, fun, reg, inst_value);
+                    // print out the instruction and the new value
+                    std.debug.print("inst {any} -> {any}\n", .{ inst, inst_value });
                     try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
                 }
             }
@@ -482,11 +482,11 @@ fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
         .global, .param => Value.unknown(),
         ._invalid, .label => unreachable,
     };
-    if (ref.kind == .immediate) {
-        std.debug.print("REF IMM {s} {any} {?any}\n", .{ ir.getIdent(ref.i), ref, res.constant });
-    } else if (ref.kind == .immediate_u32) {
-        std.debug.print("REF IMM U32 {s} {any} {?any}\n", .{ ir.getIdent(ref.i), ref, res.constant });
-    }
+    // if (ref.kind == .immediate) {
+    //     std.debug.print("REF IMM {s} {any} {?any}\n", .{ ir.getIdent(ref.i), ref, res.constant });
+    // } else if (ref.kind == .immediate_u32) {
+    //     std.debug.print("REF IMM U32 {s} {any} {?any}\n", .{ ir.getIdent(ref.i), ref, res.constant });
+    // }
     return res;
 }
 
@@ -683,7 +683,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
     }
 }
 
-fn inst_uses_reg(inst: Inst, reg: Reg) bool {
+pub fn inst_uses_reg(inst: Inst, reg: Reg) bool {
     return switch (inst.op) {
         .Binop => {
             const binop = Inst.Binop.get(inst);
