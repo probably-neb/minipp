@@ -2033,6 +2033,11 @@ pub const BasicBlock = struct {
     phiInsts: std.ArrayList(Function.InstID),
     phiMap: std.AutoHashMap(StrID, Function.InstID),
 
+    pub fn reinitIncomers(self: *BasicBlock, fun: *Function) void {
+        self.incomers.deinit();
+        self.incomers = std.ArrayList(Label).init(fun.alloc);
+    }
+
     pub fn addRefToPhi(self: BasicBlock.ID, fun: *Function, ref: Ref, bbIn: BasicBlock.ID, name: StrID) !Function.InstID {
         // std.debug.print("ref.i {any}\n", .{ref.i});
         const bb = fun.bbs.get(self);

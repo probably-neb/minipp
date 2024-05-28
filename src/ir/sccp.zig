@@ -33,6 +33,32 @@ pub const SCCPRes = struct {
     /// a LUT where reachable[bb.id] indicates
     /// if the block is reachable or can be removed
     reachable: []bool,
+    pub fn empty() SCCPRes {
+        return .{
+            .values = undefined,
+            .reachable = undefined,
+        };
+    }
+
+    pub fn eq(self: SCCPRes, other: SCCPRes) bool {
+        if (self.values.len != other.values.len) {
+            return false;
+        }
+        if (self.reachable.len != other.reachable.len) {
+            return false;
+        }
+        for (self.values,0..) |val, i| {
+            if (!val.eq(other.values[i])) {
+                return false;
+            }
+        }
+        for (self.reachable,0..) |reachable, i| {
+            if (reachable != other.reachable[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 /// Sparse Conditional Constant Propagation
 // TODO: make this run on a single function
@@ -81,7 +107,7 @@ pub const SCCPRes = struct {
 ///         CFGWorklist.push(b1)
 pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
     var reachable = exec: {
-        var reachable = try alloc.alloc(bool, @intCast(fun.bbs.len));
+        var reachable = try alloc.alloc(bool, @intCast(fun.bbs.len + fun.bbs.removed));
         @memset(reachable, false);
         break :exec reachable;
     };
@@ -149,7 +175,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                 utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
                 const reg = regs.get(res.i);
                 values[reg.id] = value;
-                dbg_new_val(ir, fun, reg, value);
+                //dbg_new_val(ir, fun, reg, value);
                 try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
             }
 
@@ -188,7 +214,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
                     const reg = regs.get(res.i);
                     values[reg.id] = inst_value;
-                    dbg_new_val(ir, fun, reg, inst_value);
+                    // dbg_new_val(ir, fun, reg, inst_value);
                     try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
                 }
             }
@@ -522,7 +548,7 @@ const SSAEdge = struct {
 
 /// Push reachable usages of a register to the ssa worklist
 fn add_reachable_uses_of(fun: *const Function, reg: Register, ssaWL: *ArrayList(SSAEdge), reachable: []const bool) !void {
-    var visited = try fun.alloc.alloc(bool, @intCast(fun.bbs.len));
+    var visited = try fun.alloc.alloc(bool, @intCast(fun.bbs.len + fun.bbs.removed));
     defer fun.alloc.free(visited);
     @memset(visited, false);
 
