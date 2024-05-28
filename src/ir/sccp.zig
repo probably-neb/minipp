@@ -47,12 +47,12 @@ pub const SCCPRes = struct {
         if (self.reachable.len != other.reachable.len) {
             return false;
         }
-        for(self.values,0..) |val, i| {
+        for (self.values, 0..) |val, i| {
             if (!val.eq(other.values[i])) {
                 return false;
             }
         }
-        for(self.reachable,0..) |reach, i| {
+        for (self.reachable, 0..) |reach, i| {
             if (reach != other.reachable[i]) {
                 return false;
             }
@@ -417,8 +417,18 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
         // for making dylans life easier with lowering
         .Gep => Value.unknown(),
         .Call => Value.unknown(),
-        // already handled, should be skipped by parent
-        .Phi => null,
+        .Phi => {
+            const phi = Inst.Phi.get(inst);
+            const numEntries = phi.entries.items.len;
+            if (numEntries == 0) {
+                return Value.undef();
+            } else if (numEntries == 1) {
+                const entry = phi.entries.items[0];
+                return ref_value(ir, entry.ref, values);
+            } else {
+                return Value.unknown();
+            }
+        },
         // no result registers. handled by if at top of function
         .Ret, .Store, .Param, .Br, .Jmp => unreachable,
     };
@@ -543,10 +553,10 @@ pub const Value = struct {
         if (self.state != other.state) {
             return false;
         }
-        if(self.constant == null and other.constant == null)  {
+        if (self.constant == null and other.constant == null) {
             return true;
         }
-        if(self.constant == null or other.constant == null) {
+        if (self.constant == null or other.constant == null) {
             return false;
         }
         return self.constant.?.eq(other.constant.?);

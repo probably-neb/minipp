@@ -301,7 +301,7 @@ fn change_use_of_reg_bool(fun: *Function, ir: *const IR, bbID: BBID, bb: *BasicB
         },
         .Zext, .Sext, .Trunc, .Bitcast => {
             var misc = Inst.Misc.get(inst.*);
-            if (!refers_to_reg(misc.from, reg)) {
+            if (refers_to_reg(misc.from, reg)) {
                 misc.from = ref;
                 inst.* = misc.toInst();
                 return true;
@@ -454,7 +454,7 @@ fn change_use_of_reg(fun: *Function, ir: *const IR, bbID: BBID, bb: *BasicBlock,
         },
         .Zext, .Sext, .Trunc, .Bitcast => {
             var misc = Inst.Misc.get(inst.*);
-            if (!refers_to_reg(misc.from, reg)) {
+            if (refers_to_reg(misc.from, reg)) {
                 misc.from = ref;
                 inst.* = misc.toInst();
                 return;
@@ -1162,5 +1162,27 @@ test "no-panics-in-fib" {
     const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
     try std.fs.cwd().writeFile("fib.ll", str);
     std.debug.print("CHANGED={any}\n", .{changed});
+    std.debug.print("{s}\n", .{str});
+}
+
+fn sccp_all_funs(ir: *IR) !void {
+    const funs = ir.funcs.items.items;
+    for (funs) |*fun| {
+        _ = try sccp(ir, fun);
+    }
+}
+
+test "no-panics-in-killer-bubs" {
+    log.empty();
+    errdefer log.print();
+    const in = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
+    var ir = try testMe(in);
+    try save_dot_to_file(&ir, "pre_bubs.dot");
+    try sccp_all_funs(&ir);
+
+    try save_dot_to_file(&ir, "post_bubs.dot");
+    const str = try ir.stringify_cfg(testAlloc, .{ .header = true });
+    try std.fs.cwd().writeFile("bubs.ll", str);
+    // std.debug.print("CHANGED={any}\n", .{changed});
     std.debug.print("{s}\n", .{str});
 }
