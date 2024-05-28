@@ -17,24 +17,30 @@ const RegID = Register.ID;
 const Ref = IR.Ref;
 const OpCode = IR.Op;
 
-pub fn deadCodeElim(ir: *IR, print: bool) !void {
+pub fn deadCodeElim(ir: *IR, fun: *Function, print: bool) !void {
     var arena_alloc = std.heap.ArenaAllocator.init(ir.alloc);
     var alloc = arena_alloc.allocator();
     defer arena_alloc.deinit();
 
-    for (ir.funcs.items.items) |*fun| {
-        // var list = markDeadCode(alloc, fun) catch |err| {
-        //     std.debug.print("Error: {any}\n", .{err});
-        // };
-        var list = try markDeadCode(alloc, fun);
+    var list = try markDeadCode(alloc, fun);
+    for (fun.bbs.items()) |*bb| {
+        var i: u32 = 0;
+        while (i != bb.insts.items().len) {
+            const inst = bb.insts.items()[i];
+            if (!list[inst]) {
+                bb.insts.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
 
-        if (print) {
-            std.debug.print("Dead code elimination for function {any}:\n", .{fun.name});
-            for (fun.bbs.items()) |bb| {
-                for (bb.insts.items()) |inst| {
-                    if (!list[inst]) {
-                        std.debug.print("  {any}\n", .{fun.insts.get(inst).*});
-                    }
+    if (print) {
+        std.debug.print("Dead code elimination for function {any}:\n", .{fun.name});
+        for (fun.bbs.items()) |bb| {
+            for (bb.insts.items()) |inst| {
+                if (!list[inst]) {
+                    std.debug.print("  {any}\n", .{fun.insts.get(inst).*});
                 }
             }
         }
@@ -79,7 +85,9 @@ pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
             const inst = insts.get(bbinstID).*;
             if (inst.op == .Ret or
                 inst.op == .Call or
-                inst.op == .Load)
+                inst.op == .Load or
+                inst.op == .Br or
+                inst.op == .Jmp)
             {
                 critMarkList[bbinstID] = true;
                 try workingList.append(bbinstID);
@@ -169,6 +177,7 @@ fn getSources(inst: Inst, alloc: Alloc) !ArrayList(RegID) {
     return sources;
 }
 
+const ting = std.testing;
 const testAlloc = std.heap.page_allocator;
 
 fn testMe(input: []const u8) !IR {
@@ -179,32 +188,138 @@ fn testMe(input: []const u8) !IR {
     return ir;
 }
 
-test "deadCodeElim.compilation" {
-    var ir = try testMe(
-        \\fun main() void {
-        \\  int a;
-        \\  if (true) {
-        \\    while (false) {
-        \\      a = 1;
-        \\      a = 3;
-        \\    }
-        \\  }
-        \\  a = 2;
-        \\}
-    );
-    try deadCodeElim(&ir, true);
+pub const OptPass = enum {
+    sccp,
+};
+
+fn save_dot_to_file(ir: *const IR, file: []const u8) !void {
+    const dot = @import("../dot.zig");
+    var arena = std.heap.ArenaAllocator.init(ting.allocator);
+    defer arena.deinit();
+    var alloc = arena.allocator();
+    try std.fs.cwd().writeFile(file, try dot.generate(alloc, try ir.stringify(alloc)));
 }
-// test "deadCodeElim.ir_elimTest" {
-//     var ir = try testMe(
-//         \\fun main() void {
-//         \\  int a,b;
-//         \\  a = 1;
-//         \\  if (param) {
-//         \\     a = 2;
-//         \\  }
+
+// NOTE: this is pub so it can be imported from files implementing a specific pass so they can use the mutations
+// defined above
+pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_passes: anytype) !void {
+    var arena = std.heap.ArenaAllocator.init(ting.allocator);
+    defer arena.deinit();
+    var alloc = arena.allocator();
+
+    var ir = try testMe(input);
+    try save_dot_to_file(&ir, "pre.dot");
+    // Run optimization passes
+    inline for (fun_passes) |fun_pass| {
+        const fun_name: []const u8 = @as([]const u8, fun_pass.@"0");
+        const passes = fun_pass.@"1";
+        const funNameID = ir.getIdentID(fun_name) catch {
+            log.err("function {s} not found in IR\n", .{fun_name});
+            return error.FunctionNotFound;
+        };
+        var fun = ir.getFun(funNameID) catch {
+            log.err("function {s} not found in IR\n", .{fun_name});
+            return error.FunctionNotFound;
+        };
+        inline for (passes) |pass| {
+            switch (pass) {
+                // .sccp => {
+                //     try sccp(&ir, fun);
+                // },
+                // .empty_bb => {
+                //     try empty_block_removal_pass(fun);
+                // },
+                .dead_code_elim => {
+                    try deadCodeElim(&ir, fun, false);
+                },
+                else => {
+                    log.warn("unknown optimization pass: {s}\n", .{@tagName(pass)});
+                },
+            }
+        }
+    }
+    try save_dot_to_file(&ir, "post.dot");
+    const gotIRstr = try ir.stringify(alloc);
+
+    // NOTE: could use multiline strings for the
+    // expected value but, that makes it so you can't put
+    // comments inbetween the lines
+    // idk rough tradeoff
+
+    // putting all lines in newline separated buf
+    // required because as far as I can tell, writing
+    // multiline strings in zig is a pain in the
+    // metaphorical ass
+    comptime var expectedLen: usize = 1;
+    inline for (expected) |e| {
+        expectedLen += e.len + 1;
+    }
+    var expectedStr = try alloc.alloc(u8, expectedLen);
+    comptime var i: usize = 0;
+    inline for (expected) |e| {
+        const end = i + e.len;
+        @memcpy(expectedStr[i..end], e);
+        expectedStr[end] = '\n';
+        i = end + 1;
+    }
+    // the stringify outputs an extra newline at the end.
+    // this is the easier fix sue me
+    expectedStr[i] = '\n';
+
+    try ting.expectEqualStrings(expectedStr, gotIRstr);
+}
+
+// test "opt.sccp+empty-block=$profit" {
+//     log.empty();
+//     errdefer log.print();
 //
-//         \\  b = a;
+//     try expectResultsInIR(
+//         \\fun main() int {
+//         \\  int a;
+//         \\  if (false) {
+//         \\    a = 1;
+//         \\  } else {
+//         \\    a = 2;
+//         \\  }
+//         \\  return a;
 //         \\}
-//     );
-//     try deadCodeElim(&ir, true);
+//     , .{
+//         "define i64 @main() {",
+//         "entry:",
+//         "  br label %exit",
+//         "exit:",
+//         "  ret i64 2",
+//         "}",
+//     }, .{
+//         .{ "main", .{ .sccp, .empty_bb } },
+//     });
 // }
+//
+//
+
+test "sccp.removes-nested-never-ran-while" {
+    log.empty();
+    errdefer log.print();
+    try expectResultsInIR(
+        \\fun main() int {
+        \\  int a,b,c;
+        \\  a = 2;
+        \\  b = a;
+        \\  c = 3;
+        \\  return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  br label %body0",
+        "body0:",
+        "  %a2 = add i64 2, 0",
+        "  br label %exit",
+        "exit:",
+        "  %return_reg4 = phi i64 [ %a2, %body0 ]",
+        "  ret i64 %return_reg4",
+        "}",
+    }, .{
+        .{ "main", .{.dead_code_elim} },
+    });
+}
