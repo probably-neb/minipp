@@ -5,6 +5,7 @@ const utils = @import("../utils.zig");
 const log = @import("../log.zig");
 const Set = @import("../array_hash_set.zig");
 const IR = @import("ir_phi.zig");
+const Phi = @import("phi.zig");
 
 const Function = IR.Function;
 const Block = IR.BasicBlock;
@@ -18,6 +19,7 @@ pub const Dominance = struct {
     domChildren: std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)),
     domFront: std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)),
     fun: *Function,
+    alloc: std.mem.Allocator,
 
     pub fn init(ir: *IR, fun: *Function) Dominance {
         return .{
@@ -25,6 +27,7 @@ pub const Dominance = struct {
             .domChildren = std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)).init(ir.alloc),
             .domFront = std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)).init(ir.alloc),
             .dominators = std.ArrayList(Set.Set(Block.ID)).init(ir.alloc),
+            .alloc = ir.alloc,
             .fun = fun,
         };
     }
@@ -44,9 +47,9 @@ pub const Dominance = struct {
     //         Dom(n) = {n} union with intersection over Dom(p) for all p in pred(n)
     // return Dom
     pub fn generateDominators(self: *Dominance) !void {
-        var result = try std.ArrayList(Set.Set(Block.ID)).initCapacity(self.alloc, self.blocks.items.len);
+        var result = try std.ArrayList(Set.Set(Block.ID)).initCapacity(self.alloc, self.fun.bbs.items().len);
         // fill all the dominators with empty
-        for (self.blocks.items) |_| {
+        for (self.fun.bbs.ids()) |_| {
             try result.append(BSet.init());
         }
 
@@ -56,13 +59,13 @@ pub const Dominance = struct {
         // for each n in N - {n0}
         //     Dom(n) = N;
         // initialize the dominator sets
-        for (self.postOrder.items, 0..) |block, i| {
-            if (i == 0) {
+        for (self.fun.bbs.ids()) |block| {
+            if (block == Function.entryBBID) {
                 _ = try result.items[block].add(self.alloc, block);
                 continue;
             }
 
-            for (self.postOrder.items) |block2| {
+            for (self.fun.bbs.ids()) |block2| {
                 _ = try result.items[block].add(self.alloc, block2);
             }
         }
@@ -80,8 +83,8 @@ pub const Dominance = struct {
         var changes = true;
         while (changes) {
             changes = false;
-            for (self.postOrder.items, 0..) |block, i| {
-                if (i == 0) continue;
+            for (self.fun.bbs.ids()) |block| {
+                if (block == Function.entryBBID) continue;
 
                 // get the predecessors for this block
                 const preds = try self.getBlockIncomerIDs(block);
@@ -92,14 +95,6 @@ pub const Dominance = struct {
                     var blockDom = result.items[block];
                     var intersection = try blockDom.intersectionOf(self.alloc, predDom);
                     _ = try intersection.add(self.alloc, block);
-                    // std.debug.print("\nblock = {any}, pred = {any}\n", .{ block, pred });
-                    // std.debug.print("predDom\n", .{});
-                    // predDom.print();
-                    // std.debug.print("blockDm\n", .{});
-                    // blockDom.print();
-                    // std.debug.print("intersection\n", .{});
-                    // intersection.print();
-                    // std.debug.print("\n", .{});
                     var changedInter = intersection.eql(blockDom);
                     if (!changedInter) {
                         result.items[block].deinit(self.alloc);
@@ -112,12 +107,6 @@ pub const Dominance = struct {
             }
         }
         self.dominators = result;
-        // // std.debug.print("Dominators\n", .{});
-        // for (self.postOrder.items) |block| {
-        //     std.debug.print("block = {any}, ", .{block});
-        //     self.dominators.items[block].print();
-        //     std.debug.print("\n", .{});
-        // }
     }
 
     // // Initialize the immediate dominators map to be empty
@@ -138,7 +127,7 @@ pub const Dominance = struct {
     // return idom
     pub fn computeIdoms(self: *Dominance) !void {
         // for each n in N;
-        for (self.postOrder.items) |block| {
+        for (self.fun.bbs.ids()) |block| {
             // Exclude the node itself from its set of dominators to find possible idoms
             var blockDom = self.dominators.items[block];
             var possibleIdoms = try blockDom.clone(self.alloc);
@@ -160,14 +149,14 @@ pub const Dominance = struct {
                         continue;
                     }
                     if (!self.dominators.items[d.key_ptr.*].contains(d2.key_ptr.*)) {
-                        // std.debug.print("block = {d}, d = {d}, d2 = {d}\n", .{ block, d.key_ptr.*, d2.key_ptr.* });
+                        // std.debug.print("block = {any}, d = {any}, d2 = {any}\n", .{ self.fun.bbsToCFG.get(block), self.fun.bbsToCFG.get(d.key_ptr.*), self.fun.bbsToCFG.get(d2.key_ptr.*) });
                         doms_all = false;
                         break;
                     }
                 }
 
                 if (doms_all) {
-                    // std.debug.print("idom adding block = {d}, idom = {d}\n", .{ block, d.key_ptr.* });
+                    // std.debug.print("idom adding block = {any}, d = {any}\n", .{ self.fun.bbsToCFG.get(block), self.fun.bbsToCFG.get(d.key_ptr.*) });
 
                     _ = try self.idoms.put(block, d.key_ptr.*);
                     break;
@@ -192,12 +181,47 @@ pub const Dominance = struct {
     //     return children
     pub fn findChildren(self: *Dominance, target_node: Block.ID) !std.ArrayList(Block.ID) {
         var children = std.ArrayList(Block.ID).init(self.alloc);
-        for (self.postOrder.items) |node| {
+        for (self.fun.bbs.ids()) |node| {
             if (self.idoms.get(node) == target_node) {
                 try children.append(node);
             }
         }
         return children;
+    }
+
+    pub fn getBlockIncomerIDs(self: *Dominance, blockID: Block.ID) !std.ArrayList(Block.ID) {
+        const block = self.fun.bbs.get(blockID);
+        var result = std.ArrayList(Block.ID).init(self.alloc);
+        for (block.incomers.items) |incomer| {
+            try result.append(incomer);
+        }
+        return result;
+    }
+
+    pub fn printAsDot(self: *Dominance) void {
+        std.debug.print("digraph G {{\n", .{});
+        for (self.fun.bbs.ids()) |block| {
+            // print out the predecessors
+            for (self.fun.bbs.get(block).incomers.items) |incomer| {
+                INDENT();
+                self.printBlockName(incomer);
+                std.debug.print(" -> ", .{});
+                self.printBlockName(block);
+                std.debug.print("\n", .{});
+            }
+            // print ouf the successors
+            for (self.fun.bbs.get(block).outgoers) |outgoer| {
+                INDENT();
+                if (outgoer == null) {
+                    continue;
+                }
+                self.printBlockName(block);
+                std.debug.print(" -> ", .{});
+                self.printBlockName(outgoer.?);
+                std.debug.print("\n", .{});
+            }
+        }
+        std.debug.print("}}\n", .{});
     }
 
     pub fn printChildren(self: *Dominance, node: Block.ID) void {
@@ -213,15 +237,60 @@ pub const Dominance = struct {
         std.debug.print("\n", .{});
     }
 
+    pub fn printBlockName(self: *Dominance, block: Block.ID) void {
+        const blockName = self.fun.bbs.get(block).name;
+        std.debug.print("\"{s}{d}\"", .{ blockName, block });
+    }
+
     pub fn printallChildren(self: *Dominance) void {
-        for (self.postOrder.items) |node| {
+        for (self.fun.bbs.ids()) |node| {
+            INDENT();
             self.printChildren(node);
         }
     }
 
     pub fn generateDomChildren(self: *Dominance) !void {
-        for (self.postOrder.items) |node| {
+        for (self.fun.bbs.ids()) |node| {
+            INDENT();
             try self.domChildren.put(node, try self.findChildren(node));
+        }
+    }
+
+    pub fn printDominators(self: *Dominance) void {
+        for (self.fun.bbs.ids()) |block| {
+            INDENT();
+            self.printBlockName(block);
+            self.dominators.items[block].print();
+            std.debug.print("\n", .{});
+        }
+    }
+
+    pub fn printIdoms(self: *Dominance) void {
+        var iter = self.idoms.keyIterator();
+        while (iter.next()) |key| {
+            INDENT();
+            self.printBlockName(key.*);
+            std.debug.print(" -> ", .{});
+            self.printBlockName(self.idoms.get(key.*).?);
+            std.debug.print("\n", .{});
+        }
+    }
+
+    pub fn INDENT() void {
+        std.debug.print("   ", .{});
+    }
+
+    pub fn printDomFront(self: *Dominance) void {
+        var iter = self.domFront.iterator();
+        while (iter.next()) |entry| {
+            INDENT();
+            self.printBlockName(entry.key_ptr.*);
+            std.debug.print(" -> ", .{});
+            for (entry.value_ptr.items) |block| {
+                self.printBlockName(block);
+                std.debug.print(" ", .{});
+            }
+            std.debug.print("\n", .{});
         }
     }
 
@@ -237,18 +306,18 @@ pub const Dominance = struct {
     //            S = S U {w}
     //    DF[n] = S
     pub fn computeDomFront(self: *Dominance, nodeID: Block.ID) !void {
-        const node = self.blocks.items[nodeID];
+        const node = self.fun.bbs.get(nodeID);
         var S = std.ArrayList(Block.ID).init(self.alloc);
         // for each node y in succ[n]:
         for (node.outgoers) |outgoer| {
             if (outgoer == null) {
                 continue;
             }
-            const edge = self.edges.items[outgoer.?];
-            if (self.idoms.get(edge.dest) != nodeID) {
+
+            if (self.idoms.get(outgoer.?) != nodeID) {
                 // std.debug.print("edge.dest = {d}, nodeID = {d}\n", .{ edge.dest, nodeID });
 
-                try S.append(edge.dest);
+                try S.append(outgoer.?);
             }
         }
         // for each child c of n in the dom-tree:
@@ -271,7 +340,7 @@ pub const Dominance = struct {
 
     /// just do it for all of them
     pub fn computeAllDomFronts(self: *Dominance) !void {
-        for (self.postOrder.items) |node| {
+        for (self.fun.bbs.ids()) |node| {
             try self.computeDomFront(node);
         }
     }
@@ -282,4 +351,104 @@ pub const Dominance = struct {
         try self.generateDomChildren();
         try self.computeAllDomFronts();
     }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // TESTING
+    ////////////////////////////////////////////////////////////////////////////
+
+    pub fn compareCFgDomFront(self: *Dominance) !void {
+        const cfgFun = self.fun.cfg;
+        const cfgDomFront = cfgFun.domFront;
+        // go through all of the keys in the dominance front convert to Block.ID see if the values are the same
+        var cfgIter = cfgDomFront.iterator();
+        while (cfgIter.next()) |entry| {
+            const cfgKey = entry.key_ptr;
+            const cfgValue = entry.value_ptr;
+            const blockID = self.fun.cfgToBBs.get(cfgKey.*).?;
+            const domFront = self.domFront.get(blockID);
+            // check that the block is in the domFront
+            if (domFront == null) {
+                utils.impossible("blockID = {d} block = {d} not in domFront\n", .{ blockID, cfgKey });
+                continue;
+            }
+
+            // check that the values are the same
+            const domList = domFront.?;
+            var cfgList = std.ArrayList(?Block.ID).init(self.alloc);
+            for (cfgValue.items) |cfgBlock| {
+                const blockIDAAAA = self.fun.cfgToBBs.get(cfgBlock);
+                try cfgList.append(blockIDAAAA);
+            }
+            var cfgListAsBlockID = cfgList.items;
+            for (cfgListAsBlockID) |blockID_| {
+                var blockIDFinding = blockID_.?;
+
+                var found: bool = false;
+                for (domList.items) |domBlock| {
+                    if (domBlock == blockIDFinding) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    utils.impossible("blockID = {d} block = {d} not in domFront\n", .{ blockIDFinding, cfgKey });
+                }
+            }
+
+            // and then the other way
+            for (domList.items) |domBlock| {
+                var blockIDFinding = domBlock;
+                var found: bool = false;
+                for (cfgListAsBlockID) |blockID_| {
+                    if (blockID_ == blockIDFinding) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    utils.impossible("blockID = {d} block = {d} not in domFront\n", .{ blockIDFinding, cfgKey });
+                }
+            }
+        }
+    }
+
+    pub fn compareToCfgDominator(self: *Dominance) !void {
+        // print everything
+        // std.debug.print("Dominators\n", .{});
+        // self.printDominators();
+        // std.debug.print("Idoms\n", .{});
+        // self.printIdoms();
+        // std.debug.print("Children\n", .{});
+        // self.printallChildren();
+        // std.debug.print("DomFront\n", .{});
+        // self.printDomFront();
+        // std.debug.print("\n\n Dot:\n", .{});
+        // self.printAsDot();
+
+        try self.compareCFgDomFront();
+    }
 };
+
+const ting = std.testing;
+const testAlloc = std.heap.page_allocator;
+
+fn testMe(input: []const u8) !IR {
+    const tokens = try @import("../lexer.zig").Lexer.tokenizeFromStr(input, testAlloc);
+    const parser = try @import("../parser.zig").Parser.parseTokens(tokens, input, testAlloc);
+    const ast = try Ast.initFromParser(parser);
+    const ir = try Phi.generate(testAlloc, &ast);
+    return ir;
+}
+
+test "dominance.if_test" {
+    errdefer log.print();
+    const in = "fun main() int {\n int a,b,c;\n if(a == 1){\n b =c;\n}\n b = a; return b;\n }";
+    var ir = try testMe(in);
+    var funNameID = ir.internIdent("main");
+    var fun = ir.getFun(funNameID) catch {
+        utils.impossible("fun not found\n", .{});
+    };
+    var dom = Dominance.init(&ir, fun);
+    try dom.genDominance();
+    try dom.compareToCfgDominator();
+}
