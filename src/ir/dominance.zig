@@ -11,24 +11,27 @@ const Function = IR.Function;
 const Block = IR.BasicBlock;
 
 pub const BSet = Set.Set(Block.ID);
+pub const BitSet = std.bit_set.DynamicBitSet;
 
 pub const Dominance = struct {
     // TODO: replace with bitsets
-    dominators: std.ArrayList(Set.Set(Block.ID)),
+    dominators: std.ArrayList(BitSet),
     idoms: std.AutoHashMap(Block.ID, Block.ID),
     domChildren: std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)),
     domFront: std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)),
     fun: *Function,
     alloc: std.mem.Allocator,
+    numBlocks: u32,
 
     pub fn init(ir: *IR, fun: *Function) Dominance {
         return .{
             .idoms = std.AutoHashMap(Block.ID, Block.ID).init(ir.alloc),
             .domChildren = std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)).init(ir.alloc),
             .domFront = std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)).init(ir.alloc),
-            .dominators = std.ArrayList(Set.Set(Block.ID)).init(ir.alloc),
+            .dominators = std.ArrayList(BitSet).init(ir.alloc),
             .alloc = ir.alloc,
             .fun = fun,
+            .numBlocks = fun.bbs.len + fun.bbs.removed,
         };
     }
 
@@ -47,10 +50,10 @@ pub const Dominance = struct {
     //         Dom(n) = {n} union with intersection over Dom(p) for all p in pred(n)
     // return Dom
     pub fn generateDominators(self: *Dominance) !void {
-        var result = try std.ArrayList(Set.Set(Block.ID)).initCapacity(self.alloc, self.fun.bbs.items().len);
-        // fill all the dominators with empty
+        var result = try std.ArrayList(BitSet).initCapacity(self.alloc, self.numBlocks);
+        // // fill all the dominators with empty
         for (self.fun.bbs.ids()) |_| {
-            try result.append(BSet.init());
+            try result.append(undefined);
         }
 
         // // dominator of the start node is the start itself
@@ -61,13 +64,12 @@ pub const Dominance = struct {
         // initialize the dominator sets
         for (self.fun.bbs.ids()) |block| {
             if (block == Function.entryBBID) {
-                _ = try result.items[block].add(self.alloc, block);
+                result.items[block] = try BitSet.initEmpty(self.alloc, self.numBlocks);
+                result.items[block].set(block);
                 continue;
             }
 
-            for (self.fun.bbs.ids()) |block2| {
-                _ = try result.items[block].add(self.alloc, block2);
-            }
+            result.items[block] = try BitSet.initFull(self.alloc, self.numBlocks);
         }
 
         // // std.debug.print("after init Dominators\n", .{});
@@ -93,15 +95,16 @@ pub const Dominance = struct {
                     // get Dom(p)
                     var predDom = result.items[pred];
                     var blockDom = result.items[block];
-                    var intersection = try blockDom.intersectionOf(self.alloc, predDom);
-                    _ = try intersection.add(self.alloc, block);
+                    var intersection = try blockDom.clone(self.alloc);
+                    intersection.setIntersection(predDom);
+                    intersection.set(block);
                     var changedInter = intersection.eql(blockDom);
                     if (!changedInter) {
-                        result.items[block].deinit(self.alloc);
+                        result.items[block].deinit();
                         result.items[block] = try intersection.clone(self.alloc);
                         changes = true;
                     } else {}
-                    intersection.deinit(self.alloc);
+                    intersection.deinit();
                 }
                 preds.deinit();
             }
@@ -131,11 +134,11 @@ pub const Dominance = struct {
             // Exclude the node itself from its set of dominators to find possible idoms
             var blockDom = self.dominators.items[block];
             var possibleIdoms = try blockDom.clone(self.alloc);
-            _ = possibleIdoms.remove(block);
+            _ = possibleIdoms.unset(block);
 
             // The idom of node n is the unique dominator d in PossibleIdoms such that
             // every other dominator in PossibleIdoms is also dominated by d
-            var posIter = possibleIdoms.iterator();
+            var posIter = possibleIdoms.iterator(.{});
             while (posIter.next()) |d| {
                 var doms_all = true;
                 // // Check if d dominates all other elements in PossibleIdoms
@@ -143,12 +146,12 @@ pub const Dominance = struct {
                 //     if d != d' and d' not in Dom(d):
                 //         dominates_all = false
                 //         break
-                var posIter2 = possibleIdoms.iterator();
+                var posIter2 = possibleIdoms.iterator(.{});
                 while (posIter2.next()) |d2| {
-                    if (d.key_ptr.* == d2.key_ptr.*) {
+                    if (d == d2) {
                         continue;
                     }
-                    if (!self.dominators.items[d.key_ptr.*].contains(d2.key_ptr.*)) {
+                    if (!self.dominators.items[d].isSet(d2)) {
                         // std.debug.print("block = {any}, d = {any}, d2 = {any}\n", .{ self.fun.bbsToCFG.get(block), self.fun.bbsToCFG.get(d.key_ptr.*), self.fun.bbsToCFG.get(d2.key_ptr.*) });
                         doms_all = false;
                         break;
@@ -158,11 +161,11 @@ pub const Dominance = struct {
                 if (doms_all) {
                     // std.debug.print("idom adding block = {any}, d = {any}\n", .{ self.fun.bbsToCFG.get(block), self.fun.bbsToCFG.get(d.key_ptr.*) });
 
-                    _ = try self.idoms.put(block, d.key_ptr.*);
+                    _ = try self.idoms.put(block, @intCast(d));
                     break;
                 }
             }
-            possibleIdoms.deinit(self.alloc);
+            possibleIdoms.deinit();
         }
     }
 
@@ -256,14 +259,14 @@ pub const Dominance = struct {
         }
     }
 
-    pub fn printDominators(self: *Dominance) void {
-        for (self.fun.bbs.ids()) |block| {
-            INDENT();
-            self.printBlockName(block);
-            self.dominators.items[block].print();
-            std.debug.print("\n", .{});
-        }
-    }
+    // pub fn printDominators(self: *Dominance) void {
+    //     for (self.fun.bbs.ids()) |block| {
+    //         INDENT();
+    //         self.printBlockName(block);
+    //         self.dominators.items[block].print();
+    //         std.debug.print("\n", .{});
+    //     }
+    // }
 
     pub fn printIdoms(self: *Dominance) void {
         var iter = self.idoms.keyIterator();
@@ -330,7 +333,7 @@ pub const Dominance = struct {
             const DF = self.domFront.get(child);
             if (DF == null) continue;
             for (DF.?.items) |w| {
-                if (!self.dominators.items[w].contains(nodeID) or nodeID == w) {
+                if (!self.dominators.items[w].isSet(nodeID) or nodeID == w) {
                     try S.append(w);
                 }
             }
