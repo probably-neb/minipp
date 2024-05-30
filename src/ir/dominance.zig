@@ -16,7 +16,12 @@ pub const BitSet = std.bit_set.DynamicBitSet;
 pub const Dominance = struct {
     // TODO: replace with bitsets
     dominators: std.ArrayList(BitSet),
+    // Idoms is most efficently a map from block to block
+    // it could be an array with nullables
     idoms: std.AutoHashMap(Block.ID, Block.ID),
+
+    // can be replaced with a bitset instead of an array list
+    // however this would just be slower, as it is iteraed upon
     domChildren: std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)),
     domFront: std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)),
     fun: *Function,
@@ -431,6 +436,16 @@ pub const Dominance = struct {
         try self.compareCFgDomFront();
     }
 };
+
+pub fn dominateProgramNTimes(ir: *IR, n: u32) !void {
+    const funcs = ir.funcs.items.items;
+    for (0..n) |_| {
+        for (funcs) |*func| {
+            var dom = Dominance.init(ir, func);
+            try dom.genDominance();
+        }
+    }
+}
 
 const ting = std.testing;
 const testAlloc = std.heap.page_allocator;
