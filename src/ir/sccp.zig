@@ -241,7 +241,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     }
                     continue;
                 }
-                if (try eval(ir, inst, values, null)) |inst_value| {
+                if (try eval(ir, inst, values)) |inst_value| {
                     utils.assert(!std.meta.eql(inst.res, Ref.default), "inst with value has no res {any}\n", .{inst});
                     const res = inst.res;
                     utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
@@ -280,7 +280,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                 // r/im15andthisisdeep
                 continue :main_loop;
             }
-            const new_res_val = try eval(ir, inst, values, null) orelse {
+            const new_res_val = try eval(ir, inst, values) orelse {
                 utils.impossible(
                     \\result of ssa edge eval is null, this should have been handled in the prechecks right???
                     \\inst={any}
@@ -330,20 +330,7 @@ inline fn has_res(op: OpCode) bool {
     };
 }
 
-const CmpInfo = struct {
-    /// The comparison operator used
-    op: OpCode.Cond,
-    /// The register result of the operand
-    /// Will always be a register (.kind == .local)
-    res: Ref,
-    /// The operand we now know the value of
-    reg: Ref,
-    /// The value of the other operand
-    /// i.e. if op is .Eq then reg is this value
-    val: Value,
-};
-
-fn eval(ir: *const IR, inst: Inst, values: []const Value, cmpInfo: ?*?CmpInfo) !?Value {
+fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
     if (!has_res(inst.op)) {
         return null;
     }
@@ -429,43 +416,22 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value, cmpInfo: ?*?CmpInfo) !
             const lhs = ref_value(ir, cmp.lhs, values);
             const rhs = ref_value(ir, cmp.rhs, values);
 
-            const lhsConst = lhs.state == .constant;
-            const rhsConst = rhs.state == .constant;
-            if (lhsConst and rhsConst) {
-                // eval
-                const cond = cmp.cond;
-                const l = lhs.constant.?.value;
-                const r = lhs.constant.?.value;
-                const res = switch (cond) {
-                    .Eq => l == r,
-                    .NEq => l != r,
-                    .Lt => l < r,
-                    .Gt => l > r,
-                    .GtEq => l >= r,
-                    .LtEq => l <= r,
-                };
-                return Value.const_bool(res);
+            if (lhs.state != .constant or rhs.state != .constant) {
+                return meet(lhs, rhs);
             }
-            // one is constant and one is not,
-            // therefore we can determine information about the one that isn't
-            // based on the op
-            if ((lhsConst or rhsConst) and cmpInfo != null) {
-                // looked for xor keyword, found simd
-                utils.assert(@reduce(.Xor, @Vector(2, bool){ lhsConst, rhsConst }), "case where both sides const not handled???\n", .{});
-
-                utils.assert(inst.res.kind == .local, "inst res is local got {any}\n", .{inst.res});
-
-                const infoPtr = cmpInfo.?;
-                infoPtr.* = CmpInfo{
-                    .op = cmp.cond,
-                    .res = inst.res,
-                    .reg = if (lhsConst) cmp.rhs else cmp.lhs,
-                    .val = if (lhsConst) lhs else rhs,
-                };
-            }
-            // if (lhs.state != .constant or rhs.state != .constant) {
-            return meet(lhs, rhs);
-            // }
+            // eval
+            const cond = cmp.cond;
+            const l = lhs.constant.?.value;
+            const r = lhs.constant.?.value;
+            const res = switch (cond) {
+                .Eq => l == r,
+                .NEq => l != r,
+                .Lt => l < r,
+                .Gt => l > r,
+                .GtEq => l >= r,
+                .LtEq => l <= r,
+            };
+            return Value.const_bool(res);
         },
         .Zext, .Sext, .Trunc, .Bitcast => misc: {
             // FIXME: HOW TO HANDLE.
