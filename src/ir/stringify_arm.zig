@@ -167,6 +167,8 @@ const Rope = struct {
 pub fn stringify(arm: *const Arm, ir: *const IR, alloc: Alloc) ![]const u8 {
     var buf = Buf.init(alloc);
 
+    // stringify global variables
+
     // stringify functions
     for (arm.program.functions.items) |*fun| {
         // strinify basic blocks
@@ -178,6 +180,22 @@ pub fn stringify(arm: *const Arm, ir: *const IR, alloc: Alloc) ![]const u8 {
                 try stringify_inst(arm.program.insts.items[inst], &buf, ir, fun);
             }
         }
+    }
+
+    // FIXME: we are just using constants boys
+    // stringify rodata
+    {
+        try buf.write(INDENT);
+        try buf.write(".section .rodata\n");
+        try buf.write("_print:\n");
+        try buf.write(INDENT);
+        try buf.write(".string \"%ld\\00\"\n");
+        try buf.write("_println:\n");
+        try buf.write(INDENT);
+        try buf.write(".string \"%ld\\n\"\n");
+        try buf.write("_read:\n");
+        try buf.write(INDENT);
+        try buf.write(".string \"%ld\\00\"\n");
     }
 
     return buf.str.items;
@@ -218,6 +236,9 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             try buf.write(", ");
             try stringify_operand(inst.op1, ir, buf, fun);
         },
+        .PRINT_THIS_LOL => {
+            try buf.fmt("{s}", .{ir.getIdent(@truncate(inst.op1.imm))});
+        },
         else => unreachable,
     }
     try buf.write("\n");
@@ -244,6 +265,7 @@ pub fn stringify_operation(operation: Arm.Operation, buf: *Buf) !void {
         .LDR => try buf.write("LDR "),
         .STP => try buf.write("STP "),
         .STR => try buf.write("STR "),
+        .PRINT_THIS_LOL => {},
     }
 }
 

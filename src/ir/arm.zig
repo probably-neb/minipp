@@ -38,7 +38,6 @@ pub const Reg = struct {
     // kind: RegKind, this could be useed for vector type beat
     inst: ?Inst.ID, // the ID of the instruction that defines this register
     irID: IR.Register.ID,
-
     pub const ID = usize;
 };
 
@@ -179,6 +178,7 @@ pub const Operation = enum {
     LDR, // rt = [addr]_{N}
     STP, // [addr]_{2N} = rt2:rt
     STR, // [addr]_{N} = rt
+    PRINT_THIS_LOL,
     // there are more operations, but these are the ones we will use
 };
 
@@ -194,6 +194,18 @@ pub const Inst = struct {
     width: u32 = 64,
     cc: ConditionCode = .invalid_,
     pub const ID = usize;
+
+    pub const PrintThisLol = struct {
+        string: IR.StrID,
+
+        pub fn toInst(inst: PrintThisLol) Inst {
+            return Inst{ .rd = undefined, .oper = .PRINT_THIS_LOL, .op1 = Operand.asOpImm(inst.string) };
+        }
+
+        pub fn get(inst: Inst) PrintThisLol {
+            return PrintThisLol{ .string = Operand.getImm(inst.op1) };
+        }
+    };
 
     // helpers to construct the instructions
     pub const Add = struct {
@@ -437,6 +449,10 @@ pub const Inst = struct {
             return Neg{ .rd = inst.rd, .op1 = inst.op1, .signed = inst.signed };
         }
     };
+
+    pub fn print_this_lol(strVal: IR.StrID, id: Inst.ID) Inst {
+        return Inst{ .rd = undefined, .oper = .PRINT_THIS_LOL, .op1 = Operand.asOpImm(strVal), .id = id };
+    }
 
     pub inline fn add(rd: Reg, rn: Reg, op2: Operand, signed: bool, id: Inst.ID) Inst {
         return Inst{ .oper = .ADD, .rd = rd, .op1 = Operand.asOpReg(rn), .op2 = op2, .signed = signed, .id = id };
@@ -722,6 +738,7 @@ pub const Function = struct {
 
 pub const Program = struct {
     functions: std.ArrayList(Function),
+    // globals:
     insts: std.ArrayList(Inst),
     regs: std.ArrayList(Reg),
     alloc: std.mem.Allocator,
@@ -1021,7 +1038,7 @@ pub fn gen_inst(
             // the name of the function is the fun name
             var funName = callIR.fun.name;
             var funF = armFunc;
-            if(funName == ir.internIdent("printf")) {
+            if (funName == ir.internIdent("printf")) {
                 // adrp x0, .L.str.1
                 // add x0, x0, :lo12:.L.str.1
                 // mov w1, #70
@@ -1038,22 +1055,21 @@ pub fn gen_inst(
                 //   .asciz "%lx"
                 //   .size .L.str.1, 4
             } else if (funName == ir.internIdent("scanf")) {
-              // sp + #8 is the location of the argument being passed into scanf
-              // adrp x0, .L.str.1
-              // add x0, x0, :lo12:.L.str.1
-              // add x1, sp, #8 // =8
-              // bl __isoc99_scanf
+                // sp + #8 is the location of the argument being passed into scanf
+                // adrp x0, .L.str.1
+                // add x0, x0, :lo12:.L.str.1
+                // add x1, sp, #8 // =8
+                // bl __isoc99_scanf
             } else if (funName == ir.internIdent("malloc")) {
-             // mov w0, #20
-             //  bl malloc
-             //  mov x19, x0
-              // result is in w0 / x0
+                // mov w0, #20
+                //  bl malloc
+                //  mov x19, x0
+                // result is in w0 / x0
             } else if (funName == ir.internIdent("free")) {
                 // bl free
                 // depends on the value in w0 / x0 being the pointer that we want to free
 
             } else {
-            
 
                 // find the function in the program that has the same name
                 var funID: Function.ID = 0;
@@ -1089,35 +1105,47 @@ pub fn gen_inst(
             // this is going to be the big kahuna
             const gepIR = IR.Inst.Gep.get(irInst);
             var getPtrVal = try arm.program.getOpfromIR(gepIR.ptrVal, null);
-            if(getPtrVal.reg.name == ir.internIdent(".println"){
-
-            } else if(getPtrVal.reg.name == ir.internIdent(".printl"){
-
-            } else if(getPtrVal.reg.name == ir.internIdent(".read"){
-
-            } else if(getPtrVal.reg.name == ir.internIdent(".read_scratch"){
-
+            if (getPtrVal.reg.name == ir.internIdent(".println")) {
+                const adrpStr = ir.internIdent("adrp x0, _println");
+                const addStr = ir.internIdent("add x0, x0, :lo12:_println");
+                var adrpInst = Inst.print_this_lol(adrpStr, arm.program.insts.items.len);
+                try armFunc.addInst(adrpInst, armBlock);
+                var addInst = Inst.print_this_lol(addStr, arm.program.insts.items.len);
+                try armFunc.addInst(addInst, armBlock);
+            } else if (getPtrVal.reg.name == ir.internIdent(".println")) {
+                const adrpStr = ir.internIdent("adrp x0, _println");
+                const addStr = ir.internIdent("add x0, x0, :lo12:_println");
+                var adrpInst = Inst.print_this_lol(adrpStr, arm.program.insts.items.len);
+                try armFunc.addInst(adrpInst, armBlock);
+                var addInst = Inst.print_this_lol(addStr, arm.program.insts.items.len);
+                try armFunc.addInst(addInst, armBlock);
+            } else if (getPtrVal.reg.name == ir.internIdent(".read")) {
+                const adrpStr = ir.internIdent("adrp x0, _read");
+                const addStr = ir.internIdent("add x0, x0, :lo12:_read");
+                var adrpInst = Inst.print_this_lol(adrpStr, arm.program.insts.items.len);
+                try armFunc.addInst(adrpInst, armBlock);
+                var addInst = Inst.print_this_lol(addStr, arm.program.insts.items.len);
+                try armFunc.addInst(addInst, armBlock);
             } else {
+                var gepIdx = try arm.program.getOpfromIR(gepIR.index, null);
+                // mul gepIDX by the size of the type (8)
+                var imm = ir.internIdent("8");
+                var immOpt = Operand.asOpImm(imm);
+                try armFunc.ensureBothReg(ir, armBlock, &immOpt, &gepIdx);
+                // do the mul
+                var mulInst = Inst.mul(gepIdx.getReg(), gepIdx.getReg(), immOpt.getReg(), false, arm.program.insts.items.len);
+                try armFunc.addInst(mulInst, armBlock);
 
+                // add the ptr val and the idx
+                var gepRD = try arm.program.getOpfromIR(gepIR.res, arm.program.insts.items.len);
+                try armFunc.ensureBothReg(ir, armBlock, &getPtrVal, &gepRD);
+                try armFunc.ensureBothReg(ir, armBlock, &gepRD, &gepIdx);
+                if (gepRD.reg.name == IR.InternPool.NULL) {
+                    gepRD.reg.name = ir.internIdent("gepRD");
+                }
+                var addInst = Inst.add(gepRD.getReg(), getPtrVal.getReg(), gepIdx, false, arm.program.insts.items.len);
+                try armFunc.addInst(addInst, armBlock);
             }
-            var gepIdx = try arm.program.getOpfromIR(gepIR.index, null);
-            // mul gepIDX by the size of the type (8)
-            var imm = ir.internIdent("8");
-            var immOpt = Operand.asOpImm(imm);
-            try armFunc.ensureBothReg(ir, armBlock, &immOpt, &gepIdx);
-            // do the mul
-            var mulInst = Inst.mul(gepIdx.getReg(), gepIdx.getReg(), immOpt.getReg(), false, arm.program.insts.items.len);
-            try armFunc.addInst(mulInst, armBlock);
-
-            // add the ptr val and the idx
-            var gepRD = try arm.program.getOpfromIR(gepIR.res, arm.program.insts.items.len);
-            try armFunc.ensureBothReg(ir, armBlock, &getPtrVal, &gepRD);
-            try armFunc.ensureBothReg(ir, armBlock, &gepRD, &gepIdx);
-            if (gepRD.reg.name == IR.InternPool.NULL) {
-                gepRD.reg.name = ir.internIdent("gepRD");
-            }
-            var addInst = Inst.add(gepRD.getReg(), getPtrVal.getReg(), gepIdx, false, arm.program.insts.items.len);
-            try armFunc.addInst(addInst, armBlock);
         },
         else => {
             std.debug.print("The inst was {s}\n", .{@tagName(irInst.op)});
