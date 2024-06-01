@@ -32,7 +32,7 @@ const DECLS =
     \\@.println = private unnamed_addr constant [5 x i8] c"%ld\0A\00", align 1
     \\@.print = private unnamed_addr constant [5 x i8] c"%ld \00", align 1
     \\@.read = private unnamed_addr constant [4 x i8] c"%ld\00", align 1
-    \\@.read_scratch = common global i32 0, align 4
+    \\@_read_scratch = common global i32 0, align 4
 ;
 
 /// The c std functions won't be in the IR, so we need a way to get their

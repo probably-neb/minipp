@@ -929,7 +929,7 @@ fn gen_expression(
                 .False => false: {
                     const trueRef = IR.Ref.immFalse();
                     const falseRef = IR.Ref.immFalse();
-                    const orInst = Inst.or_(trueRef, falseRef);
+                    const orInst = Inst.and_(trueRef, falseRef);
                     const name = ir.internIdent("imm_false");
                     const res = try fun.addNamedInst(bb, orInst, name, .bool);
                     break :false IR.Ref.fromRegLocal(res);
