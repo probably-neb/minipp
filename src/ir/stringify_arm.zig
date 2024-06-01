@@ -198,48 +198,46 @@ pub fn stringify(arm: *const Arm, ir: *const IR, alloc: Alloc) ![]const u8 {
     // stringify functions
     for (arm.program.functions.items) |*fun| {
         // FUNCTION:
-        //     // Reserve space on the stack including space to save the original SP
-        //     sub sp, sp, #144  // Adjust space: 128 for registers and 16 for the original SP
-
-        //     // Set the frame pointer
-        //     add x29, sp, #144  // x29 points to the top of the stack frame
-
-        //     // Save the original stack pointer just below the frame pointer setup
-        //     str sp, [x29, -144]  // Store the original SP at the start of the reserved space
-
-        //     // Save the return address and old frame pointer
-        //     stp x29, x30, [x29, -16]
-
-        //     // Save callee-saved registers relative to the new frame pointer
-        //     stp x19, x20, [x29, -32]
-        //     stp x21, x22, [x29, -48]
-        //     stp x23, x24, [x29, -64]
-        //     stp x25, x26, [x29, -80]
-        //     stp x27, x28, [x29, -96]
-
-        //     // [Function body would go here]
-        //     ldr x9, [x29, #144]  // Assuming ninth argument is the first one passed on the stack
-
-        //     // Restore callee-saved general-purpose registers
-        //     ldp x27, x28, [x29, -96]
-        //     ldp x25, x26, [x29, -80]
-        //     ldp x23, x24, [x29, -64]
-        //     ldp x21, x22, [x29, -48]
-        //     ldp x19, x20, [x29, -32]
-
-        //     // Restore the frame pointer and return address
-        //     ldp x29, x30, [x29, -16]
-
-        //     // Restore the original stack pointer from where it was saved
-        //     ldr sp, [x29, -144]  // Load back the original SP from the stored location
-
-        //     // Return from function
-        //     ret
-        // strinify basic blocks
         try buf.fmt("{s}:\n", .{ir.getIdent(fun.name)});
+        //     // Reserve space on the stack including space to save the original SP
+        try buf.write(INDENT);
+        try buf.write("sub sp, sp, #16\n");
+        try buf.write(INDENT);
+        try buf.write("str x29, [sp]\n");
+        try buf.write(INDENT);
+        try buf.write("mov x29, sp\n");
+        try buf.write(INDENT);
+        try buf.write("sub sp, sp, #16\n");
+        try buf.write(INDENT);
+        try buf.write("str x29, [sp]\n");
+        try buf.write(INDENT);
+        try buf.write("sub sp, sp, #144  \n");
+        try buf.write(INDENT);
+        try buf.write("mov x29, sp\n");
+        try buf.write(INDENT);
+        try buf.write("stp x30, x27, [x29, #0]  \n");
+        try buf.write(INDENT);
+        try buf.write("stp x26, x25, [x29, #16] \n");
+        try buf.write(INDENT);
+        try buf.write("stp x24, x23, [x29, #32] \n");
+        try buf.write(INDENT);
+        try buf.write("stp x22, x21, [x29, #48] \n");
+        try buf.write(INDENT);
+        try buf.write("stp x20, x19, [x29, #64] \n");
+        try buf.write(INDENT);
+        try buf.write("stp x18, x17, [x29, #80] \n");
+        try buf.write(INDENT);
+        try buf.write("stp x16, x15, [x29, #96] \n");
+        try buf.write(INDENT);
+        try buf.write("stp x14, x13, [x29, #112]\n");
+        try buf.write(INDENT);
+        try buf.write("stp x12, x11, [x29, #128]\n");
+        try buf.write(INDENT);
+        try buf.write("stp x10, x9,  [x29, #144]\n");
+        // strinify basic blocks
         for (fun.blocks.items) |armBB| {
-            var rp = Rope.str_num(armBB.name, 1);
-            buf.fmt("{s}.{s}:\n", .{ ir.getIdent(fun.name), rp }) catch unreachable;
+            var rp = Rope.str_str_num(armBB.name, "_", armBB.id);
+            buf.fmt("{s}_{s}:\n", .{ ir.getIdent(fun.name), rp }) catch unreachable;
             for (armBB.insts.items) |inst| {
                 try stringify_inst(arm.program.insts.items[inst], &buf, ir, fun);
             }
@@ -287,30 +285,30 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             try stringify_operand(inst.op1, ir, buf, fun);
             try buf.write(", ");
             try stringify_operand(inst.op2, ir, buf, fun);
-            try buf.write("; ");
-            try stringify_reg_comment(buf, inst.rd);
-            try buf.write(" = ");
-            try stringify_operand_comment(buf, inst.op1);
-            try buf.write(" ");
-            try stringify_operand_comment(buf, inst.op2);
+            // try buf.write("; ");
+            // try stringify_reg_comment(buf, inst.rd);
+            // try buf.write(" = ");
+            // try stringify_operand_comment(buf, inst.op1);
+            // try buf.write(" ");
+            // try stringify_operand_comment(buf, inst.op2);
         },
         .NEG, .CMP => {
             try stringify_register(inst.rd, ir, buf);
             try buf.write(", ");
             try stringify_operand(inst.op1, ir, buf, fun);
-            try buf.write("; ");
-            try stringify_reg_comment(buf, inst.rd);
-            try buf.write("   ");
-            try stringify_operand_comment(buf, inst.op1);
+            // try buf.write("; ");
+            // try stringify_reg_comment(buf, inst.rd);
+            // try buf.write("   ");
+            // try stringify_operand_comment(buf, inst.op1);
         },
         .MOV => {
             try stringify_register(inst.rd, ir, buf);
             try buf.write(", ");
             try stringify_operand(inst.op1, ir, buf, fun);
-            try buf.write("; ");
-            try stringify_reg_comment(buf, inst.rd);
-            try buf.write("   ");
-            try stringify_operand_comment(buf, inst.op1);
+            // try buf.write("; ");
+            // try stringify_reg_comment(buf, inst.rd);
+            // try buf.write("   ");
+            // try stringify_operand_comment(buf, inst.op1);
         },
         .B, .Bcc => {
             try stringify_operand(inst.op1, ir, buf, fun);
@@ -323,22 +321,51 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             try stringify_register(inst.rd, ir, buf);
             try buf.write(", ");
             try stringify_operand(inst.op1, ir, buf, fun);
-            try buf.write("; ");
-            try stringify_reg_comment(buf, inst.rd);
-            try buf.write("   ");
-            try stringify_operand_comment(buf, inst.op1);
+            // try buf.write("; ");
+            // try stringify_reg_comment(buf, inst.rd);
+            // try buf.write("   ");
+            // try stringify_operand_comment(buf, inst.op1);
         },
         .STR => {
             try stringify_register(inst.rd, ir, buf);
             try buf.write(", ");
             try stringify_operand(inst.op1, ir, buf, fun);
             try buf.write("; ");
-            try stringify_reg_comment(buf, inst.rd);
-            try buf.write("   ");
-            try stringify_operand_comment(buf, inst.op1);
+            // try stringify_reg_comment(buf, inst.rd);
+            // try buf.write("   ");
+            // try stringify_operand_comment(buf, inst.op1);
         },
         .PRINT_THIS_LOL => {
             try buf.fmt("{s}", .{ir.getIdent(@truncate(inst.op1.imm))});
+        },
+        .RET => {
+            try buf.write("ldp x10, x9,  [x29, #144]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x12, x11, [x29, #128]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x14, x13, [x29, #112]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x16, x15, [x29, #96]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x18, x17, [x29, #80]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x20, x19, [x29, #64]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x22, x21, [x29, #48]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x24, x23, [x29, #32]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x26, x25, [x29, #16]\n");
+            try buf.write(INDENT);
+            try buf.write("ldp x30, x27, [x29, #0]\n");
+            try buf.write(INDENT);
+            try buf.write("mov sp, x29\n");
+            try buf.write(INDENT);
+            try buf.write("ldr x29, [sp], #16  \n");
+            try buf.write(INDENT);
+            try buf.write("add sp, sp, #16     \n");
+            try buf.write(INDENT);
+            try buf.write("ret\n");
         },
         else => unreachable,
     }
@@ -366,7 +393,7 @@ pub fn stringify_operation(operation: Arm.Operation, buf: *Buf) !void {
         .LDR => try buf.write("LDR "),
         .STP => try buf.write("STP "),
         .STR => try buf.write("STR "),
-        .RET => try buf.write("RET "),
+        .RET => try buf.write(""),
         .PRINT_THIS_LOL => {},
     }
 }
@@ -417,16 +444,15 @@ pub fn stringify_register(reg: Arm.Reg, ir: *const IR, buf: *Buf) !void {
 pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *Arm.Function) !void {
     switch (operand.kind) {
         .Reg => {
-            try buf.write("R");
-            try buf.fmt("{s}", .{ir.getIdent(operand.reg.name)});
+            try stringify_register(operand.reg, ir, buf);
         },
         .Imm => {
             try buf.write("#");
             try buf.fmt("{s}", .{ir.getIdent(operand.imm)});
         },
         .MemReg => {
-            try buf.write("[R");
-            try buf.fmt("{s}", .{ir.getIdent(operand.reg.name)});
+            try buf.write("[");
+            try stringify_register(operand.reg, ir, buf);
             try buf.write("]");
         },
         .MemImm => {
@@ -435,24 +461,24 @@ pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *A
             try buf.write("]");
         },
         .MemPostInc => {
-            try buf.write("[R");
-            try buf.fmt("{s}", .{ir.getIdent(operand.reg.name)});
+            try buf.write("[");
+            try stringify_register(operand.reg, ir, buf);
             try buf.write("],");
             try buf.fmt("{d}", .{ir.getIdent(operand.imm)});
         },
         .MemPreInc => {
-            try buf.write("[R");
-            try buf.fmt("{s},", .{ir.getIdent(operand.reg.name)});
-            try buf.fmt(" {s}", .{ir.getIdent(operand.imm)});
+            try buf.write("[");
+            try stringify_register(operand.reg, ir, buf);
+            try buf.fmt(", {s}", .{ir.getIdent(operand.imm)});
             try buf.write("]!");
         },
         .MemGlobal => {
             try buf.write("=");
-            try buf.fmt("{s},", .{ir.getIdent(operand.reg.name)});
+            try buf.fmt("{s}", .{ir.getIdent(operand.reg.name)});
         },
         .Label => {
             var bb = fun.blocks.items[operand.label];
-            try buf.fmt("{s}{d}", .{ bb.name, bb.id });
+            try buf.fmt("{s}_{s}_{d}", .{ ir.getIdent(fun.name), bb.name, bb.id });
         },
         else => {
             std.debug.print("operand: {any}\n", .{operand});
