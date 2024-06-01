@@ -287,6 +287,16 @@ fn mktmp(buf: []u8, path_len: *usize) !std.fs.Dir {
     return dir;
 }
 
+/// @param name The name we use everywhere else to refer to test suite tests (i.e. bert, Fibonacci, etc)
+/// @param ext The extension of the file to embed - defaults to `mini`
+pub fn embedTestSuiteFile(comptime name: []const u8, comptime ext_opt: ?[]const u8) []const u8 {
+    comptime {
+        const ext = ext_opt orelse ".mini";
+        const path = "../../test-suite/tests/milestone2/benchmarks/" ++ name ++ "/" ++ name ++ "." ++ ext;
+        return @embedFile(path);
+    }
+}
+
 const Arena = struct {
     alloc: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
