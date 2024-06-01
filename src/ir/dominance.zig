@@ -1,16 +1,19 @@
 pub const std = @import("std");
 
+// type alias so zig can resolve recursive error type below
+const AllocError = std.mem.Allocator.Error;
+
 const Ast = @import("../ast.zig");
 const utils = @import("../utils.zig");
 const log = @import("../log.zig");
-const Set = @import("../array_hash_set.zig");
+const Set = @import("../array_hash_set.zig").Set;
 const IR = @import("ir_phi.zig");
 const Phi = @import("phi.zig");
 
 const Function = IR.Function;
 const Block = IR.BasicBlock;
 
-pub const BSet = Set.Set(Block.ID);
+pub const BSet = Set(Block.ID);
 pub const BitSet = std.bit_set.DynamicBitSet;
 
 pub const Dominance = struct {
@@ -24,11 +27,11 @@ pub const Dominance = struct {
     // however this would just be slower, as it is iteraed upon
     domChildren: std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)),
     domFront: std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)),
-    fun: *Function,
+    fun: *const Function,
     alloc: std.mem.Allocator,
     numBlocks: u32,
 
-    pub fn init(ir: *IR, fun: *Function) Dominance {
+    pub fn init(ir: *const IR, fun: *const Function) Dominance {
         return .{
             .idoms = std.AutoHashMap(Block.ID, Block.ID).init(ir.alloc),
             .domChildren = std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)).init(ir.alloc),
@@ -302,6 +305,18 @@ pub const Dominance = struct {
         }
     }
 
+    /// The way dominance front should be accessed
+    /// Lazily computes it based on the blockID
+    /// caching it in the domFront hashmap
+    /// for future uses
+    pub fn getDomFront(self: *Dominance, blockID: Block.ID) AllocError!?std.ArrayList(Block.ID) {
+        const maybe_existing = self.domFront.get(blockID);
+        if (maybe_existing) |existing| {
+            return existing;
+        }
+        return self.computeDomFront(blockID);
+    }
+
     //computeDF[n]:
     //    S = {}
     //    for each node y in succ[n]:
@@ -313,7 +328,7 @@ pub const Dominance = struct {
     //         if n does not dom w, or n = w:
     //            S = S U {w}
     //    DF[n] = S
-    pub fn computeDomFront(self: *Dominance, nodeID: Block.ID) !void {
+    fn computeDomFront(self: *Dominance, nodeID: Block.ID) AllocError!?std.ArrayList(Block.ID) {
         const node = self.fun.bbs.get(nodeID);
         var S = std.ArrayList(Block.ID).init(self.alloc);
         // for each node y in succ[n]:
@@ -331,11 +346,10 @@ pub const Dominance = struct {
         // for each child c of n in the dom-tree:
         var children = self.domChildren.get(nodeID);
         if (children == null) {
-            return;
+            return null;
         }
         for (self.domChildren.get(nodeID).?.items) |child| {
-            try self.computeDomFront(child);
-            const DF = self.domFront.get(child);
+            const DF = try self.getDomFront(child);
             if (DF == null) continue;
             for (DF.?.items) |w| {
                 if (!self.dominators.items[w].isSet(nodeID) or nodeID == w) {
@@ -344,12 +358,13 @@ pub const Dominance = struct {
             }
         }
         try self.domFront.put(nodeID, S);
+        return S;
     }
 
     /// just do it for all of them
     pub fn computeAllDomFronts(self: *Dominance) !void {
         for (self.fun.bbs.ids()) |node| {
-            try self.computeDomFront(node);
+            _ = try self.getDomFront(node);
         }
     }
 
@@ -373,7 +388,7 @@ pub const Dominance = struct {
             const cfgKey = entry.key_ptr;
             const cfgValue = entry.value_ptr;
             const blockID = self.fun.cfgToBBs.get(cfgKey.*).?;
-            const domFront = self.domFront.get(blockID);
+            const domFront = try self.getDomFront(blockID);
             // check that the block is in the domFront
             if (domFront == null) {
                 utils.impossible("blockID = {d} block = {d} not in domFront\n", .{ blockID, cfgKey });
@@ -469,4 +484,16 @@ test "dominance.if_test" {
     var dom = Dominance.init(&ir, fun);
     try dom.genDominance();
     try dom.compareToCfgDominator();
+}
+
+test "brett" {
+    errdefer log.print();
+    const embedTestSuiteFile = @import("./test-helpers.zig").embedTestSuiteFile;
+    const in = comptime embedTestSuiteFile("brett", "mini");
+    var ir = try testMe(in);
+    for (ir.funcs.items.items) |fun| {
+        var dom = Dominance.init(&ir, &fun);
+        try dom.genDominance();
+        try dom.compareToCfgDominator();
+    }
 }
