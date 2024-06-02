@@ -18,7 +18,8 @@ const RegID = Register.ID;
 const Ref = IR.Ref;
 const OpCode = IR.Op;
 
-const Dominance = @import("dominance.zig");
+const Dominance = @import("dominance.zig").Dominance;
+const genDominance = @import("dominance.zig").genLazyDominance;
 
 const IMMEDIATE_FALSE = IR.InternPool.FALSE;
 const IMMEDIATE_TRUE = IR.InternPool.TRUE;
@@ -131,6 +132,8 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
         break :bbwl bbwl;
     };
     var ssaWL = ArrayList(SSAEdge).init(alloc);
+
+    const dominance = try genDominance(ir, fun);
 
     const insts = &fun.insts;
     const regs = &fun.regs;
@@ -250,8 +253,12 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     }
                     continue;
                 }
-                if (try eval(ir, inst, values, cmp_info)) |inst_value| {
+                if (try eval(ir, inst, values)) |orig_inst_value| {
                     utils.assert(!std.meta.eql(inst.res, Ref.default), "inst with value has no res {any}\n", .{inst});
+                    var inst_value = orig_inst_value;
+                    if (inst.op == .Cmp) {
+                        inst_value = try apply_cmp_info(ir, fun, &dominance, inst, values, cmp_info, inst_value);
+                    }
                     const res = inst.res;
                     utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
                     const reg = regs.get(res.i);
@@ -283,13 +290,15 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
             const res = inst.res;
             const res_val = ref_value(ir, res, values);
             if (res_val.state == .unknown) {
+                // FIXME: should probably still apply cmp info here
+
                 // cannot assume we can know the unknowable things
                 // of generations past
                 // such is life
                 // r/im15andthisisdeep
                 continue :main_loop;
             }
-            const new_res_val = try eval(ir, inst, values, cmp_info) orelse {
+            var new_res_val = try eval(ir, inst, values) orelse {
                 utils.impossible(
                     \\result of ssa edge eval is null, this should have been handled in the prechecks right???
                     \\inst={any}
@@ -297,6 +306,9 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     .{inst},
                 );
             };
+            if (inst.op == .Cmp) {
+                new_res_val = try apply_cmp_info(ir, fun, &dominance, inst, values, cmp_info, new_res_val);
+            }
             if (std.meta.eql(res_val, new_res_val)) {
                 // no new info
                 continue :main_loop;
@@ -337,6 +349,62 @@ inline fn has_res(op: OpCode) bool {
         .Br, .Jmp, .Store, .Ret, .Param => false,
         else => true,
     };
+}
+
+fn apply_cmp_info(ir: *const IR, fun: *const Function, dom: *const Dominance, inst: Inst, values: []Value, cmp_info: []?CmpInfo, value: Value) !Value {
+    _ = dom;
+    _ = fun;
+    utils.assert(inst.op == .Cmp, "cannot apply non cmp cmp info ya dunce\n", .{});
+    const cmp = Inst.Cmp.get(inst);
+    const lhs = ref_value(ir, cmp.lhs, values);
+    const rhs = ref_value(ir, cmp.rhs, values);
+
+    const lhsConst = lhs.state == .constant;
+    const rhsConst = rhs.state == .constant;
+
+    if (lhsConst and rhsConst) {
+        // case handled by eval
+        return value;
+    }
+    // now we cook
+
+    if (cmp.lhs.kind == .local) {
+        if (cmp_info[cmp.lhs.i]) |cmpInfo| {
+            if (std.meta.eql(ref_value(ir, cmpInfo.val, values), rhs)) {
+                if (cmpInfo.op == cmp.cond) {
+                    std.debug.print("found same cmp\n", .{});
+                    return Value.const_bool(true);
+                }
+            }
+        }
+    }
+
+    if (lhsConst or rhsConst) {
+        // looked for xor keyword, found simd
+        utils.assert(@reduce(.Xor, @Vector(2, bool){ lhsConst, rhsConst }), "case where both sides const not handled???\n", .{});
+
+        utils.assert(inst.res.kind == .local, "inst res is local got {any}\n", .{inst.res});
+
+        const cmpInfo = if (lhsConst) CmpInfo{
+            .op = cmp.cond,
+            .res = inst.res,
+            .reg = cmp.rhs,
+            .val = cmp.lhs,
+            .rev = true,
+        } else CmpInfo{
+            .op = cmp.cond,
+            .res = inst.res,
+            .reg = cmp.lhs,
+            .val = cmp.rhs,
+            .rev = false,
+        };
+        std.debug.print("cmp info = {any}\n", .{cmpInfo});
+        if (cmpInfo.reg.kind == .local) {
+            std.debug.print("found cmpInfo\n", .{});
+            cmp_info[cmpInfo.reg.i] = cmpInfo;
+        }
+    }
+    return meet(lhs, rhs);
 }
 
 const CmpInfo = struct {
@@ -525,7 +593,7 @@ fn get_ctrl_flow_dests(inst: Inst) [2]?BBID {
     };
 }
 
-fn eval(ir: *const IR, inst: Inst, values: []const Value, cmp_info: []?CmpInfo) !?Value {
+fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
     if (!has_res(inst.op)) {
         return null;
     }
@@ -630,42 +698,6 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value, cmp_info: []?CmpInfo) 
                 return Value.const_bool(res);
             }
 
-            if (cmp.lhs.kind == .local) {
-                if (cmp_info[cmp.lhs.i]) |cmpInfo| {
-                    if (std.meta.eql(ref_value(ir, cmpInfo.val, values), rhs)) {
-                        if (cmpInfo.op == cmp.cond) {
-                            std.debug.print("found same cmp\n", .{});
-                            return Value.const_bool(true);
-                        }
-                    }
-                }
-            }
-
-            if (lhsConst or rhsConst) {
-                // looked for xor keyword, found simd
-                utils.assert(@reduce(.Xor, @Vector(2, bool){ lhsConst, rhsConst }), "case where both sides const not handled???\n", .{});
-
-                utils.assert(inst.res.kind == .local, "inst res is local got {any}\n", .{inst.res});
-
-                const cmpInfo = if (lhsConst) CmpInfo{
-                    .op = cmp.cond,
-                    .res = inst.res,
-                    .reg = cmp.rhs,
-                    .val = cmp.lhs,
-                    .rev = true,
-                } else CmpInfo{
-                    .op = cmp.cond,
-                    .res = inst.res,
-                    .reg = cmp.lhs,
-                    .val = cmp.rhs,
-                    .rev = false,
-                };
-                std.debug.print("cmp info = {any}\n", .{cmpInfo});
-                if (cmpInfo.reg.kind == .local) {
-                    std.debug.print("found cmpInfo\n", .{});
-                    cmp_info[cmpInfo.reg.i] = cmpInfo;
-                }
-            }
             return meet(lhs, rhs);
         },
         .Zext, .Sext, .Trunc, .Bitcast => misc: {
@@ -973,102 +1005,6 @@ fn cmp_prop_all_funs(ir: *const IR) !void {
     }
 }
 
-// test "compilation" {
-//     log.empty();
-//     errdefer log.print();
-//     var ir = try testMe(
-//         \\fun main() void {
-//         \\  int a;
-//         \\  if (true) {
-//         \\    while (false) {
-//         \\      a = 1;
-//         \\      a = 3;
-//         \\    }
-//         \\  }
-//         \\  a = 2;
-//         \\}
-//     );
-//     try sccp_all_funs(&ir);
-// }
-
-// test "sccp.removes-never-taken-if" {
-//     log.empty();
-//     errdefer log.print();
-//
-//     try expectResultsInIR(
-//         \\fun main() int {
-//         \\  int a;
-//         \\  if (false) {
-//         \\    a = 1;
-//         \\  } else {
-//         \\    a = 2;
-//         \\  }
-//         \\  return a;
-//         \\}
-//     , .{
-//         "define i64 @main() {",
-//         "entry:",
-//         "  br label %body0",
-//         "body0:",
-//         "  br label %if.cond1",
-//         "if.cond1:",
-//         "  br label %else.body4",
-//         "else.body4:",
-//         "  br label %else.exit5",
-//         "else.exit5:",
-//         "  br label %if.exit6",
-//         "if.exit6:",
-//         "  br label %exit",
-//         "exit:",
-//         "  ret i64 2",
-//         "}",
-//     }, .{
-//         .{ "main", .{.sccp} },
-//     });
-// }
-//
-// test "sccp.removes-nested-never-ran-while" {
-//     log.empty();
-//     errdefer log.print();
-//     try expectResultsInIR(
-//         \\fun main() int {
-//         \\  int a;
-//         \\  a = 4;
-//         \\  if (true) {
-//         \\    a = 1;
-//         \\    while (false) {
-//         \\      a = 2;
-//         \\      a = 3;
-//         \\    }
-//         \\  }
-//         \\  return a;
-//         \\}
-//     , .{
-//         "define i64 @main() {",
-//         "entry:",
-//         "  br label %body0",
-//         "body0:",
-//         "  br label %if.cond1",
-//         "if.cond1:",
-//         "  br label %then.body2",
-//         "then.body2:",
-//         "  br label %while.cond13",
-//         "while.cond13:",
-//         "  br label %while.exit7",
-//         "while.exit7:",
-//         "  br label %then.exit8",
-//         "then.exit8:",
-//         "  br label %if.exit9",
-//         "if.exit9:",
-//         "  br label %exit",
-//         "exit:",
-//         "  ret i64 1",
-//         "}",
-//     }, .{
-//         .{ "main", .{.sccp} },
-//     });
-// }
-
 test "cmp-prop.removes-nested-known-if" {
     log.empty();
     errdefer log.print();
@@ -1099,21 +1035,76 @@ test "cmp-prop.removes-nested-known-if" {
         \\fun main() void {
         \\}
     , .{
-        "define i64 @main() {",
+        "define i64 @test(i64 %param) {",
         "entry:",
         "  br label %body0",
         "body0:",
+        "  %a11 = mul i64 5, %param",
         "  br label %if.cond1",
         "if.cond1:",
-        "  br label %else.body4",
-        "else.body4:",
-        "  br label %else.exit5",
-        "else.exit5:",
-        "  br label %if.exit6",
-        "if.exit6:",
+        "  %_17 = icmp eq i64 %a11, 1",
+        "  br i1 %_17, label %then.body2, label %if.exit10",
+        "then.body2:",
+        "  br label %if.cond3",
+        "if.cond3:",
+        "  br label %then.body4",
+        "then.body4:",
+        "  br label %then.exit5",
+        "then.exit5:",
+        "  br label %if.exit8",
+        "if.exit8:",
+        "  %d33 = mul i64 200, 300",
+        "  br label %then.exit9",
+        "then.exit9:",
+        "  br label %if.exit10",
+        "if.exit10:",
+        "  %b1 = phi i64 [ 2, %if.cond1 ], [ 200, %then.exit9 ]",
+        "  %a4 = phi i64 [ %a11, %if.cond1 ], [ %a11, %then.exit9 ]",
+        "  %d5 = phi i64 [ 0, %if.cond1 ], [ %d33, %then.exit9 ]",
+        "  %c7 = phi i64 [ 3, %if.cond1 ], [ 300, %then.exit9 ]",
         "  br label %exit",
         "exit:",
-        "  ret i64 2",
+        "  ret i64 %d5",
+        "}",
+        "",
+        "define void @main() {",
+        "entry:",
+        "  br label %body0",
+        "body0:",
+        "  br label %exit",
+        "exit:",
+        "  ret void",
+        "}",
+    }, .{
+        .{ "test", .{.cmp} },
+    });
+}
+
+test "cmp-prop.removes-impossible-if" {
+    try expectResultsInIR(
+        \\fun test (int param) int {
+        \\    int a, b, c, d;
+        \\    a = 5 * param;
+        \\    b = 2;
+        \\
+        \\    if (a > 10) {
+        \\        if (a < 10) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    } else {
+        \\        b = 20;
+        \\    }
+        \\
+        \\    return b;
+        \\}
+        \\fun main() void {
+        \\}
+    , .{
+        "define i64 @test(i64 %param) {",
+        "}",
+        "define void @main() {",
         "}",
     }, .{
         .{ "test", .{.cmp} },
