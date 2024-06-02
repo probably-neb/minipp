@@ -2945,7 +2945,7 @@ pub const Type = union(enum) {
 /// Ref to a register
 pub const Ref = struct {
     /// ID
-    i: Register.ID,
+    i: ID,
     name: StrID,
     kind: Kind,
     type: Type,
@@ -2954,6 +2954,8 @@ pub const Ref = struct {
     /// Ref used when no ref needed
     /// FIXME: add deadbeef here too
     pub const default = Ref.local(69420, InternPool.NULL, .void);
+
+    pub const ID = Register.ID;
 
     pub fn debugPrintWithName(self: Ref, ir: *IR) void {
         std.debug.print("Ref: {any}, Kind: ", .{self.i});
