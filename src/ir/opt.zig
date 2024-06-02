@@ -19,6 +19,7 @@ const Ref = IR.Ref;
 const OpCode = IR.Op;
 
 const SCCP = @import("./sccp.zig");
+const CmpProp = @import("./cmp-info-prop.zig");
 
 const stringify_label = @import("stringify_phi.zig").stringify_label;
 
@@ -34,7 +35,7 @@ pub fn optimize_function(fun: *Function) !void {
 }
 
 fn sccp(ir: *IR, fun: *Function) !bool {
-    var arena = std.heap.ArenaAllocator.init(ting.allocator);
+    var arena = std.heap.ArenaAllocator.init(fun.alloc);
     defer arena.deinit();
     var alloc = arena.allocator();
 
@@ -42,20 +43,20 @@ fn sccp(ir: *IR, fun: *Function) !bool {
 
     const allReachable = for (fun.bbs.ids()) |bbID| {
         if (!info.reachable[bbID]) {
-            std.debug.print("found unreachable bb ID={d} label={s}\n", .{ bbID, fun.bbs.get(bbID).name });
+            // std.debug.print("found unreachable bb ID={d} label={s}\n", .{ bbID, fun.bbs.get(bbID).name });
             break false;
         }
     } else true;
     const noneConstant = for (info.values) |value| {
         if (value.state == .constant) {
-            std.debug.print("found constant={any}\n", .{value});
+            // std.debug.print("found constant={any}\n", .{value});
             break false;
         }
     } else true;
     if (allReachable and noneConstant) {
         return false;
     } else {
-        std.debug.print("running sccp\nnoneConstant={}\nallReachable={any}\n", .{ noneConstant, allReachable });
+        // std.debug.print("running sccp\nnoneConstant={}\nallReachable={any}\n", .{ noneConstant, allReachable });
     }
     // update all of the registers
     for (info.values, 0..) |value, regID_usize| {
@@ -89,11 +90,11 @@ fn sccp(ir: *IR, fun: *Function) !bool {
     //  break
     var changes: bool = true;
     while (changes) {
-        std.debug.print("running phi node cleanup\n", .{});
+        // std.debug.print("running phi node cleanup\n", .{});
         changes = false;
         for (fun.bbs.ids()) |bbID_1| {
             if (!info.reachable[bbID_1]) continue;
-            std.debug.print("running phi node cleanup for bb {d}\n", .{bbID_1});
+            // std.debug.print("running phi node cleanup for bb {d}\n", .{bbID_1});
             var bb = fun.bbs.get(bbID_1);
             // var newInsts = IR.BasicBlock.List.init(fun.alloc);
             for (bb.insts.items(), 0..) |instID, instIDX| {
@@ -104,7 +105,7 @@ fn sccp(ir: *IR, fun: *Function) !bool {
                     // try newInsts.append(instID);
                     continue;
                 }
-                std.debug.print("running phi node cleanup for inst {d}\n", .{instID});
+                // std.debug.print("running phi node cleanup for inst {d}\n", .{instID});
 
                 var bbInsts = &bb.insts.list;
                 var bbLen = &bb.insts.len;
@@ -121,7 +122,7 @@ fn sccp(ir: *IR, fun: *Function) !bool {
                     for (entries.items, 0..) |entry, entryI| {
                         if (!info.reachable[entry.bb]) {
                             // remove the entry
-                            std.debug.print("removing entry {d} from phi node {d} in block {d}\n", .{ entryI, instID, bbID_1 });
+                            // std.debug.print("removing entry {d} from phi node {d} in block {d}\n", .{ entryI, instID, bbID_1 });
                             entries_changes = true;
                             _ = entries.orderedRemove(entryI);
                             entreies_changed = true;
@@ -139,28 +140,28 @@ fn sccp(ir: *IR, fun: *Function) !bool {
                 if (entries.items.len == 0) {
                     // remove the phi node
                     //_ = fun.insts.remove(instID);
-                    std.debug.print("removing empty phi node {d} in block {d}\n", .{ instID, bbID_1 });
+                    // std.debug.print("removing empty phi node {d} in block {d}\n", .{ instID, bbID_1 });
                     _ = bbInsts.*.orderedRemove(instIDX);
                     bbLen.* -= 1;
                     // bb.*.insts.remove(@intCast(instIDX));
                     changes = true;
                     break;
                 } else if (entries.items.len == 1) {
-                    std.debug.print("replacing phi node {d} in block {d} with entry {any}\n", .{ instID, bbID_1, entries.items[0].ref });
+                    // std.debug.print("replacing phi node {d} in block {d} with entry {any}\n", .{ instID, bbID_1, entries.items[0].ref });
                     // replace all uses of the phi node with the value of the entry
                     const ref = &entries.items[0].ref;
                     try replace_all_uses(fun, ir, phiReg, ref.*, info.reachable);
                     // remove the phi node
                     // _ = fun.insts.remove(instID);
                     utils.assert(std.mem.indexOfScalar(BBID, bb.insts.items(), instID) != null, "bb has no inst {d}\n", .{instID});
-                    std.debug.print("WATCH ME REMOVE {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+                    // std.debug.print("WATCH ME REMOVE {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
                     _ = bbInsts.*.orderedRemove(instIDX);
                     bbLen.* -= 1;
                     // bb.*.insts.remove(@intCast(instIDX));
                     changes = true;
                     break;
                 } else {
-                    std.debug.print("inst {d} has {d} entries\n", .{ instID, entries.items.len });
+                    // std.debug.print("inst {d} has {d} entries\n", .{ instID, entries.items.len });
                     // try newInsts.append(instID);
                 }
                 if (changes) break;
@@ -220,7 +221,7 @@ fn sccp(ir: *IR, fun: *Function) !bool {
         changed = false;
         for (fun.bbs.ids()) |bbID| {
             if (!info.reachable[bbID]) {
-                std.debug.print("removing unreachable block {d}\n", .{bbID});
+                // std.debug.print("removing unreachable block {d}\n", .{bbID});
                 // try remove_block_edges(fun, bbID);
                 _ = fun.bbs.remove(bbID);
                 changed = true;
@@ -228,6 +229,206 @@ fn sccp(ir: *IR, fun: *Function) !bool {
             }
         }
     }
+
+    return true;
+}
+
+fn cmp_prop(ir: *IR, fun: *Function) !bool {
+    var arena = std.heap.ArenaAllocator.init(fun.alloc);
+    defer arena.deinit();
+    var alloc = arena.allocator();
+
+    var info = try CmpProp.cmp_prop(alloc, ir, fun);
+    _ = info;
+
+    // const allReachable = for (fun.bbs.ids()) |bbID| {
+    //     if (!info.reachable[bbID]) {
+    //         // std.debug.print("found unreachable bb ID={d} label={s}\n", .{ bbID, fun.bbs.get(bbID).name });
+    //         break false;
+    //     }
+    // } else true;
+    // const noneConstant = for (info.values) |value| {
+    //     if (value.state == .constant) {
+    //         // std.debug.print("found constant={any}\n", .{value});
+    //         break false;
+    //     }
+    // } else true;
+    // if (allReachable and noneConstant) {
+    //     return false;
+    // } else {
+    //     // std.debug.print("running sccp\nnoneConstant={}\nallReachable={any}\n", .{ noneConstant, allReachable });
+    // }
+    // // update all of the registers
+    // for (info.values, 0..) |value, regID_usize| {
+    //     if (value.state != .constant) continue;
+    //
+    //     const regID: RegID = @intCast(regID_usize);
+    //     var reg = fun.regs.getPtr(regID);
+    //     const constant = value.constant.?;
+    //
+    //     const ref = sccp_const_to_ref(constant);
+    //     const uses_list = try DefUse.uses_of(alloc, fun, reg.*);
+    //     const uses = uses_list.items;
+    //
+    //     for (uses) |use| {
+    //         const instID = use.instID;
+    //         var inst = fun.insts.get(instID);
+    //         var bb = fun.bbs.get(use.bb);
+    //         // FIXME: made change to phi here, this could be wrong
+    //         change_use_of_reg(fun, ir, use.bb, bb, inst, reg.*, ref);
+    //     }
+    //     remove_reg(fun, reg.*);
+    // }
+    //
+    // // update all of the phi nodes
+    // // track if a change has been made
+    // // while changes
+    // // for each one that has a entry that points to a non-reachable block, remove the block,
+    // //  if the phi node only has one entry, replace all uses of the phi node with the value of the entry
+    // //  remove the phi node
+    // //  mark change
+    // //  break
+    // var changes: bool = true;
+    // while (changes) {
+    //     // std.debug.print("running phi node cleanup\n", .{});
+    //     changes = false;
+    //     for (fun.bbs.ids()) |bbID_1| {
+    //         if (!info.reachable[bbID_1]) continue;
+    //         // std.debug.print("running phi node cleanup for bb {d}\n", .{bbID_1});
+    //         var bb = fun.bbs.get(bbID_1);
+    //         // var newInsts = IR.BasicBlock.List.init(fun.alloc);
+    //         for (bb.insts.items(), 0..) |instID, instIDX| {
+    //             // std.debug.print("WATCH WHAT I'm ABOUT TO DO TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+    //             // defer std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+    //             const inst = fun.insts.get(instID);
+    //             if (inst.op != .Phi) {
+    //                 // try newInsts.append(instID);
+    //                 continue;
+    //             }
+    //             // std.debug.print("running phi node cleanup for inst {d}\n", .{instID});
+    //
+    //             var bbInsts = &bb.insts.list;
+    //             var bbLen = &bb.insts.len;
+    //
+    //             var phi = Inst.Phi.get(inst.*);
+    //             var phiReg = fun.regs.getPtr(phi.res.i);
+    //             var entries = phi.entries;
+    //             var entries_changes: bool = true;
+    //             var entreies_changed: bool = false;
+    //             // remove any entries that point to a non-reachable block
+    //             while (entries_changes) {
+    //                 // std.debug.print("running phi node cleanup for inst {d} with entries {any}\n", .{ instID, entries.items });
+    //                 entries_changes = false;
+    //                 for (entries.items, 0..) |entry, entryI| {
+    //                     if (!info.reachable[entry.bb]) {
+    //                         // remove the entry
+    //                         // std.debug.print("removing entry {d} from phi node {d} in block {d}\n", .{ entryI, instID, bbID_1 });
+    //                         entries_changes = true;
+    //                         _ = entries.orderedRemove(entryI);
+    //                         entreies_changed = true;
+    //                         break;
+    //                     }
+    //                 }
+    //             }
+    //             phi.entries = entries;
+    //             fun.insts.set(instID, phi.toInst());
+    //             if (entreies_changed) {
+    //                 changes = true;
+    //                 break;
+    //             }
+    //
+    //             if (entries.items.len == 0) {
+    //                 // remove the phi node
+    //                 //_ = fun.insts.remove(instID);
+    //                 // std.debug.print("removing empty phi node {d} in block {d}\n", .{ instID, bbID_1 });
+    //                 _ = bbInsts.*.orderedRemove(instIDX);
+    //                 bbLen.* -= 1;
+    //                 // bb.*.insts.remove(@intCast(instIDX));
+    //                 changes = true;
+    //                 break;
+    //             } else if (entries.items.len == 1) {
+    //                 // std.debug.print("replacing phi node {d} in block {d} with entry {any}\n", .{ instID, bbID_1, entries.items[0].ref });
+    //                 // replace all uses of the phi node with the value of the entry
+    //                 const ref = &entries.items[0].ref;
+    //                 try replace_all_uses(fun, ir, phiReg, ref.*, info.reachable);
+    //                 // remove the phi node
+    //                 // _ = fun.insts.remove(instID);
+    //                 utils.assert(std.mem.indexOfScalar(BBID, bb.insts.items(), instID) != null, "bb has no inst {d}\n", .{instID});
+    //                 // std.debug.print("WATCH ME REMOVE {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+    //                 _ = bbInsts.*.orderedRemove(instIDX);
+    //                 bbLen.* -= 1;
+    //                 // bb.*.insts.remove(@intCast(instIDX));
+    //                 changes = true;
+    //                 break;
+    //             } else {
+    //                 // std.debug.print("inst {d} has {d} entries\n", .{ instID, entries.items.len });
+    //                 // try newInsts.append(instID);
+    //             }
+    //             if (changes) break;
+    //         }
+    //         // bb.insts.deinit();
+    //         // bb.insts = newInsts;
+    //         if (changes) break;
+    //     }
+    // }
+    //
+    // // for (fun.bbs.ids()) |bbID| {
+    // //     const bb = fun.bbs.get(bbID);
+    // //     std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ bbID, bb.insts.items() });
+    // // }
+    //
+    // // relink all of the basic blocks based off their jumps or branhces
+    // for (fun.bbs.ids()) |bbID| {
+    //     fun.bbs.get(bbID).outgoers[0] = null;
+    //     fun.bbs.get(bbID).outgoers[1] = null;
+    //     fun.bbs.get(bbID).reinitIncomers(fun);
+    // }
+    //
+    // for (fun.bbs.ids()) |bbID| {
+    //     if (!info.reachable[bbID]) continue;
+    //     var bb = fun.bbs.get(bbID);
+    //     var instID: ?IR.Function.InstID = null;
+    //     for (bb.insts.items()) |instID_| {
+    //         instID = instID_;
+    //     }
+    //     if (instID == null) continue;
+    //     var inst = fun.insts.get(instID.?);
+    //     if (!inst.isCtrlFlow()) continue;
+    //
+    //     if (inst.op == .Br) {
+    //         var br = Inst.Br.get(inst.*);
+    //         var ifTrueBB = fun.bbs.get(br.iftrue);
+    //         var ifFalseBB = fun.bbs.get(br.iffalse);
+    //         bb.outgoers[0] = br.iftrue;
+    //         bb.outgoers[1] = br.iffalse;
+    //         try ifTrueBB.incomers.append(bbID);
+    //         try ifFalseBB.incomers.append(bbID);
+    //     } else if (inst.op == .Jmp) {
+    //         var jmp = Inst.Jmp.get(inst.*);
+    //         var jmpBB = fun.bbs.get(jmp.dest);
+    //         bb.outgoers[0] = jmp.dest;
+    //         try jmpBB.incomers.append(bbID);
+    //     } else if (inst.op == .Ret) {
+    //         // do nothing
+    //     } else {
+    //         utils.todo("unexpected control flow instruction {s}\n", .{@tagName(inst.op)});
+    //     }
+    // }
+    //
+    // // remove every non reachable block from the function
+    // var changed: bool = true;
+    // while (changed) {
+    //     changed = false;
+    //     for (fun.bbs.ids()) |bbID| {
+    //         if (!info.reachable[bbID]) {
+    //             // std.debug.print("removing unreachable block {d}\n", .{bbID});
+    //             // try remove_block_edges(fun, bbID);
+    //             _ = fun.bbs.remove(bbID);
+    //             changed = true;
+    //             break;
+    //         }
+    //     }
+    // }
 
     return true;
 }
@@ -442,6 +643,7 @@ fn refers_to_reg(ref: Ref, reg: Reg) bool {
 fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reachable: []bool) !void {
     const bbs = &fun.bbs;
     const insts = &fun.insts;
+    _ = insts;
 
     // for (bbs.items(), bbs.ids()) |bb, bbID| {
     //     std.debug.print("BEFOR bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
@@ -450,10 +652,10 @@ fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reacha
     save_dot_to_file(ir, "pre_remove_edges.dot") catch {};
 
     utils.assert(@as(usize, @intCast(bbs.len)) == reachable.len, "mismatch in block count", .{});
-    for (reachable, 0..) |r, i| {
-        const bbID = bbs.ids()[i];
-        std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), r });
-    }
+    // for (reachable, 0..) |r, i| {
+    //     const bbID = bbs.ids()[i];
+    //     std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), r });
+    // }
 
     // removes the edges from blocks that are unreachable
     for (bbs.ids()) |bbID| {
@@ -461,21 +663,21 @@ fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reacha
         if (is_reachable) {
             continue;
         }
-        std.debug.print("remove_unreachable: removing edges from block {s} with incomers {any} and outgoers {any}\n", .{
-            stringify_label(fun, bbID),
-            bbs.get(bbID).incomers.items,
-            bbs.get(bbID).outgoers,
-        });
+        // std.debug.print("remove_unreachable: removing edges from block {s} with incomers {any} and outgoers {any}\n", .{
+        //     stringify_label(fun, bbID),
+        //     bbs.get(bbID).incomers.items,
+        //     bbs.get(bbID).outgoers,
+        // });
         try remove_block_edges(fun, bbID);
         const bb = bbs.get(bbID);
         bb.incomers.clearAndFree();
         bb.*.outgoers = [_]?BBID{ null, null };
     }
-    for (bbs.items(), bbs.ids()) |bb, bbID| {
-        std.debug.print("AFTER bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
-        std.debug.print("AFTER bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
-        std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
-    }
+    // for (bbs.items(), bbs.ids()) |bb, bbID| {
+    //     std.debug.print("AFTER bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
+    //     std.debug.print("AFTER bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
+    //     std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
+    // }
 
     save_dot_to_file(ir, "post_remove_edges.dot") catch {};
 
@@ -492,7 +694,7 @@ fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reacha
 
         // if (id == 5) bbs.remove(bbID);
         // std.debug.print("WATCH ME DELETE {d}\n", .{bbID});
-        std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), is_reachable });
+        // std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), is_reachable });
         _ = bbs.remove(bbID);
     }
 
@@ -513,16 +715,16 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
     // brute_force_remove_phi_entires_referencing_dead_bb(fun, bbID);
 
     if (bb_num_outgoers(bb) == 2) {
-        std.debug.print("remove_block_edges: removing bb {s} with 2 outgoers {any} and these incomers {any}\n", .{ bb.name, bb.outgoers, bb.incomers.items });
+        // std.debug.print("remove_block_edges: removing bb {s} with 2 outgoers {any} and these incomers {any}\n", .{ bb.name, bb.outgoers, bb.incomers.items });
         var self_ref: BBID = undefined;
         if (try is_self_ref(fun, bbID, bb.outgoers[0].?)) {
-            std.debug.print("self ref detected at 0 ={?d} in {s}\n", .{ bb.outgoers[0], bb.name });
+            // std.debug.print("self ref detected at 0 ={?d} in {s}\n", .{ bb.outgoers[0], bb.name });
             self_ref = bb.outgoers[0].?;
             // const outgoer = bbs.get(outgoerID);
             // remove_bb_from_incomers(outgoer, bbID);
             // remove_bb_from_outgoers(outgoer, bbID);
         } else if (try is_self_ref(fun, bbID, bb.outgoers[1].?)) {
-            std.debug.print("self ref detected at 1 ={?d} in {s}\n", .{ bb.outgoers[1], bb.name });
+            // std.debug.print("self ref detected at 1 ={?d} in {s}\n", .{ bb.outgoers[1], bb.name });
             self_ref = bb.outgoers[1].?;
         }
         // brute_force_remove_block_edges(fun, bbID);
@@ -535,7 +737,7 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
         for (bb.outgoers) |_outgoer| {
             const outgoer = _outgoer.?;
             var outgoerBB = bbs.get(outgoer);
-            std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
+            // std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
 
             if (outgoer == self_ref) {
                 // self_ref could be self (bbID) or some other bb ID that
@@ -564,7 +766,7 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
     }
     if (bb.incomers.items.len > 0) {
         if (bbID != fun.exitBBID and bb_num_outgoers(bb) == 0) {
-            std.debug.print("removing {d} from incomers of {s} {any}\n", .{ bbID, bb.name, bb.incomers.items });
+            // std.debug.print("removing {d} from incomers of {s} {any}\n", .{ bbID, bb.name, bb.incomers.items });
             for (bb.incomers.items) |incomerID| {
                 var incomerBB = bbs.get(incomerID);
                 remove_bb_from_outgoers(incomerBB, bbID);
@@ -574,8 +776,8 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
         }
 
         utils.assert(bb_num_outgoers(bb) != 2, "FUCK - FELL THROUGH this case should be handled above\n", .{});
-        printIncomersAndOutgoers(bb);
-        std.debug.print("we only have one outgoer\n", .{});
+        // printIncomersAndOutgoers(bb);
+        // std.debug.print("we only have one outgoer\n", .{});
         const outgoer = if (bb.outgoers[0]) |out| out else if (bb.outgoers[1]) |out| out else unreachable;
 
         var outgoerBB = bbs.get(outgoer);
@@ -590,7 +792,7 @@ fn remove_block_edges(fun: *Function, bbID: BBID) !void {
                 continue;
             }
 
-            std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
+            // std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
 
             _ = replace_branches_to_with(incomerBR, bbID, outgoer);
             // replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
@@ -622,14 +824,14 @@ fn remove_bb_from_incomers(fromBB: *BasicBlock, toRemoveBBID: BBID) void {
 }
 
 fn remove_bb_from_outgoers(fromBB: *BasicBlock, toRemoveBBID: BBID) void {
-    std.debug.print("removing {d} from outgoers of {s} {any}\n", .{ toRemoveBBID, fromBB.name, fromBB.outgoers });
+    // std.debug.print("removing {d} from outgoers of {s} {any}\n", .{ toRemoveBBID, fromBB.name, fromBB.outgoers });
     const outgoers = &fromBB.outgoers;
     for (outgoers) |*outgoerID| {
         if (outgoerID.* != null and outgoerID.* == toRemoveBBID) {
             outgoerID.* = null;
         }
     }
-    std.debug.print("outgoers after removing {d} from {s} = {any}\n", .{ toRemoveBBID, fromBB.name, fromBB.outgoers });
+    // std.debug.print("outgoers after removing {d} from {s} = {any}\n", .{ toRemoveBBID, fromBB.name, fromBB.outgoers });
 }
 
 fn remove_phi_entires_in_children_of_dead_bb(fun: *Function, bb: *BasicBlock, bbID: BBID) !void {
@@ -659,6 +861,7 @@ fn remove_phi_entires_in_children_of_dead_bb_inner(fun: *Function, bb: *BasicBlo
     }
 }
 pub fn remove_bb_from_bb2_phi_entries(fun: *Function, bbID: BBID, bb2: *BasicBlock, bb2ID: BBID) !void {
+    _ = bb2ID;
     const insts = &fun.insts;
     for (bb2.insts.items()) |instID| {
         const inst = insts.get(instID);
@@ -683,7 +886,7 @@ pub fn remove_bb_from_bb2_phi_entries(fun: *Function, bbID: BBID, bb2: *BasicBlo
         }
         inst.* = phi.toInst();
     }
-    std.debug.print("removed phis from [{d}] {s}\n", .{ bb2ID, bb2.name });
+    // std.debug.print("removed phis from [{d}] {s}\n", .{ bb2ID, bb2.name });
 }
 
 fn brute_force_remove_block_edges(fun: *Function, badBBID: BBID) void {
@@ -693,7 +896,7 @@ fn brute_force_remove_block_edges(fun: *Function, badBBID: BBID) void {
 
     for (bbs.ids()) |bbID| {
         const bb = bbs.get(bbID);
-        std.debug.print("removing {d} from incomers of {s} {any}\n", .{ badBBID, bb.name, bb.incomers.items });
+        // std.debug.print("removing {d} from incomers of {s} {any}\n", .{ badBBID, bb.name, bb.incomers.items });
         remove_bb_from_incomers(bb, badBBID);
         remove_bb_from_outgoers(bb, badBBID);
     }
@@ -704,6 +907,7 @@ fn brute_force_remove_phi_entires_referencing_dead_bb(fun: *Function, badBBID: B
     const insts = &fun.insts;
 
     for (bbs.items(), bbs.ids()) |*bb, bbID| {
+        _ = bbID;
         for (bb.insts.items()) |instID| {
             const inst = insts.get(instID);
             if (inst.op != .Phi) {
@@ -715,11 +919,11 @@ fn brute_force_remove_phi_entires_referencing_dead_bb(fun: *Function, badBBID: B
             while (i < entries.items.len) {
                 const entry = entries.items[i];
                 if (entry.bb == badBBID) {
-                    std.debug.print("[{d}] {s} brute force removing entry referencing {s}\n", .{
-                        bbID,
-                        stringify_label(fun, bbID),
-                        stringify_label(fun, badBBID),
-                    });
+                    // std.debug.print("[{d}] {s} brute force removing entry referencing {s}\n", .{
+                    //     bbID,
+                    //     stringify_label(fun, bbID),
+                    //     stringify_label(fun, badBBID),
+                    // });
                     _ = entries.orderedRemove(i);
                 } else {
                     i += 1;
@@ -813,11 +1017,11 @@ fn empty_block_removal_pass(fun: *Function) !void {
     for (bbs.ids()) |bbID| {
         const bb = bbs.get(bbID);
 
-        std.debug.print("trying to remove edges from block {s} with incomers {any} and outgoers {any}\n", .{
-            stringify_label(fun, bbID),
-            bb.incomers.items,
-            bb.outgoers,
-        });
+        // std.debug.print("trying to remove edges from block {s} with incomers {any} and outgoers {any}\n", .{
+        //     stringify_label(fun, bbID),
+        //     bb.incomers.items,
+        //     bb.outgoers,
+        // });
         if (bb.insts.len > 1) {
             continue;
         }
@@ -830,23 +1034,23 @@ fn empty_block_removal_pass(fun: *Function) !void {
         // the following two continues are a hack to skip entry and exit blocks
         // because entries have no incomers, and exits have no outgoers
         if (bb.incomers.items.len == 0) {
-            std.debug.print("skipping removing edges from block {s} because no incomers\n", .{
-                stringify_label(fun, bbID),
-            });
+            // std.debug.print("skipping removing edges from block {s} because no incomers\n", .{
+            //     stringify_label(fun, bbID),
+            // });
             continue;
         }
         if (bb_num_outgoers(bb) == 0) {
-            std.debug.print("skipping removing edges from block {s} because no outgoers\n", .{
-                stringify_label(fun, bbID),
-            });
+            // std.debug.print("skipping removing edges from block {s} because no outgoers\n", .{
+            //     stringify_label(fun, bbID),
+            // });
             continue;
         }
         utils.assert(bbID != fun.exitBBID, "exit block should not be removed\n", .{});
         utils.assert(bbID != Function.entryBBID, "entry block should not be removed\n", .{});
 
-        std.debug.print("removing edges from block {s}\n", .{
-            stringify_label(fun, bbID),
-        });
+        // std.debug.print("removing edges from block {s}\n", .{
+        //     stringify_label(fun, bbID),
+        // });
         // NOTE: this use of undefined is only okay because we only have 1 outgoer
         try remove_block_edges(fun, bbID);
         try idsToRemove.append(bbID);
@@ -911,9 +1115,15 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
         inline for (passes, 0..) |pass, pass_no| {
             switch (pass) {
                 .sccp => {
-                    const changed = while (try sccp(&ir, fun)) {};
+                    const changed = try sccp(&ir, fun);
                     // if (changed)
                     log.trace("sccp changed the IR in pass {d}={any}\n", .{ pass_no, changed });
+                    try save_dot_to_file(&ir, "sccp.dot");
+                },
+                .cmp => {
+                    const changed = try cmp_prop(&ir, fun);
+                    // if (changed)
+                    log.trace("cmp changed the IR in pass {d}={any}\n", .{ pass_no, changed });
                     try save_dot_to_file(&ir, "sccp.dot");
                 },
                 .empty_bb => {
