@@ -1,6 +1,7 @@
 const std = @import("std");
 const Alloc = std.mem.Allocator;
 const ArrayList = std.ArrayList;
+pub const BitSet = std.bit_set.DynamicBitSetUnmanaged;
 
 const utils = @import("../utils.zig");
 const log = @import("../log.zig");
@@ -16,6 +17,8 @@ const Reg = Register;
 const RegID = Register.ID;
 const Ref = IR.Ref;
 const OpCode = IR.Op;
+
+const Dominance = @import("dominance.zig");
 
 const IMMEDIATE_FALSE = IR.InternPool.FALSE;
 const IMMEDIATE_TRUE = IR.InternPool.TRUE;
@@ -105,7 +108,7 @@ pub const SCCPRes = struct {
 /// eval_jmp [jmp b1] ->
 ///     if !reachable[b1]
 ///         CFGWorklist.push(b1)
-pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
+pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
     var reachable = exec: {
         var reachable = try alloc.alloc(bool, @intCast(fun.bbs.len + fun.bbs.removed));
         @memset(reachable, false);
@@ -127,6 +130,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
     const insts = &fun.insts;
     const regs = &fun.regs;
 
+    std.debug.print("starting\n", .{});
     main_loop: while (bbWL.items.len > 0 or ssaWL.items.len > 0) {
         if (bbWL.popOrNull()) |bbID| {
             std.debug.print("BBID={d}\n", .{bbID});
@@ -341,11 +345,15 @@ const CmpInfo = struct {
     /// The value of the other operand
     /// i.e. if op is .Eq then reg is this value
     val: Value,
+    // if true -> reg = rhs, val = lhs
+    // else    -> reg = lhs, val = rhs
+    rev: bool,
 
     /// Propogates the information from this cmpInfo
     /// placed in the struct to identify it as only related to CmpInfo
     /// Mutates []Value based on cmpInfo
     fn propogate(self: @This(), ir: *const IR, fun: *const Function, values: *[]Value) void {
+        _ = values;
         utils.assert(self.res.kind == .local, "ref is not local\n", .{});
         const reg = fun.regs.get(self.res.i);
         const bb = fun.bbs.get(reg.bb);
@@ -358,13 +366,41 @@ const CmpInfo = struct {
         //          common sub expressions or uses of the value
         //          and update values accordingly
         //  PERF: if value not in a phi at that location we can repeat
-        // FIXME: how to handle branches? need to add both paths to worklists
+        const cmp = cmp: {
+            const inst = bb.insts.list.getLastOrNull() orelse {
+                utils.impossible("bb has no insts\n", .{});
+            };
+            break :cmp Inst.Cmp.get(inst);
+        };
+        const propAlloc = fun.alloc;
+        const dominance = Dominance.genLazyDominance(ir, fun);
+        const joinPoints = join: {
+            // var because setIntersection will update the self param in place
+            var ifThenDomFront = bb_dom_front_to_bitset(propAlloc, fun, cmp.iftrue, dominance.domFront);
 
-        _ = values;
-        _ = ir;
-        // TODO:
+            const ifElseDomFront = bb_dom_front_to_bitset(propAlloc, fun, cmp.iffalse, dominance.domFront);
+            defer ifElseDomFront.deinit();
+
+            ifThenDomFront.setIntersection(ifElseDomFront);
+            break :join ifThenDomFront;
+        };
+        _ = joinPoints;
     }
 };
+
+const DomFront = @TypeOf(@field(Dominance.Dominance, "domFront"));
+
+/// Returns the dom front for bb as a bitset
+fn bb_dom_front_to_bitset(alloc: Alloc, fun: *const Function, bb: BBID, dom_front: *const DomFront) BitSet {
+    const num_bbs = fun.bbs.len + fun.bbs.removed;
+    var bs = BitSet.init(alloc, num_bbs);
+    if (dom_front.get(bb)) |df| {
+        for (df) |dfBBID| {
+            bs.set(dfBBID);
+        }
+    }
+    return bs;
+}
 
 fn is_same_comparison(inst: Inst, info: CmpInfo) bool {
     if (inst.op != .Cmp) {
@@ -484,7 +520,7 @@ fn get_ctrl_flow_dests(inst: Inst) [2]?BBID {
     };
 }
 
-fn eval(ir: *const IR, inst: Inst, values: []const Value, cmpInfo: ?*?CmpInfo) !?Value {
+fn eval(ir: *const IR, inst: Inst, values: []Value) !?Value {
     if (!has_res(inst.op)) {
         return null;
     }
@@ -572,6 +608,11 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value, cmpInfo: ?*?CmpInfo) !
 
             const lhsConst = lhs.state == .constant;
             const rhsConst = rhs.state == .constant;
+
+            const lhsCmpInfo = lhs.state == .cmp;
+            const rhsCmpInfo = rhs.state == .cmp;
+            _ = rhsCmpInfo;
+
             if (lhsConst and rhsConst) {
                 // eval
                 const cond = cmp.cond;
@@ -587,26 +628,43 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value, cmpInfo: ?*?CmpInfo) !
                 };
                 return Value.const_bool(res);
             }
-            // one is constant and one is not,
-            // therefore we can determine information about the one that isn't
-            // based on the op
-            if ((lhsConst or rhsConst) and cmpInfo != null) {
+
+            if (lhsCmpInfo) {
+                const cmpInfo = lhs.cmp.?;
+                if (std.meta.eql(cmpInfo.val, rhs)) {
+                    if (cmpInfo.op == cmp.op) {
+                        std.debug.print("found same cmp\n");
+                        return Value.const_bool(true);
+                    }
+                }
+            }
+
+            if (lhsConst or rhsConst) {
                 // looked for xor keyword, found simd
                 utils.assert(@reduce(.Xor, @Vector(2, bool){ lhsConst, rhsConst }), "case where both sides const not handled???\n", .{});
 
                 utils.assert(inst.res.kind == .local, "inst res is local got {any}\n", .{inst.res});
 
-                const infoPtr = cmpInfo.?;
-                infoPtr.* = CmpInfo{
+                const cmpInfo = if (lhsConst) CmpInfo{
                     .op = cmp.cond,
                     .res = inst.res,
-                    .reg = if (lhsConst) cmp.rhs else cmp.lhs,
-                    .val = if (lhsConst) lhs else rhs,
+                    .reg = cmp.rhs,
+                    .val = lhs,
+                    .rev = true,
+                } else CmpInfo{
+                    .op = cmp.cond,
+                    .res = inst.res,
+                    .reg = cmp.lhs,
+                    .val = rhs,
+                    .rev = false,
                 };
+                std.debug.print("cmp info = {any}\n", .{cmpInfo});
+                if (cmpInfo.reg.kind == .local) {
+                    std.debug.print("found cmpInfo\n");
+                    values[cmpInfo.reg.i] = Value.cmp(cmpInfo);
+                }
             }
-            // if (lhs.state != .constant or rhs.state != .constant) {
             return meet(lhs, rhs);
-            // }
         },
         .Zext, .Sext, .Trunc, .Bitcast => misc: {
             // FIXME: HOW TO HANDLE.
@@ -702,8 +760,10 @@ fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
 pub const Value = struct {
     state: State = State.undef,
     constant: ?Constant = null,
+    cmp: ?CmpInfo = null,
 
-    pub const State = enum { undef, unknown, constant };
+    pub const State = enum { undef, unknown, constant, cmp };
+
     pub const Constant = struct {
         value: i64,
         kind: Kind,
@@ -758,6 +818,11 @@ pub const Value = struct {
     inline fn unknown() Value {
         return Value{ .state = .unknown };
     }
+
+    inline fn cmp(info: CmpInfo) Value {
+        return Value{ .state = .cmp, .cmp = info };
+    }
+
     pub fn eq(self: Value, other: Value) bool {
         if (self.state != other.state) {
             return false;
@@ -977,10 +1042,10 @@ fn testMe(input: []const u8) !IR {
     return ir;
 }
 
-fn sccp_all_funs(ir: *const IR) !void {
+fn cmp_prop_all_funs(ir: *const IR) !void {
     const funs = ir.funcs.items.items;
     for (funs) |*fun| {
-        _ = try sccp(testAlloc, ir, fun);
+        _ = try cmp_prop(testAlloc, ir, fun);
     }
 }
 
@@ -1002,99 +1067,99 @@ fn sccp_all_funs(ir: *const IR) !void {
 //     try sccp_all_funs(&ir);
 // }
 
-test "sccp.removes-never-taken-if" {
-    log.empty();
-    errdefer log.print();
+// test "sccp.removes-never-taken-if" {
+//     log.empty();
+//     errdefer log.print();
+//
+//     try expectResultsInIR(
+//         \\fun main() int {
+//         \\  int a;
+//         \\  if (false) {
+//         \\    a = 1;
+//         \\  } else {
+//         \\    a = 2;
+//         \\  }
+//         \\  return a;
+//         \\}
+//     , .{
+//         "define i64 @main() {",
+//         "entry:",
+//         "  br label %body0",
+//         "body0:",
+//         "  br label %if.cond1",
+//         "if.cond1:",
+//         "  br label %else.body4",
+//         "else.body4:",
+//         "  br label %else.exit5",
+//         "else.exit5:",
+//         "  br label %if.exit6",
+//         "if.exit6:",
+//         "  br label %exit",
+//         "exit:",
+//         "  ret i64 2",
+//         "}",
+//     }, .{
+//         .{ "main", .{.sccp} },
+//     });
+// }
+//
+// test "sccp.removes-nested-never-ran-while" {
+//     log.empty();
+//     errdefer log.print();
+//     try expectResultsInIR(
+//         \\fun main() int {
+//         \\  int a;
+//         \\  a = 4;
+//         \\  if (true) {
+//         \\    a = 1;
+//         \\    while (false) {
+//         \\      a = 2;
+//         \\      a = 3;
+//         \\    }
+//         \\  }
+//         \\  return a;
+//         \\}
+//     , .{
+//         "define i64 @main() {",
+//         "entry:",
+//         "  br label %body0",
+//         "body0:",
+//         "  br label %if.cond1",
+//         "if.cond1:",
+//         "  br label %then.body2",
+//         "then.body2:",
+//         "  br label %while.cond13",
+//         "while.cond13:",
+//         "  br label %while.exit7",
+//         "while.exit7:",
+//         "  br label %then.exit8",
+//         "then.exit8:",
+//         "  br label %if.exit9",
+//         "if.exit9:",
+//         "  br label %exit",
+//         "exit:",
+//         "  ret i64 1",
+//         "}",
+//     }, .{
+//         .{ "main", .{.sccp} },
+//     });
+// }
 
-    try expectResultsInIR(
-        \\fun main() int {
-        \\  int a;
-        \\  if (false) {
-        \\    a = 1;
-        \\  } else {
-        \\    a = 2;
-        \\  }
-        \\  return a;
-        \\}
-    , .{
-        "define i64 @main() {",
-        "entry:",
-        "  br label %body0",
-        "body0:",
-        "  br label %if.cond1",
-        "if.cond1:",
-        "  br label %else.body4",
-        "else.body4:",
-        "  br label %else.exit5",
-        "else.exit5:",
-        "  br label %if.exit6",
-        "if.exit6:",
-        "  br label %exit",
-        "exit:",
-        "  ret i64 2",
-        "}",
-    }, .{
-        .{ "main", .{.sccp} },
-    });
-}
-
-test "sccp.removes-nested-never-ran-while" {
-    log.empty();
-    errdefer log.print();
-    try expectResultsInIR(
-        \\fun main() int {
-        \\  int a;
-        \\  a = 4;
-        \\  if (true) {
-        \\    a = 1;
-        \\    while (false) {
-        \\      a = 2;
-        \\      a = 3;
-        \\    }
-        \\  }
-        \\  return a;
-        \\}
-    , .{
-        "define i64 @main() {",
-        "entry:",
-        "  br label %body0",
-        "body0:",
-        "  br label %if.cond1",
-        "if.cond1:",
-        "  br label %then.body2",
-        "then.body2:",
-        "  br label %while.cond13",
-        "while.cond13:",
-        "  br label %while.exit7",
-        "while.exit7:",
-        "  br label %then.exit8",
-        "then.exit8:",
-        "  br label %if.exit9",
-        "if.exit9:",
-        "  br label %exit",
-        "exit:",
-        "  ret i64 1",
-        "}",
-    }, .{
-        .{ "main", .{.sccp} },
-    });
-}
-
-test "sccp.removes-nested-known-if" {
+test "cmp-prop.removes-nested-known-if" {
     log.empty();
     errdefer log.print();
 
     try expectResultsInIR(
         \\fun test (int param) int {
         \\    int a, b, c, d;
-        \\    a = 1;
+        \\    a = 5 * param;
         \\    b = 2;
         \\    c = 3;
         \\    d = 0;
         \\
-        \\    if (param == 1) {
+        \\    if (a == 1) {
         \\        b = 20;
-        \\        if (param == 1) {
+        \\        if (a == 1) {
         \\            b = 200;
         \\            c = 300;
         \\        } else {
@@ -1127,6 +1192,6 @@ test "sccp.removes-nested-known-if" {
         "  ret i64 2",
         "}",
     }, .{
-        .{ "test", .{.sccp} },
+        .{ "test", .{.cmp} },
     });
 }
