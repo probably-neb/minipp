@@ -18,3 +18,7 @@ pub fn impossible(comptime fmt: []const u8, vars: anytype) noreturn {
     const prefix = "UNREACHABLE: ";
     std.debug.panic(prefix ++ fmt, vars);
 }
+
+pub fn xor(a: bool, b: bool) bool {
+    return (a and !b) or (!a and b);
+}
