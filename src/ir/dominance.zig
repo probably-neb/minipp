@@ -21,6 +21,7 @@ pub fn genLazyDominance(ir: *const IR, fun: *const Function) !Dominance {
     try dom.generateDominators();
     try dom.computeIdoms();
     try dom.generateDomChildren();
+    return dom;
 }
 
 pub const Dominance = struct {
@@ -65,7 +66,7 @@ pub const Dominance = struct {
     //         Dom(n) = {n} union with intersection over Dom(p) for all p in pred(n)
     // return Dom
     pub fn generateDominators(self: *Dominance) !void {
-        var result = try std.ArrayList(BitSet).init(self.alloc);
+        var result = std.ArrayList(BitSet).init(self.alloc);
         // like initCapacity but also sets the length to the new capacity
         // therefore all 0..capacity items are in bounds
         try result.resize(self.numBlocks);
