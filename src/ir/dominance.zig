@@ -16,6 +16,13 @@ const Block = IR.BasicBlock;
 pub const BSet = Set(Block.ID);
 pub const BitSet = std.bit_set.DynamicBitSet;
 
+pub fn genLazyDominance(ir: *const IR, fun: *const Function) !Dominance {
+    var dom = Dominance.init(ir, fun);
+    try dom.generateDominators();
+    try dom.computeIdoms();
+    try dom.generateDomChildren();
+}
+
 pub const Dominance = struct {
     // TODO: replace with bitsets
     dominators: std.ArrayList(BitSet),
@@ -37,7 +44,7 @@ pub const Dominance = struct {
             .domChildren = std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)).init(ir.alloc),
             .domFront = std.AutoHashMap(Block.ID, std.ArrayList(Block.ID)).init(ir.alloc),
             .dominators = std.ArrayList(BitSet).init(ir.alloc),
-            .alloc = ir.alloc,
+            .alloc = fun.alloc,
             .fun = fun,
             .numBlocks = fun.bbs.len + fun.bbs.removed,
         };
@@ -58,11 +65,10 @@ pub const Dominance = struct {
     //         Dom(n) = {n} union with intersection over Dom(p) for all p in pred(n)
     // return Dom
     pub fn generateDominators(self: *Dominance) !void {
-        var result = try std.ArrayList(BitSet).initCapacity(self.alloc, self.numBlocks);
-        // // fill all the dominators with empty
-        for (self.fun.bbs.ids()) |_| {
-            try result.append(undefined);
-        }
+        var result = try std.ArrayList(BitSet).init(self.alloc);
+        // like initCapacity but also sets the length to the new capacity
+        // therefore all 0..capacity items are in bounds
+        try result.resize(self.numBlocks);
 
         // // dominator of the start node is the start itself
         // Dom(n0) = {n0}
@@ -93,28 +99,21 @@ pub const Dominance = struct {
         var changes = true;
         while (changes) {
             changes = false;
-            for (self.fun.bbs.ids()) |block| {
-                if (block == Function.entryBBID) continue;
+            for (self.fun.bbs.ids()) |blockID| {
+                if (blockID == Function.entryBBID) continue;
 
                 // get the predecessors for this block
-                const preds = try self.getBlockIncomerIDs(block);
-                for (preds.items) |pred| {
+                const block = self.fun.bbs.get(blockID);
+                const preds = block.incomers.items;
+                for (preds) |predID| {
                     // get the intersection of the dominators of the predecessors
                     // get Dom(p)
-                    var predDom = result.items[pred];
-                    var blockDom = result.items[block];
-                    var intersection = try blockDom.clone(self.alloc);
-                    intersection.setIntersection(predDom);
-                    intersection.set(block);
-                    var changedInter = intersection.eql(blockDom);
-                    if (!changedInter) {
-                        result.items[block].deinit();
-                        result.items[block] = try intersection.clone(self.alloc);
-                        changes = true;
-                    } else {}
-                    intersection.deinit();
+                    var predDom = result.items[predID];
+                    var blockDom = result.items[blockID];
+                    blockDom.setIntersection(predDom);
+                    // ensure block is still set
+                    blockDom.set(blockID);
                 }
-                preds.deinit();
             }
         }
         self.dominators = result;
@@ -200,15 +199,6 @@ pub const Dominance = struct {
         return children;
     }
 
-    pub fn getBlockIncomerIDs(self: *Dominance, blockID: Block.ID) !std.ArrayList(Block.ID) {
-        const block = self.fun.bbs.get(blockID);
-        var result = std.ArrayList(Block.ID).init(self.alloc);
-        for (block.incomers.items) |incomer| {
-            try result.append(incomer);
-        }
-        return result;
-    }
-
     pub fn printAsDot(self: *Dominance) void {
         std.debug.print("digraph G {{\n", .{});
         for (self.fun.bbs.ids()) |block| {
@@ -262,7 +252,6 @@ pub const Dominance = struct {
 
     pub fn generateDomChildren(self: *Dominance) !void {
         for (self.fun.bbs.ids()) |node| {
-            INDENT();
             try self.domChildren.put(node, try self.findChildren(node));
         }
     }
