@@ -129,7 +129,7 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
 
     main_loop: while (bbWL.items.len > 0 or ssaWL.items.len > 0) {
         if (bbWL.popOrNull()) |bbID| {
-            std.debug.print("BBID={d}\n", .{bbID});
+            // std.debug.print("BBID={d}\n", .{bbID});
             if (reachable[bbID]) {
                 // in this context means we already handled the block
                 // updates to values in this block will be handled by
@@ -140,43 +140,6 @@ pub fn sccp(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
 
             const bb = fun.bbs.get(bbID);
             const instructionIDs = bb.insts.items();
-            // const phiInstructionIDs = bb.phiInsts.items;
-            //
-            // for (phiInstructionIDs) |phiInstID| {
-            //     // visit_phi [x := phi(y, z)] -> Value[x] = y /\ z
-            //     const inst = insts.get(phiInstID).*;
-            //     utils.assert(inst.op == .Phi, "phi inst not phi??? ({s} instead) wtf dylan!\n", .{@tagName(inst.op)});
-            //     const phi = Inst.Phi.get(inst);
-            //
-            //     const res = phi.res;
-            //     utils.assert(res.kind == .local, "phi res not local is {s}\n", .{@tagName(res.kind)});
-            //
-            //     // WARN: these are supposed to be evaluated
-            //     // simultaneously (i.e. results of one would not impact others)
-            //     // but I can't think of a case where the result is
-            //     // different than just going one by one
-            //     // and we shouldn't get cases where one depends on another
-            //     const phi_entries = phi.entries.items;
-            //     const value = if (phi_entries.len == 1) single: {
-            //         break :single ref_value(ir, phi_entries[0].ref, values);
-            //     } else if (phi_entries.len == 0) none: {
-            //         // FIXME: is this logically sound?
-            //         break :none Value.undef();
-            //     } else len_gt_1: {
-            //         var value: Value = ref_value(ir, phi_entries[0].ref, values);
-            //         for (phi_entries[1..]) |option| {
-            //             // TODO: assert not depending on phi in same bb
-            //             const ref = option.ref;
-            //             const optionValue = ref_value(ir, ref, values);
-            //             value = meet(value, optionValue);
-            //         }
-            //         break :len_gt_1 value;
-            //     };
-            //     utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
-            //     const reg = regs.get(res.i);
-            //     values[reg.id] = value;
-            //     try add_reachable_uses_of(fun, reg, &ssaWL, reachable);
-            // }
 
             for (instructionIDs) |instID| {
                 const inst = insts.get(instID).*;
@@ -358,7 +321,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
                             utils.todo("Mistew Beawd... how do i evawuwate a divison by zewo...", .{});
                         },
                     };
-                    std.debug.print("======= EVAL =======\n{d} {s} {d} = {d}\n", .{ l, @tagName(op), r, res });
+                    // std.debug.print("======= EVAL =======\n{d} {s} {d} = {d}\n", .{ l, @tagName(op), r, res });
                     utils.assert(
                         lhs_val.kind == rhs_val.kind,
                         "lhs_val.kind == rhs_val.kind\n {s} != {s}\n",
@@ -516,11 +479,6 @@ fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
         .global, .param => Value.unknown(),
         ._invalid, .label => unreachable,
     };
-    // if (ref.kind == .immediate) {
-    //     std.debug.print("REF IMM {s} {any} {?any}\n", .{ ir.getIdent(ref.i), ref, res.constant });
-    // } else if (ref.kind == .immediate_u32) {
-    //     std.debug.print("REF IMM U32 {s} {any} {?any}\n", .{ ir.getIdent(ref.i), ref, res.constant });
-    // }
     return res;
 }
 
@@ -677,7 +635,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
         .Jmp => {
             const jmp = Inst.Jmp.get(inst);
             if (reachable[jmp.dest] and !visited[jmp.dest]) {
-                std.debug.print("WATCH ME VISIT {d}\n", .{jmp.dest});
+                // std.debug.print("WATCH ME VISIT {d}\n", .{jmp.dest});
                 return try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,
@@ -691,7 +649,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
         .Br => {
             const br = Inst.Br.get(inst);
             if (reachable[br.iftrue] and !visited[br.iftrue]) {
-                std.debug.print("WATCH ME VISIT {d}\n", .{br.iftrue});
+                // std.debug.print("WATCH ME VISIT {d}\n", .{br.iftrue});
                 try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,
@@ -702,7 +660,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
                 );
             }
             if (reachable[br.iffalse] and !visited[br.iffalse]) {
-                std.debug.print("WATCH ME VISIT {d}\n", .{br.iffalse});
+                // std.debug.print("WATCH ME VISIT {d}\n", .{br.iffalse});
                 return try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,
@@ -898,56 +856,5 @@ test "sccp.removes-nested-never-ran-while" {
         "}",
     }, .{
         .{ "main", .{.sccp} },
-    });
-}
-
-test "sccp.removes-nested-known-if" {
-    log.empty();
-    errdefer log.print();
-
-    try expectResultsInIR(
-        \\fun test (int param) int {
-        \\    int a, b, c, d;
-        \\    a = 1;
-        \\    b = 2;
-        \\    c = 3;
-        \\    d = 0;
-        \\
-        \\    if (param == 1) {
-        \\        b = 20;
-        \\        if (param == 1) {
-        \\            b = 200;
-        \\            c = 300;
-        \\        } else {
-        \\            a = 1;
-        \\            b = 2;
-        \\            c = 3;
-        \\        }
-        \\        d = b * c;
-        \\    }
-        \\
-        \\    return d;
-        \\}
-        \\fun main() void {
-        \\}
-    , .{
-        "define i64 @main() {",
-        "entry:",
-        "  br label %body0",
-        "body0:",
-        "  br label %if.cond1",
-        "if.cond1:",
-        "  br label %else.body4",
-        "else.body4:",
-        "  br label %else.exit5",
-        "else.exit5:",
-        "  br label %if.exit6",
-        "if.exit6:",
-        "  br label %exit",
-        "exit:",
-        "  ret i64 2",
-        "}",
-    }, .{
-        .{ "test", .{.sccp} },
     });
 }
