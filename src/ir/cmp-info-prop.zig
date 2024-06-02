@@ -344,16 +344,32 @@ fn dbg_new_val(ir: *const IR, fun: *const Function, reg: Reg, val: Value) void {
     });
 }
 
-inline fn has_res(op: OpCode) bool {
-    return switch (op) {
-        .Br, .Jmp, .Store, .Ret, .Param => false,
-        else => true,
-    };
-}
+const CmpInfo = struct {
+    /// The comparison operator used
+    cond: OpCode.Cond,
+    /// The register result of the operand
+    /// Will always be a register (.kind == .local)
+    res: Ref,
+    /// The operand we now know the value of
+    reg: Ref,
+    /// The value of the other operand
+    /// i.e. if op is .Eq then reg is this value
+    val: Ref,
+    // if true -> reg = rhs, val = lhs
+    // else    -> reg = lhs, val = rhs
+    rev: bool,
+    ifthenBB: BBID,
+    ifelseBB: BBID,
 
-fn apply_cmp_info(ir: *const IR, fun: *const Function, dom: *const Dominance, inst: Inst, values: []Value, cmp_info: []?CmpInfo, value: Value) !Value {
-    _ = dom;
-    _ = fun;
+    fn lhs(self: CmpInfo) Ref {
+        return if (self.rev) self.val else self.reg;
+    }
+    fn rhs(self: CmpInfo) Ref {
+        return if (self.rev) self.reg else self.val;
+    }
+};
+
+fn apply_cmp_info(ir: *const IR, fun: *const Function, dom: *const Dominance, inst: Inst, values: []const Value, cmp_info: []?CmpInfo, value: Value) !Value {
     utils.assert(inst.op == .Cmp, "cannot apply non cmp cmp info ya dunce\n", .{});
     const cmp = Inst.Cmp.get(inst);
     const lhs = ref_value(ir, cmp.lhs, values);
@@ -367,229 +383,177 @@ fn apply_cmp_info(ir: *const IR, fun: *const Function, dom: *const Dominance, in
         return value;
     }
     // now we cook
+    const cmpResReg = fun.regs.get(cmp.res.i);
+    const curBBID = cmpResReg.bb;
 
-    if (cmp.lhs.kind == .local) {
-        if (cmp_info[cmp.lhs.i]) |cmpInfo| {
-            if (std.meta.eql(ref_value(ir, cmpInfo.val, values), rhs)) {
-                if (cmpInfo.op == cmp.cond) {
-                    std.debug.print("found same cmp\n", .{});
-                    return Value.const_bool(true);
-                }
+    const cmpLhsCmpInfo = if (cmp.lhs.kind == .local) cmp_info[cmp.lhs.i] else null;
+    const cmpRhsCmpInfo = if (cmp.rhs.kind == .local) cmp_info[cmp.rhs.i] else null;
+
+    utils.assert(!(cmpLhsCmpInfo != null and cmpRhsCmpInfo != null), "both sides of cmp have cmpinfo??\n", .{});
+    // std.debug.print("cmpLhsCmpInfo = {any}\n", .{cmpLhsCmpInfo});
+    // std.debug.print("cmpRhsCmpInfo = {any}\n", .{cmpRhsCmpInfo});
+    if (cmpLhsCmpInfo orelse cmpRhsCmpInfo) |cmpInfo| {
+        std.debug.print("found cmpInfo = {any}\n", .{cmpInfo});
+        if (is_same_comparison(cmp, cmpInfo, values)) {
+            std.debug.print("cmpInfo is same as cmp\n", .{});
+            if (dom.isDominatedBy(curBBID, cmpInfo.ifthenBB)) {
+                return Value.const_bool(true);
+            } else if (dom.isDominatedBy(curBBID, cmpInfo.ifelseBB)) {
+                return Value.const_bool(false);
+            }
+            // FIXME: what to do in else? maybe dead code elim?
+        }
+        const implications = cmp_info_implications_on_subsequent_cmp(cmpInfo, cmp, values);
+        if (implications.ifthen) |ifthen| {
+            if (dom.isDominatedBy(curBBID, cmpInfo.ifthenBB)) {
+                return Value.const_bool(ifthen);
+            }
+        }
+        if (implications.ifelse) |ifelse| {
+            if (dom.isDominatedBy(curBBID, cmpInfo.ifelseBB)) {
+                return Value.const_bool(ifelse);
             }
         }
     }
 
-    if (lhsConst or rhsConst) {
-        // looked for xor keyword, found simd
-        utils.assert(@reduce(.Xor, @Vector(2, bool){ lhsConst, rhsConst }), "case where both sides const not handled???\n", .{});
+    const cmpBBCtrlFlow = get_bb_ctrl_flow(fun, curBBID);
+    // FIXME: handle case where cmp not used in br by setting ifthenBB and ifelseBB to the res bb
+    if (inst_uses_reg(cmpBBCtrlFlow, cmpResReg) and cmpBBCtrlFlow.op != .Ret and (lhsConst or rhsConst)) {
+        utils.assert(cmpBBCtrlFlow.op == .Br, "if ctrl flow uses reg and is not a return it should be a branch not {s}\n", .{@tagName(cmpBBCtrlFlow.op)});
+        utils.assert(utils.xor(lhsConst, rhsConst), "case where both sides const not handled???\n", .{});
 
-        utils.assert(inst.res.kind == .local, "inst res is local got {any}\n", .{inst.res});
+        const br = Inst.Br.get(cmpBBCtrlFlow);
 
         const cmpInfo = if (lhsConst) CmpInfo{
-            .op = cmp.cond,
+            .cond = cmp.cond,
             .res = inst.res,
             .reg = cmp.rhs,
             .val = cmp.lhs,
             .rev = true,
+            .ifthenBB = br.iftrue,
+            .ifelseBB = br.iffalse,
         } else CmpInfo{
-            .op = cmp.cond,
+            .cond = cmp.cond,
             .res = inst.res,
             .reg = cmp.lhs,
             .val = cmp.rhs,
             .rev = false,
+            .ifthenBB = br.iftrue,
+            .ifelseBB = br.iffalse,
         };
         std.debug.print("cmp info = {any}\n", .{cmpInfo});
         if (cmpInfo.reg.kind == .local) {
-            std.debug.print("found cmpInfo\n", .{});
+            std.debug.print("setting cmpInfo\n", .{});
             cmp_info[cmpInfo.reg.i] = cmpInfo;
         }
     }
     return meet(lhs, rhs);
 }
 
-const CmpInfo = struct {
-    /// The comparison operator used
-    op: OpCode.Cond,
-    /// The register result of the operand
-    /// Will always be a register (.kind == .local)
-    res: Ref,
-    /// The operand we now know the value of
-    reg: Ref,
-    /// The value of the other operand
-    /// i.e. if op is .Eq then reg is this value
-    val: Ref,
-    // if true -> reg = rhs, val = lhs
-    // else    -> reg = lhs, val = rhs
-    rev: bool,
-
-    // Propogates the information from this cmpInfo
-    // placed in the struct to identify it as only related to CmpInfo
-    // Mutates []Value based on cmpInfo
-    // fn propogate(self: @This(), ir: *const IR, fun: *const Function, values: *[]Value) void {
-    //     _ = values;
-    //     utils.assert(self.res.kind == .local, "ref is not local\n", .{});
-    //     const reg = fun.regs.get(self.res.i);
-    //     const bb = fun.bbs.get(reg.bb);
-    //     if (!end_of_bb_uses_ref_to_reg(bb, self.res)) {
-    //         log.trace("now this is wierd, bb where cmpInfo was derived does not use result of cmp in branch");
-    //         return;
-    //     }
-    //     // TODO: find first meeting point or exit
-    //     //  then -> for each block in each path, identitify
-    //     //          common sub expressions or uses of the value
-    //     //          and update values accordingly
-    //     //  PERF: if value not in a phi at that location we can repeat
-    //     const cmp = cmp: {
-    //         const inst = bb.insts.list.getLastOrNull() orelse {
-    //             utils.impossible("bb has no insts\n", .{});
-    //         };
-    //         break :cmp Inst.Cmp.get(inst);
-    //     };
-    //     const propAlloc = fun.alloc;
-    //     const dominance = Dominance.genLazyDominance(ir, fun);
-    //     const joinPoints = join: {
-    //         // var because setIntersection will update the self param in place
-    //         var ifThenDomFront = bb_dom_front_to_bitset(propAlloc, fun, cmp.iftrue, dominance.domFront);
-    //
-    //         const ifElseDomFront = bb_dom_front_to_bitset(propAlloc, fun, cmp.iffalse, dominance.domFront);
-    //         defer ifElseDomFront.deinit();
-    //
-    //         ifThenDomFront.setIntersection(ifElseDomFront);
-    //         break :join ifThenDomFront;
-    //     };
-    //     _ = joinPoints;
-    // }
-};
-
-const DomFront = @TypeOf(@field(Dominance.Dominance, "domFront"));
-
-/// Returns the dom front for bb as a bitset
-fn bb_dom_front_to_bitset(alloc: Alloc, fun: *const Function, bb: BBID, dom_front: *const DomFront) BitSet {
-    const num_bbs = fun.bbs.len + fun.bbs.removed;
-    var bs = BitSet.init(alloc, num_bbs);
-    if (dom_front.get(bb)) |df| {
-        for (df) |dfBBID| {
-            bs.set(dfBBID);
-        }
-    }
-    return bs;
-}
-
-fn is_same_comparison(inst: Inst, info: CmpInfo) bool {
-    if (inst.op != .Cmp) {
-        return false;
-    }
-    const cmp = Inst.Cmp.get(inst);
-
-    if (cmp.op != info.op) {
-        return false;
-    }
-    // compare kinds
-    if (!pair_is_equal(Ref.Kind, info.val.kind, info.reg.kind, cmp.lhs.kind, cmp.rhs.kind)) {
-        return false;
-    }
-    // compare ids
-    if (!pair_is_equal(Ref.ID, info.val.i, info.reg.i, cmp.lhs.i, cmp.rhs.i)) {
-        return false;
-    }
-    return true;
-}
-
-// FIXME: add option to compare reverse order on one side as well
-// for when op in cmp is commutative
-fn pair_is_equal(comptime T: type, a1: T, b1: T, a2: T, b2: T) bool {
-    const Pair = @Vector(2, T);
-
-    const pair1 = Pair{ a1, b1 };
-    const pair2 = Pair{ a2, b2 };
-
-    return @reduce(.And, pair1 == pair2);
-}
-
-fn end_of_bb_uses_ref_to_reg(bb: *const BasicBlock, ref: Ref) bool {
-    const ctrlFlow = bb.insts.list.getLastOrNull() orelse {
+fn get_bb_ctrl_flow(fun: *const Function, bbID: BBID) Inst {
+    const bb = fun.bbs.get(bbID);
+    const ctrlFlowInstID = bb.insts.list.getLastOrNull() orelse {
         utils.impossible("bb has no insts\n", .{});
     };
-    utils.assert(ctrlFlow.isCtrlFlow(), "last inst in bb is not control flow\n", .{});
-    utils.assert(ref.kind == .local, "ref is not local\n", .{});
-    if (is_one_of(OpCode, ctrlFlow.op, .Ret, .Jmp)) {
+    const ctrlFlow = fun.insts.get(ctrlFlowInstID).*;
+    return ctrlFlow;
+}
+
+fn is_same_comparison(cmp: Inst.Cmp, info: CmpInfo, values: []const Value) bool {
+    const cmpLhs = cmp.lhs;
+    const cmpRhs = cmp.rhs;
+    const infoLhs = info.lhs();
+    const infoRhs = info.rhs();
+
+    const condsEqual = cmp.cond == info.cond;
+    const kindsEqual = cmpLhs.kind == infoLhs.kind and cmpRhs.kind == infoRhs.kind;
+    // const idsEqual = cmpLhs.i == infoLhs.i and cmpRhs.i == infoRhs.i;
+    const valuesEqual = ref_values_equal(cmpLhs, infoLhs, values) and ref_values_equal(cmpRhs, infoRhs, values);
+
+    std.debug.print("cmp = {any}\ninfo = {any}\ncondsEqual={} kindsEqual={} valuesEqual={}\n", .{ cmp, info, condsEqual, kindsEqual, valuesEqual });
+
+    return condsEqual and kindsEqual and valuesEqual;
+}
+
+fn ref_values_equal(a: Ref, b: Ref, values: []const Value) bool {
+    if (a.i == b.i and a.kind == b.kind) {
+        return true;
+    }
+    // FIXME: extend this logic to compare one sides value in values to an immediates value
+    if (a.kind != .local or b.kind != .local) {
         return false;
     }
-    // we know it's a branch, but use inst_uses_regID anyway
-    // so we don't duplicate logic
-    return inst_uses_regID(ctrlFlow, ref.i);
+    return std.meta.eql(values[a.i], values[b.i]);
 }
 
-const Set = @import("../array_hash_set.zig");
+const CmpImplications = struct {
+    ifthen: ?bool = null,
+    ifelse: ?bool = null,
 
-fn find_next_join_point(fun: *const Function, bb: *const BasicBlock) BBID {
-    const branch = bb.insts.list.getLastOrNull() orelse {
-        utils.impossible("expected branch as first input to `find_next_join_point` instead found empty block???\n", .{});
-    };
-    utils.assert(branch.op == .Br, "expected branch as first input to `find_next_join_point` instead found {s}???\n", .{@tagName(branch.op)});
-    const Br = Inst.Br.get(branch);
-
-    var then_set = Set(BBID).init(fun.alloc);
-    try then_set.add(Br.iftrue);
-    defer then_set.deinit();
-    var else_set = Set(BBID).init(fun.alloc);
-    try else_set.add(Br.iffalse);
-    defer else_set.deinit();
-    const res = find_next_join_point_inner(fun, bb) orelse utils.impossible("no join point found. Exit should always be a join point\n", .{});
-    return res;
-}
-
-fn find_next_join_point_inner(fun: *const Function, then_bb: *const BasicBlock, then_set: *Set(BBID), else_bb: *const BasicBlock, else_set: *Set(BBID)) ?BBID {
-    // use heuristic based on length to determine which side to recurse on
-    const Group = struct {
-        bb: *const BasicBlock,
-        set: *Set(BBID),
-        other_set: *Set(BBID),
-    };
-    const groups = [_]Group{
-        .{ .bb = then_bb, .set = then_set, .other_set = else_set },
-        .{ .bb = else_bb, .set = else_set, .other_set = then_set },
-    };
-    if (then_set.items.len > else_set.items.len) {
-        std.mem.swap(Group, &groups[0], &groups[1]);
-    }
-    for (groups) |group| {
-        const bb = group.bb;
-        const set = group.set;
-        const other_set = group.other_set;
-        const ctrl_inst = bb.insts.list.getLastOrNull() orelse {
-            utils.impossible("bb has no insts\n", .{});
+    pub fn none() CmpImplications {
+        return .{
+            .ifthen = null,
+            .ifelse = null,
         };
-        utils.assert(ctrl_inst.isCtrlFlow(), "last inst in bb is not control flow\n", .{});
-
-        var i = 0;
-        const dests = get_ctrl_flow_dests(ctrl_inst);
-        while (dests[i]) |dest| : (i += 1) {
-            if (other_set.contains(dest)) {
-                // found join point
-                return dest;
-            }
-            set.add(dest);
-            if (find_next_join_point_inner(fun, fun.bbs.get(dest), then_set, else_bb, else_set)) |join| {
-                return join;
-            }
-        }
     }
-    return null;
+
+    pub fn identity() CmpImplications {
+        return .{
+            .ifthen = true,
+            .ifelse = false,
+        };
+    }
+
+    pub fn inverse() CmpImplications {
+        return .{
+            .ifthen = false,
+            .ifelse = true,
+        };
+    }
+};
+
+fn cmp_info_implications_on_subsequent_cmp(info: CmpInfo, cmp: Inst.Cmp, values: []const Value) CmpImplications {
+    const condsEqual = cmp.cond == info.cond;
+    const refValuesEqual = ref_values_equal(info.lhs(), cmp.lhs, values) and ref_values_equal(info.rhs(), cmp.rhs, values);
+    if (condsEqual and comparison_is_commutative(info.cond)) {
+        const swapOrderEqual = ref_values_equal(info.lhs(), cmp.rhs, values) and ref_values_equal(info.rhs(), cmp.lhs, values);
+        if (refValuesEqual or swapOrderEqual) {
+            return CmpImplications.identity();
+        }
+        return CmpImplications.none();
+    }
+    if (refValuesEqual and comparison_is_fuzzy_inverse_of(cmp.cond, info.cond)) {
+        return CmpImplications.inverse();
+    }
+    return CmpImplications.none();
 }
 
-fn get_ctrl_flow_dests(inst: Inst) [2]?BBID {
-    return switch (inst.op) {
-        .Br => {
-            const br = Inst.Br.get(inst);
-            return .{ br.iftrue, br.iffalse };
-        },
-        .Jmp => {
-            const jmp = Inst.Jmp.get(inst);
-            return .{ jmp.dest, null };
-        },
-        .Ret => .{ null, null },
-        else => unreachable,
+fn comparison_is_commutative(op: OpCode.Cond) bool {
+    return switch (op) {
+        .Eq, .NEq => true,
+        .Lt, .Gt, .GtEq, .LtEq => false,
+    };
+}
+
+fn comparison_is_strict_inverse_of(a: OpCode.Cond, b: OpCode.Cond) bool {
+    return b == switch (a) {
+        .Eq => .NEq,
+        .Neq => .Eq,
+        .Gt => .LtEq,
+        .Lt => .GtEq,
+        .GtEq => .Lt,
+        .LtEq => .Gt,
+    };
+}
+
+fn comparison_is_fuzzy_inverse_of(a: OpCode.Cond, b: OpCode.Cond) bool {
+    return switch (a) {
+        .Eq => b == .NEq,
+        .NEq => b == .Eq,
+        .Gt => b == .Lt or b == .LtEq,
+        .Lt => b == .Gt or b == .GtEq,
+        .GtEq => b == .Lt,
+        .LtEq => b == .Gt,
     };
 }
 
@@ -732,6 +696,13 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
         },
         // no result registers. handled by if at top of function
         .Ret, .Store, .Param, .Br, .Jmp => unreachable,
+    };
+}
+
+inline fn has_res(op: OpCode) bool {
+    return switch (op) {
+        .Br, .Jmp, .Store, .Ret, .Param => false,
+        else => true,
     };
 }
 
