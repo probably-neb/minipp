@@ -10,6 +10,8 @@ const Set = @import("../array_hash_set.zig").Set;
 const IR = @import("ir_phi.zig");
 const Phi = @import("phi.zig");
 
+const BBID = IR.BasicBlock.ID;
+
 const Function = IR.Function;
 const Block = IR.BasicBlock;
 
@@ -439,6 +441,10 @@ pub const Dominance = struct {
         // self.printAsDot();
 
         try self.compareCFgDomFront();
+    }
+
+    pub fn isDominatedBy(self: *const Dominance, bb: BBID, otherBB: BBID) bool {
+        return self.dominators.items[bb].isSet(otherBB);
     }
 };
 
