@@ -1044,6 +1044,9 @@ fn empty_block_removal_pass(fun: *Function) !void {
             // });
             continue;
         }
+        if (any_phi_depends_on_bb(fun, bbID)) {
+            continue;
+        }
         utils.assert(bbID != fun.exitBBID, "exit block should not be removed\n", .{});
         utils.assert(bbID != Function.entryBBID, "entry block should not be removed\n", .{});
 
@@ -1065,6 +1068,25 @@ fn bb_num_outgoers(bb: *const BasicBlock) usize {
         num += @intCast(@intFromBool(outgoer != null));
     }
     return num;
+}
+
+/// WARN: this is pathologically inefficient
+fn any_phi_depends_on_bb(fun: *const Function, bbID: BBID) bool {
+    for (fun.bbs.items()) |bb| {
+        for (bb.insts.items()) |instID| {
+            const inst = fun.insts.get(instID);
+            if (inst.op != .Phi) {
+                continue;
+            }
+            var phi = Inst.Phi.get(inst.*);
+            for (phi.entries.items) |entry| {
+                if (entry.bb == bbID) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 const ting = std.testing;
