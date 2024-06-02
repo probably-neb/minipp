@@ -501,7 +501,7 @@ pub const Value = struct {
     };
     pub const ID = IR.Register.ID;
 
-    fn is_int(self: Value, int: i64) bool {
+    pub fn is_int(self: Value, int: i64) bool {
         // TODO: Check if kind is i64?
         if (self.constant) |c| {
             return c.value == int;
@@ -509,7 +509,7 @@ pub const Value = struct {
         return false;
     }
 
-    fn is_bool(self: Value, bul: bool) bool {
+    pub fn is_bool(self: Value, bul: bool) bool {
         // TODO: Check if kind is i1?
         if (self.constant) |c| {
             const bul_int: usize = @intCast(@intFromBool(bul));
@@ -518,27 +518,27 @@ pub const Value = struct {
         return false;
     }
 
-    inline fn constant(value: Constant) Value {
+    pub inline fn constant(value: Constant) Value {
         return Value{ .state = .constant, .constant = value };
     }
 
-    inline fn const_int(value: i64) Value {
+    pub inline fn const_int(value: i64) Value {
         return Value{ .state = .constant, .constant = .{ .value = value, .kind = .i64 } };
     }
 
-    inline fn const_bool(value: bool) Value {
+    pub inline fn const_bool(value: bool) Value {
         return Value{ .state = .constant, .constant = .{ .value = @intCast(@intFromBool(value)), .kind = .i1 } };
     }
 
-    inline fn const_of(value: i64, kind: Constant.Kind) Value {
+    pub inline fn const_of(value: i64, kind: Constant.Kind) Value {
         return Value{ .state = .constant, .constant = .{ .value = value, .kind = kind } };
     }
 
-    inline fn undef() Value {
+    pub inline fn undef() Value {
         return Value{ .state = .undef };
     }
 
-    inline fn unknown() Value {
+    pub inline fn unknown() Value {
         return Value{ .state = .unknown };
     }
     pub fn eq(self: Value, other: Value) bool {

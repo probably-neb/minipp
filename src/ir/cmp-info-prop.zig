@@ -120,6 +120,11 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
         @memset(values, Value.undef());
         break :values values;
     };
+    var cmp_info = cmp_info: {
+        var cmp_info = try alloc.alloc(?CmpInfo, @intCast(fun.regs.len));
+        @memset(cmp_info, null);
+        break :cmp_info cmp_info;
+    };
     var bbWL = bbwl: {
         var bbwl = ArrayList(BBID).init(alloc);
         try bbwl.append(Function.entryBBID);
@@ -133,7 +138,7 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
     std.debug.print("starting\n", .{});
     main_loop: while (bbWL.items.len > 0 or ssaWL.items.len > 0) {
         if (bbWL.popOrNull()) |bbID| {
-            std.debug.print("BBID={d}\n", .{bbID});
+            // std.debug.print("BBID={d}\n", .{bbID});
             if (reachable[bbID]) {
                 // in this context means we already handled the block
                 // updates to values in this block will be handled by
@@ -245,7 +250,7 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                     }
                     continue;
                 }
-                if (try eval(ir, inst, values, null)) |inst_value| {
+                if (try eval(ir, inst, values, cmp_info)) |inst_value| {
                     utils.assert(!std.meta.eql(inst.res, Ref.default), "inst with value has no res {any}\n", .{inst});
                     const res = inst.res;
                     utils.assert(res.kind == .local, "inst res is local got {any}\n", .{res});
@@ -284,7 +289,7 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
                 // r/im15andthisisdeep
                 continue :main_loop;
             }
-            const new_res_val = try eval(ir, inst, values, null) orelse {
+            const new_res_val = try eval(ir, inst, values, cmp_info) orelse {
                 utils.impossible(
                     \\result of ssa edge eval is null, this should have been handled in the prechecks right???
                     \\inst={any}
@@ -344,48 +349,48 @@ const CmpInfo = struct {
     reg: Ref,
     /// The value of the other operand
     /// i.e. if op is .Eq then reg is this value
-    val: Value,
+    val: Ref,
     // if true -> reg = rhs, val = lhs
     // else    -> reg = lhs, val = rhs
     rev: bool,
 
-    /// Propogates the information from this cmpInfo
-    /// placed in the struct to identify it as only related to CmpInfo
-    /// Mutates []Value based on cmpInfo
-    fn propogate(self: @This(), ir: *const IR, fun: *const Function, values: *[]Value) void {
-        _ = values;
-        utils.assert(self.res.kind == .local, "ref is not local\n", .{});
-        const reg = fun.regs.get(self.res.i);
-        const bb = fun.bbs.get(reg.bb);
-        if (!end_of_bb_uses_ref_to_reg(bb, self.res)) {
-            log.trace("now this is wierd, bb where cmpInfo was derived does not use result of cmp in branch");
-            return;
-        }
-        // TODO: find first meeting point or exit
-        //  then -> for each block in each path, identitify
-        //          common sub expressions or uses of the value
-        //          and update values accordingly
-        //  PERF: if value not in a phi at that location we can repeat
-        const cmp = cmp: {
-            const inst = bb.insts.list.getLastOrNull() orelse {
-                utils.impossible("bb has no insts\n", .{});
-            };
-            break :cmp Inst.Cmp.get(inst);
-        };
-        const propAlloc = fun.alloc;
-        const dominance = Dominance.genLazyDominance(ir, fun);
-        const joinPoints = join: {
-            // var because setIntersection will update the self param in place
-            var ifThenDomFront = bb_dom_front_to_bitset(propAlloc, fun, cmp.iftrue, dominance.domFront);
-
-            const ifElseDomFront = bb_dom_front_to_bitset(propAlloc, fun, cmp.iffalse, dominance.domFront);
-            defer ifElseDomFront.deinit();
-
-            ifThenDomFront.setIntersection(ifElseDomFront);
-            break :join ifThenDomFront;
-        };
-        _ = joinPoints;
-    }
+    // Propogates the information from this cmpInfo
+    // placed in the struct to identify it as only related to CmpInfo
+    // Mutates []Value based on cmpInfo
+    // fn propogate(self: @This(), ir: *const IR, fun: *const Function, values: *[]Value) void {
+    //     _ = values;
+    //     utils.assert(self.res.kind == .local, "ref is not local\n", .{});
+    //     const reg = fun.regs.get(self.res.i);
+    //     const bb = fun.bbs.get(reg.bb);
+    //     if (!end_of_bb_uses_ref_to_reg(bb, self.res)) {
+    //         log.trace("now this is wierd, bb where cmpInfo was derived does not use result of cmp in branch");
+    //         return;
+    //     }
+    //     // TODO: find first meeting point or exit
+    //     //  then -> for each block in each path, identitify
+    //     //          common sub expressions or uses of the value
+    //     //          and update values accordingly
+    //     //  PERF: if value not in a phi at that location we can repeat
+    //     const cmp = cmp: {
+    //         const inst = bb.insts.list.getLastOrNull() orelse {
+    //             utils.impossible("bb has no insts\n", .{});
+    //         };
+    //         break :cmp Inst.Cmp.get(inst);
+    //     };
+    //     const propAlloc = fun.alloc;
+    //     const dominance = Dominance.genLazyDominance(ir, fun);
+    //     const joinPoints = join: {
+    //         // var because setIntersection will update the self param in place
+    //         var ifThenDomFront = bb_dom_front_to_bitset(propAlloc, fun, cmp.iftrue, dominance.domFront);
+    //
+    //         const ifElseDomFront = bb_dom_front_to_bitset(propAlloc, fun, cmp.iffalse, dominance.domFront);
+    //         defer ifElseDomFront.deinit();
+    //
+    //         ifThenDomFront.setIntersection(ifElseDomFront);
+    //         break :join ifThenDomFront;
+    //     };
+    //     _ = joinPoints;
+    // }
 };
 
 const DomFront = @TypeOf(@field(Dominance.Dominance, "domFront"));
@@ -520,7 +525,7 @@ fn get_ctrl_flow_dests(inst: Inst) [2]?BBID {
     };
 }
 
-fn eval(ir: *const IR, inst: Inst, values: []Value) !?Value {
+fn eval(ir: *const IR, inst: Inst, values: []const Value, cmp_info: []?CmpInfo) !?Value {
     if (!has_res(inst.op)) {
         return null;
     }
@@ -609,10 +614,6 @@ fn eval(ir: *const IR, inst: Inst, values: []Value) !?Value {
             const lhsConst = lhs.state == .constant;
             const rhsConst = rhs.state == .constant;
 
-            const lhsCmpInfo = lhs.state == .cmp;
-            const rhsCmpInfo = rhs.state == .cmp;
-            _ = rhsCmpInfo;
-
             if (lhsConst and rhsConst) {
                 // eval
                 const cond = cmp.cond;
@@ -629,12 +630,13 @@ fn eval(ir: *const IR, inst: Inst, values: []Value) !?Value {
                 return Value.const_bool(res);
             }
 
-            if (lhsCmpInfo) {
-                const cmpInfo = lhs.cmp.?;
-                if (std.meta.eql(cmpInfo.val, rhs)) {
-                    if (cmpInfo.op == cmp.op) {
-                        std.debug.print("found same cmp\n");
-                        return Value.const_bool(true);
+            if (cmp.lhs.kind == .local) {
+                if (cmp_info[cmp.lhs.i]) |cmpInfo| {
+                    if (std.meta.eql(ref_value(ir, cmpInfo.val, values), rhs)) {
+                        if (cmpInfo.op == cmp.cond) {
+                            std.debug.print("found same cmp\n", .{});
+                            return Value.const_bool(true);
+                        }
                     }
                 }
             }
@@ -649,19 +651,19 @@ fn eval(ir: *const IR, inst: Inst, values: []Value) !?Value {
                     .op = cmp.cond,
                     .res = inst.res,
                     .reg = cmp.rhs,
-                    .val = lhs,
+                    .val = cmp.lhs,
                     .rev = true,
                 } else CmpInfo{
                     .op = cmp.cond,
                     .res = inst.res,
                     .reg = cmp.lhs,
-                    .val = rhs,
+                    .val = cmp.rhs,
                     .rev = false,
                 };
                 std.debug.print("cmp info = {any}\n", .{cmpInfo});
                 if (cmpInfo.reg.kind == .local) {
-                    std.debug.print("found cmpInfo\n");
-                    values[cmpInfo.reg.i] = Value.cmp(cmpInfo);
+                    std.debug.print("found cmpInfo\n", .{});
+                    cmp_info[cmpInfo.reg.i] = cmpInfo;
                 }
             }
             return meet(lhs, rhs);
@@ -757,85 +759,7 @@ fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
     return res;
 }
 
-pub const Value = struct {
-    state: State = State.undef,
-    constant: ?Constant = null,
-    cmp: ?CmpInfo = null,
-
-    pub const State = enum { undef, unknown, constant, cmp };
-
-    pub const Constant = struct {
-        value: i64,
-        kind: Kind,
-
-        pub const Kind = enum {
-            i64,
-            i1,
-        };
-        pub fn eq(self: Constant, other: Constant) bool {
-            return self.value == other.value and self.kind == other.kind;
-        }
-    };
-    pub const ID = IR.Register.ID;
-
-    fn is_int(self: Value, int: i64) bool {
-        // TODO: Check if kind is i64?
-        if (self.constant) |c| {
-            return c.value == int;
-        }
-        return false;
-    }
-
-    fn is_bool(self: Value, bul: bool) bool {
-        // TODO: Check if kind is i1?
-        if (self.constant) |c| {
-            const bul_int: usize = @intCast(@intFromBool(bul));
-            return c.value == bul_int;
-        }
-        return false;
-    }
-
-    inline fn constant(value: Constant) Value {
-        return Value{ .state = .constant, .constant = value };
-    }
-
-    inline fn const_int(value: i64) Value {
-        return Value{ .state = .constant, .constant = .{ .value = value, .kind = .i64 } };
-    }
-
-    inline fn const_bool(value: bool) Value {
-        return Value{ .state = .constant, .constant = .{ .value = @intCast(@intFromBool(value)), .kind = .i1 } };
-    }
-
-    inline fn const_of(value: i64, kind: Constant.Kind) Value {
-        return Value{ .state = .constant, .constant = .{ .value = value, .kind = kind } };
-    }
-
-    inline fn undef() Value {
-        return Value{ .state = .undef };
-    }
-
-    inline fn unknown() Value {
-        return Value{ .state = .unknown };
-    }
-
-    inline fn cmp(info: CmpInfo) Value {
-        return Value{ .state = .cmp, .cmp = info };
-    }
-
-    pub fn eq(self: Value, other: Value) bool {
-        if (self.state != other.state) {
-            return false;
-        }
-        if (self.constant == null and other.constant == null) {
-            return true;
-        }
-        if (self.constant == null or other.constant == null) {
-            return false;
-        }
-        return self.constant.?.eq(other.constant.?);
-    }
-};
+pub const Value = @import("./sccp.zig").Value;
 
 /// A usage of a register we updated the value of
 /// A member of the SSA edge worklist

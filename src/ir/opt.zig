@@ -239,196 +239,195 @@ fn cmp_prop(ir: *IR, fun: *Function) !bool {
     var alloc = arena.allocator();
 
     var info = try CmpProp.cmp_prop(alloc, ir, fun);
-    _ = info;
 
-    // const allReachable = for (fun.bbs.ids()) |bbID| {
-    //     if (!info.reachable[bbID]) {
-    //         // std.debug.print("found unreachable bb ID={d} label={s}\n", .{ bbID, fun.bbs.get(bbID).name });
-    //         break false;
-    //     }
-    // } else true;
-    // const noneConstant = for (info.values) |value| {
-    //     if (value.state == .constant) {
-    //         // std.debug.print("found constant={any}\n", .{value});
-    //         break false;
-    //     }
-    // } else true;
-    // if (allReachable and noneConstant) {
-    //     return false;
-    // } else {
-    //     // std.debug.print("running sccp\nnoneConstant={}\nallReachable={any}\n", .{ noneConstant, allReachable });
-    // }
-    // // update all of the registers
-    // for (info.values, 0..) |value, regID_usize| {
-    //     if (value.state != .constant) continue;
-    //
-    //     const regID: RegID = @intCast(regID_usize);
-    //     var reg = fun.regs.getPtr(regID);
-    //     const constant = value.constant.?;
-    //
-    //     const ref = sccp_const_to_ref(constant);
-    //     const uses_list = try DefUse.uses_of(alloc, fun, reg.*);
-    //     const uses = uses_list.items;
-    //
-    //     for (uses) |use| {
-    //         const instID = use.instID;
-    //         var inst = fun.insts.get(instID);
-    //         var bb = fun.bbs.get(use.bb);
-    //         // FIXME: made change to phi here, this could be wrong
-    //         change_use_of_reg(fun, ir, use.bb, bb, inst, reg.*, ref);
-    //     }
-    //     remove_reg(fun, reg.*);
-    // }
-    //
-    // // update all of the phi nodes
-    // // track if a change has been made
-    // // while changes
-    // // for each one that has a entry that points to a non-reachable block, remove the block,
-    // //  if the phi node only has one entry, replace all uses of the phi node with the value of the entry
-    // //  remove the phi node
-    // //  mark change
-    // //  break
-    // var changes: bool = true;
-    // while (changes) {
-    //     // std.debug.print("running phi node cleanup\n", .{});
-    //     changes = false;
-    //     for (fun.bbs.ids()) |bbID_1| {
-    //         if (!info.reachable[bbID_1]) continue;
-    //         // std.debug.print("running phi node cleanup for bb {d}\n", .{bbID_1});
-    //         var bb = fun.bbs.get(bbID_1);
-    //         // var newInsts = IR.BasicBlock.List.init(fun.alloc);
-    //         for (bb.insts.items(), 0..) |instID, instIDX| {
-    //             // std.debug.print("WATCH WHAT I'm ABOUT TO DO TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
-    //             // defer std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
-    //             const inst = fun.insts.get(instID);
-    //             if (inst.op != .Phi) {
-    //                 // try newInsts.append(instID);
-    //                 continue;
-    //             }
-    //             // std.debug.print("running phi node cleanup for inst {d}\n", .{instID});
-    //
-    //             var bbInsts = &bb.insts.list;
-    //             var bbLen = &bb.insts.len;
-    //
-    //             var phi = Inst.Phi.get(inst.*);
-    //             var phiReg = fun.regs.getPtr(phi.res.i);
-    //             var entries = phi.entries;
-    //             var entries_changes: bool = true;
-    //             var entreies_changed: bool = false;
-    //             // remove any entries that point to a non-reachable block
-    //             while (entries_changes) {
-    //                 // std.debug.print("running phi node cleanup for inst {d} with entries {any}\n", .{ instID, entries.items });
-    //                 entries_changes = false;
-    //                 for (entries.items, 0..) |entry, entryI| {
-    //                     if (!info.reachable[entry.bb]) {
-    //                         // remove the entry
-    //                         // std.debug.print("removing entry {d} from phi node {d} in block {d}\n", .{ entryI, instID, bbID_1 });
-    //                         entries_changes = true;
-    //                         _ = entries.orderedRemove(entryI);
-    //                         entreies_changed = true;
-    //                         break;
-    //                     }
-    //                 }
-    //             }
-    //             phi.entries = entries;
-    //             fun.insts.set(instID, phi.toInst());
-    //             if (entreies_changed) {
-    //                 changes = true;
-    //                 break;
-    //             }
-    //
-    //             if (entries.items.len == 0) {
-    //                 // remove the phi node
-    //                 //_ = fun.insts.remove(instID);
-    //                 // std.debug.print("removing empty phi node {d} in block {d}\n", .{ instID, bbID_1 });
-    //                 _ = bbInsts.*.orderedRemove(instIDX);
-    //                 bbLen.* -= 1;
-    //                 // bb.*.insts.remove(@intCast(instIDX));
-    //                 changes = true;
-    //                 break;
-    //             } else if (entries.items.len == 1) {
-    //                 // std.debug.print("replacing phi node {d} in block {d} with entry {any}\n", .{ instID, bbID_1, entries.items[0].ref });
-    //                 // replace all uses of the phi node with the value of the entry
-    //                 const ref = &entries.items[0].ref;
-    //                 try replace_all_uses(fun, ir, phiReg, ref.*, info.reachable);
-    //                 // remove the phi node
-    //                 // _ = fun.insts.remove(instID);
-    //                 utils.assert(std.mem.indexOfScalar(BBID, bb.insts.items(), instID) != null, "bb has no inst {d}\n", .{instID});
-    //                 // std.debug.print("WATCH ME REMOVE {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
-    //                 _ = bbInsts.*.orderedRemove(instIDX);
-    //                 bbLen.* -= 1;
-    //                 // bb.*.insts.remove(@intCast(instIDX));
-    //                 changes = true;
-    //                 break;
-    //             } else {
-    //                 // std.debug.print("inst {d} has {d} entries\n", .{ instID, entries.items.len });
-    //                 // try newInsts.append(instID);
-    //             }
-    //             if (changes) break;
-    //         }
-    //         // bb.insts.deinit();
-    //         // bb.insts = newInsts;
-    //         if (changes) break;
-    //     }
-    // }
-    //
-    // // for (fun.bbs.ids()) |bbID| {
-    // //     const bb = fun.bbs.get(bbID);
-    // //     std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ bbID, bb.insts.items() });
-    // // }
-    //
-    // // relink all of the basic blocks based off their jumps or branhces
+    const allReachable = for (fun.bbs.ids()) |bbID| {
+        if (!info.reachable[bbID]) {
+            // std.debug.print("found unreachable bb ID={d} label={s}\n", .{ bbID, fun.bbs.get(bbID).name });
+            break false;
+        }
+    } else true;
+    const noneConstant = for (info.values) |value| {
+        if (value.state == .constant) {
+            // std.debug.print("found constant={any}\n", .{value});
+            break false;
+        }
+    } else true;
+    if (allReachable and noneConstant) {
+        return false;
+    } else {
+        // std.debug.print("running sccp\nnoneConstant={}\nallReachable={any}\n", .{ noneConstant, allReachable });
+    }
+    // update all of the registers
+    for (info.values, 0..) |value, regID_usize| {
+        if (value.state != .constant) continue;
+
+        const regID: RegID = @intCast(regID_usize);
+        var reg = fun.regs.getPtr(regID);
+        const constant = value.constant.?;
+
+        const ref = sccp_const_to_ref(constant);
+        const uses_list = try DefUse.uses_of(alloc, fun, reg.*);
+        const uses = uses_list.items;
+
+        for (uses) |use| {
+            const instID = use.instID;
+            var inst = fun.insts.get(instID);
+            var bb = fun.bbs.get(use.bb);
+            // FIXME: made change to phi here, this could be wrong
+            change_use_of_reg(fun, ir, use.bb, bb, inst, reg.*, ref);
+        }
+        remove_reg(fun, reg.*);
+    }
+
+    // update all of the phi nodes
+    // track if a change has been made
+    // while changes
+    // for each one that has a entry that points to a non-reachable block, remove the block,
+    //  if the phi node only has one entry, replace all uses of the phi node with the value of the entry
+    //  remove the phi node
+    //  mark change
+    //  break
+    var changes: bool = true;
+    while (changes) {
+        // std.debug.print("running phi node cleanup\n", .{});
+        changes = false;
+        for (fun.bbs.ids()) |bbID_1| {
+            if (!info.reachable[bbID_1]) continue;
+            // std.debug.print("running phi node cleanup for bb {d}\n", .{bbID_1});
+            var bb = fun.bbs.get(bbID_1);
+            // var newInsts = IR.BasicBlock.List.init(fun.alloc);
+            for (bb.insts.items(), 0..) |instID, instIDX| {
+                // std.debug.print("WATCH WHAT I'm ABOUT TO DO TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+                // defer std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+                const inst = fun.insts.get(instID);
+                if (inst.op != .Phi) {
+                    // try newInsts.append(instID);
+                    continue;
+                }
+                // std.debug.print("running phi node cleanup for inst {d}\n", .{instID});
+
+                var bbInsts = &bb.insts.list;
+                var bbLen = &bb.insts.len;
+
+                var phi = Inst.Phi.get(inst.*);
+                var phiReg = fun.regs.getPtr(phi.res.i);
+                var entries = phi.entries;
+                var entries_changes: bool = true;
+                var entreies_changed: bool = false;
+                // remove any entries that point to a non-reachable block
+                while (entries_changes) {
+                    // std.debug.print("running phi node cleanup for inst {d} with entries {any}\n", .{ instID, entries.items });
+                    entries_changes = false;
+                    for (entries.items, 0..) |entry, entryI| {
+                        if (!info.reachable[entry.bb]) {
+                            // remove the entry
+                            // std.debug.print("removing entry {d} from phi node {d} in block {d}\n", .{ entryI, instID, bbID_1 });
+                            entries_changes = true;
+                            _ = entries.orderedRemove(entryI);
+                            entreies_changed = true;
+                            break;
+                        }
+                    }
+                }
+                phi.entries = entries;
+                fun.insts.set(instID, phi.toInst());
+                if (entreies_changed) {
+                    changes = true;
+                    break;
+                }
+
+                if (entries.items.len == 0) {
+                    // remove the phi node
+                    //_ = fun.insts.remove(instID);
+                    // std.debug.print("removing empty phi node {d} in block {d}\n", .{ instID, bbID_1 });
+                    _ = bbInsts.*.orderedRemove(instIDX);
+                    bbLen.* -= 1;
+                    // bb.*.insts.remove(@intCast(instIDX));
+                    changes = true;
+                    break;
+                } else if (entries.items.len == 1) {
+                    // std.debug.print("replacing phi node {d} in block {d} with entry {any}\n", .{ instID, bbID_1, entries.items[0].ref });
+                    // replace all uses of the phi node with the value of the entry
+                    const ref = &entries.items[0].ref;
+                    try replace_all_uses(fun, ir, phiReg, ref.*, info.reachable);
+                    // remove the phi node
+                    // _ = fun.insts.remove(instID);
+                    utils.assert(std.mem.indexOfScalar(BBID, bb.insts.items(), instID) != null, "bb has no inst {d}\n", .{instID});
+                    // std.debug.print("WATCH ME REMOVE {d} @{d} from bbID={d} {any}\n", .{ instID, instIDX, bbID_1, bb.insts.items() });
+                    _ = bbInsts.*.orderedRemove(instIDX);
+                    bbLen.* -= 1;
+                    // bb.*.insts.remove(@intCast(instIDX));
+                    changes = true;
+                    break;
+                } else {
+                    // std.debug.print("inst {d} has {d} entries\n", .{ instID, entries.items.len });
+                    // try newInsts.append(instID);
+                }
+                if (changes) break;
+            }
+            // bb.insts.deinit();
+            // bb.insts = newInsts;
+            if (changes) break;
+        }
+    }
+
     // for (fun.bbs.ids()) |bbID| {
-    //     fun.bbs.get(bbID).outgoers[0] = null;
-    //     fun.bbs.get(bbID).outgoers[1] = null;
-    //     fun.bbs.get(bbID).reinitIncomers(fun);
+    //     const bb = fun.bbs.get(bbID);
+    //     std.debug.print("LOOK WHAT I DID TO {d} @{d} from bbID={d} {any}\n", .{ bbID, bb.insts.items() });
     // }
-    //
-    // for (fun.bbs.ids()) |bbID| {
-    //     if (!info.reachable[bbID]) continue;
-    //     var bb = fun.bbs.get(bbID);
-    //     var instID: ?IR.Function.InstID = null;
-    //     for (bb.insts.items()) |instID_| {
-    //         instID = instID_;
-    //     }
-    //     if (instID == null) continue;
-    //     var inst = fun.insts.get(instID.?);
-    //     if (!inst.isCtrlFlow()) continue;
-    //
-    //     if (inst.op == .Br) {
-    //         var br = Inst.Br.get(inst.*);
-    //         var ifTrueBB = fun.bbs.get(br.iftrue);
-    //         var ifFalseBB = fun.bbs.get(br.iffalse);
-    //         bb.outgoers[0] = br.iftrue;
-    //         bb.outgoers[1] = br.iffalse;
-    //         try ifTrueBB.incomers.append(bbID);
-    //         try ifFalseBB.incomers.append(bbID);
-    //     } else if (inst.op == .Jmp) {
-    //         var jmp = Inst.Jmp.get(inst.*);
-    //         var jmpBB = fun.bbs.get(jmp.dest);
-    //         bb.outgoers[0] = jmp.dest;
-    //         try jmpBB.incomers.append(bbID);
-    //     } else if (inst.op == .Ret) {
-    //         // do nothing
-    //     } else {
-    //         utils.todo("unexpected control flow instruction {s}\n", .{@tagName(inst.op)});
-    //     }
-    // }
-    //
-    // // remove every non reachable block from the function
-    // var changed: bool = true;
-    // while (changed) {
-    //     changed = false;
-    //     for (fun.bbs.ids()) |bbID| {
-    //         if (!info.reachable[bbID]) {
-    //             // std.debug.print("removing unreachable block {d}\n", .{bbID});
-    //             // try remove_block_edges(fun, bbID);
-    //             _ = fun.bbs.remove(bbID);
-    //             changed = true;
-    //             break;
-    //         }
-    //     }
-    // }
+
+    // relink all of the basic blocks based off their jumps or branhces
+    for (fun.bbs.ids()) |bbID| {
+        fun.bbs.get(bbID).outgoers[0] = null;
+        fun.bbs.get(bbID).outgoers[1] = null;
+        fun.bbs.get(bbID).reinitIncomers(fun);
+    }
+
+    for (fun.bbs.ids()) |bbID| {
+        if (!info.reachable[bbID]) continue;
+        var bb = fun.bbs.get(bbID);
+        var instID: ?IR.Function.InstID = null;
+        for (bb.insts.items()) |instID_| {
+            instID = instID_;
+        }
+        if (instID == null) continue;
+        var inst = fun.insts.get(instID.?);
+        if (!inst.isCtrlFlow()) continue;
+
+        if (inst.op == .Br) {
+            var br = Inst.Br.get(inst.*);
+            var ifTrueBB = fun.bbs.get(br.iftrue);
+            var ifFalseBB = fun.bbs.get(br.iffalse);
+            bb.outgoers[0] = br.iftrue;
+            bb.outgoers[1] = br.iffalse;
+            try ifTrueBB.incomers.append(bbID);
+            try ifFalseBB.incomers.append(bbID);
+        } else if (inst.op == .Jmp) {
+            var jmp = Inst.Jmp.get(inst.*);
+            var jmpBB = fun.bbs.get(jmp.dest);
+            bb.outgoers[0] = jmp.dest;
+            try jmpBB.incomers.append(bbID);
+        } else if (inst.op == .Ret) {
+            // do nothing
+        } else {
+            utils.todo("unexpected control flow instruction {s}\n", .{@tagName(inst.op)});
+        }
+    }
+
+    // remove every non reachable block from the function
+    var changed: bool = true;
+    while (changed) {
+        changed = false;
+        for (fun.bbs.ids()) |bbID| {
+            if (!info.reachable[bbID]) {
+                // std.debug.print("removing unreachable block {d}\n", .{bbID});
+                // try remove_block_edges(fun, bbID);
+                _ = fun.bbs.remove(bbID);
+                changed = true;
+                break;
+            }
+        }
+    }
 
     return true;
 }
