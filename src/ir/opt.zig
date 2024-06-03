@@ -20,6 +20,7 @@ const OpCode = IR.Op;
 
 const SCCP = @import("./sccp.zig");
 const CmpProp = @import("./cmp-info-prop.zig");
+pub const DeadCode = @import("./deadCodeElim.zig");
 
 const stringify_label = @import("stringify_phi.zig").stringify_label;
 
@@ -1164,6 +1165,9 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
                     // if (changed)
                     log.trace("cmp changed the IR in pass {d}={any}\n", .{ pass_no, changed });
                     try save_dot_to_file(&ir, "sccp.dot");
+                },
+                .dead_code_elim => {
+                    _ = try DeadCode.deadCodeElim(&ir, fun);
                 },
                 .empty_bb => {
                     try empty_block_removal_pass(fun);
