@@ -1130,24 +1130,65 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
         try phiSave.armFunc.insts.insert(funcIndex, movInst.id);
     }
 
-    // go through and make the regs ids correct or throw errors!.. or we also could not?!
-    // go through the insts and collet all the assigned to reg names
-    var regNames = std.AutoHashMap(IR.StrID, SelectedReg).init(ir.alloc);
-    var counter: usize = 2;
+    // go through all of the instructions in the function, and make a map from their instruction ID to the register id
+    // track all of the non irID registers, and add them to a list
+
+    var instToReg = std.AutoHashMap(IR.Function.InstID, Reg.ID).init(ir.alloc);
+    var instToSelection = std.AutoHashMap(IR.Function.InstID, SelectedReg).init(ir.alloc);
+    var unnamedRegs = std.AutoHashMap(IR.StrID, SelectedReg).init(ir.alloc);
+    var counter: usize = 9;
     for (armFunc.insts.items) |instID| {
         var inst = &arm.program.insts.items[instID];
-        if (!regNames.contains(inst.rd.name)) {
-            try regNames.put(inst.rd.name, SelectedReg.fromInt(counter));
+        // if instToReg does not contain the inst.rd.id, add it
+        if (inst.rd.irID == 0xDEADBEEF) {
+            if (!unnamedRegs.contains(inst.rd.name)) {
+                try unnamedRegs.put(inst.rd.name, SelectedReg.fromInt(counter));
+                counter += 1;
+            }
+        } else if (!instToReg.contains(inst.rd.irID)) {
+            try instToReg.put(inst.rd.irID, inst.rd.id);
+            try instToSelection.put(inst.rd.irID, SelectedReg.fromInt(counter));
             counter += 1;
         }
     }
-    std.debug.print("The number of registers in the function: {d}\n", .{counter});
+
+    // go back through the instructions and set the selection of the registers
     for (armFunc.insts.items) |instID| {
         var inst = &arm.program.insts.items[instID];
-        if (inst.rd.selection == .none) inst.rd.selection = regNames.get(inst.rd.name) orelse .none;
-        if (inst.op1.reg.selection == .none) inst.op1.reg.selection = regNames.get(inst.op1.reg.name) orelse .none;
-        if (inst.op2.reg.selection == .none) inst.op2.reg.selection = regNames.get(inst.op2.reg.name) orelse .none;
+        if (inst.rd.irID == 0xDEADBEEF) {
+            inst.rd.selection = unnamedRegs.get(inst.rd.name) orelse .none;
+        } else {
+            inst.rd.selection = instToSelection.get(inst.rd.irID) orelse .none;
+        }
+        if (inst.op1.reg.irID == 0xDEADBEEF) {
+            inst.op1.reg.selection = unnamedRegs.get(inst.op1.reg.name) orelse .none;
+        } else {
+            inst.op1.reg.selection = instToSelection.get(inst.op1.reg.irID) orelse .none;
+        }
+        if (inst.op2.reg.irID == 0xDEADBEEF) {
+            inst.op2.reg.selection = unnamedRegs.get(inst.op2.reg.name) orelse .none;
+        } else {
+            inst.op2.reg.selection = instToSelection.get(inst.op2.reg.irID) orelse .none;
+        }
     }
+
+    // // go through and make the regs ids correct or throw errors!.. or we also could not?!
+    // // go through the insts and collet all the assigned to reg names
+    // var counter: usize = 9;
+    // for (armFunc.insts.items) |instID| {
+    //     var inst = &arm.program.insts.items[instID];
+    //     if (!regNames.contains(inst.rd.name)) {
+    //         try regNames.put(inst.rd.name, SelectedReg.fromInt(counter));
+    //         counter += 1;
+    //     }
+    // }
+    // std.debug.print("The number of registers in the function: {d}\n", .{counter});
+    // for (armFunc.insts.items) |instID| {
+    //     var inst = &arm.program.insts.items[instID];
+    //     if (inst.rd.selection == .none) inst.rd.selection = regNames.get(inst.rd.name) orelse .none;
+    //     if (inst.op1.reg.selection == .none) inst.op1.reg.selection = regNames.get(inst.op1.reg.name) orelse .none;
+    //     if (inst.op2.reg.selection == .none) inst.op2.reg.selection = regNames.get(inst.op2.reg.name) orelse .none;
+    // }
 
     return false;
 }
@@ -1439,6 +1480,7 @@ pub fn gen_inst(
                 var blInst = Inst.bl(funName, arm.program.insts.items.len);
                 try armFunc.addInst(blInst, armBlock);
             } else if (funName == ir.internIdent("scanf")) {
+                // todo add storing the result into the read_scratch
                 for (callIR.args, 0..) |arg, idx| {
                     if (idx == 0) continue;
                     var emptyReg = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
@@ -1506,6 +1548,28 @@ pub fn gen_inst(
                 // create the bl inst
                 var blInst = Inst.bl(funName, arm.program.insts.items.len);
                 try armFunc.addInst(blInst, armBlock);
+
+                // create a mov inst for the result
+                // if the result is not void
+                if (callIR.retTy != .void) {
+                    var retReg = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = null, .irID = 0xDEADBEEF, .selection = SelectedReg.X0 };
+                    try arm.program.addReg(retReg);
+                    var res_ = try arm.program.getOpfromIR(func, callIR.res, arm.program.insts.items.len);
+                    // var newName = std.ArrayList(u8).init(ir.alloc);
+                    // for (ir.getIdent(callIR.res.name)) |c| {
+                    //     try newName.append(c);
+                    // }
+                    // try newName.append('_');
+                    // var tmp = callIR.res.i;
+                    // while (tmp != 0) {
+                    //     try newName.append(@intCast((tmp % 10) + 48));
+                    //     tmp /= 10;
+                    // }
+                    // var retName = ir.internIdent(try newName.toOwnedSlice());
+                    // res_.reg.name = retName;
+                    var movInst = Inst.mov(res_.getReg(), Operand.asOpReg(retReg), arm.program.insts.items.len);
+                    try armFunc.addInst(movInst, armBlock);
+                }
             }
         },
         .Gep => {
@@ -1672,16 +1736,16 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
     return try ir.stringifyWithHeader(alloc);
 }
 
-// test "arm.fibonacci" {
-//     errdefer log.print();
-//     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
-//     var str = try inputToIRStringHeader(in, testAlloc);
-//     std.debug.print("{s}\n", .{str});
-//     var ir = try testMe(in);
-//     var arm = try gen_program(&ir);
-//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
-//     std.debug.print("{s}\n", .{str2});
-// }
+test "arm.fibonacci" {
+    errdefer log.print();
+    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+    var str = try inputToIRStringHeader(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+    var ir = try testMe(in);
+    var arm = try gen_program(&ir);
+    var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+    std.debug.print("{s}\n", .{str2});
+}
 
 // test "phi.print_first_struct" {
 //     errdefer log.print();
@@ -1694,13 +1758,13 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     std.debug.print("{s}\n", .{str2});
 // }
 
-test "phi.swap" {
-    errdefer log.print();
-    const in = "int A, B; fun main() void { int t; A =0; B =0; t = A; while(true){ t = B; B = A + 1; A = t; print t endl;} }";
-    var str = try inputToIRStringHeader(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
-    var ir = try testMe(in);
-    var arm = try gen_program(&ir);
-    var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
-    std.debug.print("{s}\n", .{str2});
-}
+// test "phi.swap" {
+//     errdefer log.print();
+//     const in = "int A, B; fun main() void { int t; A =0; B =0; t = A; while(true){ t = B; B = A + 1; A = t; print t endl;} }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     var ir = try testMe(in);
+//     var arm = try gen_program(&ir);
+//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+//     std.debug.print("{s}\n", .{str2});
+// }

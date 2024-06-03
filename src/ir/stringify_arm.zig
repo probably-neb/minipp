@@ -361,6 +361,14 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             try buf.write(INDENT);
             try buf.write("mov sp, x29\n");
             try buf.write(INDENT);
+            try buf.write("add sp, sp, #144\n");
+            try buf.write(INDENT);
+            try buf.write("ldr x29, [sp], #16  \n");
+            try buf.write(INDENT);
+            try buf.write("mov sp, x29  \n");
+            try buf.write(INDENT);
+            try buf.write("add sp, sp, #16     \n");
+            try buf.write(INDENT);
             try buf.write("ldr x29, [sp], #16  \n");
             try buf.write(INDENT);
             try buf.write("add sp, sp, #16     \n");
