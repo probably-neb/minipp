@@ -393,17 +393,7 @@ fn apply_cmp_info(ir: *const IR, fun: *const Function, dom: *const Dominance, in
     // std.debug.print("cmpLhsCmpInfo = {any}\n", .{cmpLhsCmpInfo});
     // std.debug.print("cmpRhsCmpInfo = {any}\n", .{cmpRhsCmpInfo});
     if (cmpLhsCmpInfo orelse cmpRhsCmpInfo) |cmpInfo| {
-        std.debug.print("found cmpInfo = {any}\n", .{cmpInfo});
-        if (is_same_comparison(cmp, cmpInfo, values)) {
-            std.debug.print("cmpInfo is same as cmp\n", .{});
-            if (dom.isDominatedBy(curBBID, cmpInfo.ifthenBB)) {
-                return Value.const_bool(true);
-            } else if (dom.isDominatedBy(curBBID, cmpInfo.ifelseBB)) {
-                return Value.const_bool(false);
-            }
-            // FIXME: what to do in else? maybe dead code elim?
-        }
-        const implications = cmp_info_implications_on_subsequent_cmp(cmpInfo, cmp, values);
+        const implications = cmp_info_implications_on_subsequent_cmp(ir, cmpInfo, cmp, values);
         if (implications.ifthen) |ifthen| {
             if (dom.isDominatedBy(curBBID, cmpInfo.ifthenBB)) {
                 return Value.const_bool(ifthen);
@@ -470,7 +460,7 @@ fn is_same_comparison(cmp: Inst.Cmp, info: CmpInfo, values: []const Value) bool 
     // const idsEqual = cmpLhs.i == infoLhs.i and cmpRhs.i == infoRhs.i;
     const valuesEqual = ref_values_equal(cmpLhs, infoLhs, values) and ref_values_equal(cmpRhs, infoRhs, values);
 
-    std.debug.print("cmp = {any}\ninfo = {any}\ncondsEqual={} kindsEqual={} valuesEqual={}\n", .{ cmp, info, condsEqual, kindsEqual, valuesEqual });
+    // std.debug.print("cmp = {any}\ninfo = {any}\ncondsEqual={} kindsEqual={} valuesEqual={}\n", .{ cmp, info, condsEqual, kindsEqual, valuesEqual });
 
     return condsEqual and kindsEqual and valuesEqual;
 }
@@ -483,7 +473,11 @@ fn ref_values_equal(a: Ref, b: Ref, values: []const Value) bool {
     if (a.kind != .local or b.kind != .local) {
         return false;
     }
-    return std.meta.eql(values[a.i], values[b.i]);
+    if (values[a.i].constant == null or values[b.i].constant == null) {
+        // cannot assume unknowns are equal
+        return false;
+    }
+    return std.meta.eql(values[a.i].constant, values[b.i].constant);
 }
 
 const CmpImplications = struct {
@@ -491,47 +485,112 @@ const CmpImplications = struct {
     ifelse: ?bool = null,
 
     pub fn none() CmpImplications {
-        return .{
-            .ifthen = null,
-            .ifelse = null,
-        };
+        return .{ .ifthen = null, .ifelse = null };
     }
 
     pub fn identity() CmpImplications {
-        return .{
-            .ifthen = true,
-            .ifelse = false,
-        };
+        return .{ .ifthen = true, .ifelse = false };
     }
 
     pub fn inverse() CmpImplications {
-        return .{
-            .ifthen = false,
-            .ifelse = true,
-        };
+        return .{ .ifthen = false, .ifelse = true };
+    }
+
+    pub fn only_true_in_ifthen() CmpImplications {
+        return .{ .ifthen = true, .ifelse = null };
+    }
+
+    pub fn only_true_in_ifelse() CmpImplications {
+        return .{ .ifthen = null, .ifelse = true };
+    }
+
+    pub fn only_false_in_ifthen() CmpImplications {
+        return .{ .ifthen = false, .ifelse = null };
+    }
+
+    pub fn only_false_in_ifelse() CmpImplications {
+        return .{ .ifthen = null, .ifelse = false };
     }
 };
 
-fn cmp_info_implications_on_subsequent_cmp(info: CmpInfo, cmp: Inst.Cmp, values: []const Value) CmpImplications {
+fn cmp_info_implications_on_subsequent_cmp(ir: *const IR, info: CmpInfo, cmp: Inst.Cmp, values: []const Value) CmpImplications {
     const condsEqual = cmp.cond == info.cond;
     const refValuesEqual = ref_values_equal(info.lhs(), cmp.lhs, values) and ref_values_equal(info.rhs(), cmp.rhs, values);
-    if (condsEqual and comparison_is_commutative(info.cond)) {
-        const swapOrderEqual = ref_values_equal(info.lhs(), cmp.rhs, values) and ref_values_equal(info.rhs(), cmp.lhs, values);
-        if (refValuesEqual or swapOrderEqual) {
-            return CmpImplications.identity();
-        }
-        return CmpImplications.none();
+    const swapOrderEqual = ref_values_equal(info.lhs(), cmp.rhs, values) and ref_values_equal(info.rhs(), cmp.lhs, values);
+    if (condsEqual and comparison_is_commutative(info.cond) and (refValuesEqual or swapOrderEqual)) {
+        return CmpImplications.identity();
     }
     if (refValuesEqual and comparison_is_fuzzy_inverse_of(cmp.cond, info.cond)) {
         return CmpImplications.inverse();
     }
+    if (!refValuesEqual and condsEqual) {
+        // just picking one
+        const cond = info.cond;
+        if (std.meta.eql(info.lhs(), cmp.lhs)) {
+            // variance is on rhs
+            const infoVal = ref_value(ir, info.rhs(), values);
+            const cmpVal = ref_value(ir, cmp.rhs, values);
+            std.debug.print("info.val = {any}\ncmp.val = {any}\n", .{ infoVal, cmpVal });
+            const maybe_res = eval_cmp(cond, infoVal, cmpVal);
+            if (maybe_res == null) {
+                return CmpImplications.none();
+            }
+            const res = maybe_res.?;
+            std.debug.print("res = {}\n", .{res});
+            return if (res) CmpImplications.only_true_in_ifthen() else CmpImplications.only_false_in_ifelse();
+        }
+        if (std.meta.eql(info.rhs(), cmp.rhs)) {
+            // variance is on lhs
+            const infoVal = ref_value(ir, info.lhs(), values);
+            const cmpVal = ref_value(ir, cmp.lhs, values);
+            std.debug.print("info.val = {any}\ncmp.val = {any}\n", .{ infoVal, cmpVal });
+            const maybe_res = eval_cmp(cond, cmpVal, infoVal);
+            if (maybe_res == null) {
+                return CmpImplications.none();
+            }
+            const res = maybe_res.?;
+            std.debug.print("res = {}\n", .{res});
+            return if (res) CmpImplications.only_true_in_ifthen() else CmpImplications.only_false_in_ifelse();
+        }
+    }
     return CmpImplications.none();
+}
+
+fn eval_cmp(cond: OpCode.Cond, lhs: Value, rhs: Value) ?bool {
+    const lhsConst = lhs.state == .constant;
+    const rhsConst = rhs.state == .constant;
+    if (!lhsConst or !rhsConst) {
+        return null;
+    }
+
+    const l = lhs.constant.?.value;
+    const r = rhs.constant.?.value;
+    const res = switch (cond) {
+        .Eq => l == r,
+        .NEq => l != r,
+        .Lt => l < r,
+        .Gt => l > r,
+        .GtEq => l >= r,
+        .LtEq => l <= r,
+    };
+    return res;
 }
 
 fn comparison_is_commutative(op: OpCode.Cond) bool {
     return switch (op) {
         .Eq, .NEq => true,
         .Lt, .Gt, .GtEq, .LtEq => false,
+    };
+}
+
+fn reverse_comparison(c: OpCode.Cond) OpCode.Cond {
+    return switch (c) {
+        // Commutative
+        .Eq, .NEq => c,
+        .Gt => .Lt,
+        .Lt => .Gt,
+        .GtEq => .LtEq,
+        .LtEq => .GtEq,
     };
 }
 
@@ -585,7 +644,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
                             utils.todo("Mistew Beawd... how do i evawuwate a divison by zewo...", .{});
                         },
                     };
-                    std.debug.print("======= EVAL =======\n{d} {s} {d} = {d}\n", .{ l, @tagName(op), r, res });
+                    // std.debug.print("======= EVAL =======\n{d} {s} {d} = {d}\n", .{ l, @tagName(op), r, res });
                     utils.assert(
                         lhs_val.kind == rhs_val.kind,
                         "lhs_val.kind == rhs_val.kind\n {s} != {s}\n",
@@ -650,7 +709,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
                 // eval
                 const cond = cmp.cond;
                 const l = lhs.constant.?.value;
-                const r = lhs.constant.?.value;
+                const r = rhs.constant.?.value;
                 const res = switch (cond) {
                     .Eq => l == r,
                     .NEq => l != r,
@@ -980,6 +1039,7 @@ test "cmp-prop.removes-nested-known-if" {
     log.empty();
     errdefer log.print();
 
+    // FIXME: use before def instead of param
     try expectResultsInIR(
         \\fun test (int param) int {
         \\    int a, b, c, d;
@@ -1014,15 +1074,7 @@ test "cmp-prop.removes-nested-known-if" {
         "  br label %if.cond1",
         "if.cond1:",
         "  %_17 = icmp eq i64 %a11, 1",
-        "  br i1 %_17, label %then.body2, label %if.exit10",
-        "then.body2:",
-        "  br label %if.cond3",
-        "if.cond3:",
-        "  br label %then.body4",
-        "then.body4:",
-        "  br label %then.exit5",
-        "then.exit5:",
-        "  br label %if.exit8",
+        "  br i1 %_17, label %if.exit8, label %if.exit10",
         "if.exit8:",
         "  %d33 = mul i64 200, 300",
         "  br label %then.exit9",
@@ -1047,14 +1099,15 @@ test "cmp-prop.removes-nested-known-if" {
         "  ret void",
         "}",
     }, .{
-        .{ "test", .{.cmp} },
+        .{ "test", .{ .cmp, .empty_bb } },
     });
 }
 
 test "cmp-prop.removes-impossible-if" {
+    // FIXME: use before def instead of param
     try expectResultsInIR(
         \\fun test (int param) int {
-        \\    int a, b, c, d;
+        \\    int a, b;
         \\    a = 5 * param;
         \\    b = 2;
         \\
@@ -1103,5 +1156,429 @@ test "cmp-prop.removes-impossible-if" {
         "}",
     }, .{
         .{ "test", .{ .cmp, .empty_bb } },
+    });
+}
+
+test "cmp-prop.ifthen-rhs-known" {
+    try expectResultsInIR(
+        \\fun main () int {
+        \\    int a, b;
+        \\    a = 5 * b;
+        \\    b = 2;
+        \\
+        \\    if (a < 10) {
+        \\        if (a < 20) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    } else {
+        \\        b = 20;
+        \\    }
+        \\
+        \\    return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  %b5 = alloca i64",
+        "  %b6 = load i64, i64* %b5",
+        "  br label %body0",
+        "body0:",
+        "  %a7 = mul i64 5, %b6",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_11 = icmp slt i64 %a7, 10",
+        "  br i1 %_11, label %then.exit9, label %else.exit11",
+        // NOTE: lack of cmp a < 20 because it is implied by a < 10
+        "then.exit9:",
+        "  br label %if.exit12",
+        "else.exit11:",
+        "  br label %if.exit12",
+        "if.exit12:",
+        "  %b1 = phi i64 [ 200, %then.exit9 ], [ 20, %else.exit11 ]",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 %b1",
+        "}",
+    }, .{
+        .{ "main", .{ .cmp, .empty_bb } },
+    });
+}
+
+test "cmp-prop.ifthen-rhs-unknown" {
+    try expectResultsInIR(
+        \\fun main () int {
+        \\    int a, b;
+        \\    a = 5 * b;
+        \\    b = 2;
+        \\
+        \\    if (a < 10) {
+        \\        if (a < 5) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    } else {
+        \\        b = 20;
+        \\    }
+        \\
+        \\    return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  %b5 = alloca i64",
+        "  %b6 = load i64, i64* %b5",
+        "  br label %body0",
+        "body0:",
+        "  %a7 = mul i64 5, %b6",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_11 = icmp slt i64 %a7, 10",
+        "  br i1 %_11, label %if.cond3, label %else.exit11",
+        "if.cond3:",
+        // NOTE: this is the cmp that should still exist because it is not implied by a < 10
+        "  %_15 = icmp slt i64 %a7, 5",
+        "  br i1 %_15, label %then.exit5, label %else.exit7",
+        "then.exit5:",
+        "  br label %if.exit8",
+        "else.exit7:",
+        "  br label %if.exit8",
+        "if.exit8:",
+        "  %b0 = phi i64 [ 200, %then.exit5 ], [ 2, %else.exit7 ]",
+        "  br label %then.exit9",
+        "then.exit9:",
+        "  br label %if.exit12",
+        "else.exit11:",
+        "  br label %if.exit12",
+        "if.exit12:",
+        "  %b1 = phi i64 [ %b0, %then.exit9 ], [ 20, %else.exit11 ]",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 %b1",
+        "}",
+    }, .{
+        .{ "main", .{ .cmp, .empty_bb } },
+    });
+}
+
+test "cmp-prop.ifelse-rhs-known" {
+    try expectResultsInIR(
+        \\fun main () int {
+        \\    int a, b;
+        \\    a = 5 * b;
+        \\    b = 2;
+        \\
+        \\    if (a < 10) {
+        \\        b = 20;
+        \\    } else {
+        \\        if (a < 5) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    }
+        \\
+        \\    return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  %b5 = alloca i64",
+        "  %b6 = load i64, i64* %b5",
+        "  br label %body0",
+        "body0:",
+        "  %a7 = mul i64 5, %b6",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_11 = icmp slt i64 %a7, 10",
+        "  br i1 %_11, label %then.exit3, label %else.exit11",
+        "then.exit3:",
+        "  br label %if.exit12",
+        "else.exit11:",
+        // NOTE: lack of cmp a < 5 because it is implied to be false by !(a < 10)
+        "  br label %if.exit12",
+        "if.exit12:",
+        "  %b0 = phi i64 [ 20, %then.exit3 ], [ 2, %else.exit11 ]",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 %b0",
+        "}",
+    }, .{
+        .{ "main", .{ .cmp, .empty_bb } },
+    });
+}
+
+test "cmp-prop.ifelse-rhs-unknown" {
+    try expectResultsInIR(
+        \\fun main () int {
+        \\    int a, b;
+        \\    a = 5 * b;
+        \\    b = 2;
+        \\
+        \\    if (a < 10) {
+        \\        b = 20;
+        \\    } else {
+        \\        if (a < 20) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    }
+        \\
+        \\    return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  %b5 = alloca i64",
+        "  %b6 = load i64, i64* %b5",
+        "  br label %body0",
+        "body0:",
+        "  %a7 = mul i64 5, %b6",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_11 = icmp slt i64 %a7, 10",
+        "  br i1 %_11, label %then.exit3, label %if.cond5",
+        "then.exit3:",
+        "  br label %if.exit12",
+        "if.cond5:",
+        // NOTE: this is the cmp that should still exist because it is not implied by !(a < 10)
+        "  %_18 = icmp slt i64 %a7, 20",
+        "  br i1 %_18, label %then.exit7, label %else.exit9",
+        "then.exit7:",
+        "  br label %if.exit10",
+        "else.exit9:",
+        "  br label %if.exit10",
+        "if.exit10:",
+        "  %b1 = phi i64 [ 200, %then.exit7 ], [ 2, %else.exit9 ]",
+        "  br label %else.exit11",
+        "else.exit11:",
+        "  br label %if.exit12",
+        "if.exit12:",
+        "  %b0 = phi i64 [ 20, %then.exit3 ], [ %b1, %else.exit11 ]",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 %b0",
+        "}",
+    }, .{
+        .{ "main", .{ .cmp, .empty_bb } },
+    });
+}
+
+test "cmp-prop.ifthen-lhs-known" {
+    try expectResultsInIR(
+        \\fun main () int {
+        \\    int a, b;
+        \\    a = 5 * b;
+        \\    b = 2;
+        \\
+        \\    if (10 > a) {
+        // a < 10
+        \\        if (20 > a) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    } else {
+        // a >= 10
+        \\        b = 20;
+        \\    }
+        \\
+        \\    return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  %b5 = alloca i64",
+        "  %b6 = load i64, i64* %b5",
+        "  br label %body0",
+        "body0:",
+        "  %a7 = mul i64 5, %b6",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_11 = icmp sgt i64 10, %a7",
+        "  br i1 %_11, label %then.exit9, label %else.exit11",
+        // NOTE: lack of cmp 20 > a because it is implied by a < 10
+        "then.exit9:",
+        "  br label %if.exit12",
+        "else.exit11:",
+        "  br label %if.exit12",
+        "if.exit12:",
+        "  %b1 = phi i64 [ 200, %then.exit9 ], [ 20, %else.exit11 ]",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 %b1",
+        "}",
+    }, .{
+        .{ "main", .{ .cmp, .empty_bb } },
+    });
+}
+
+test "cmp-prop.ifthen-lhs-unknown" {
+    try expectResultsInIR(
+        \\fun main () int {
+        \\    int a, b;
+        \\    a = 5 * b;
+        \\    b = 2;
+        \\
+        \\    if (10 > a) {
+        // a < 10
+        \\        if (5 > a) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    } else {
+        // a >= 10
+        \\        b = 20;
+        \\    }
+        \\
+        \\    return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  %b5 = alloca i64",
+        "  %b6 = load i64, i64* %b5",
+        "  br label %body0",
+        "body0:",
+        "  %a7 = mul i64 5, %b6",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_11 = icmp sgt i64 10, %a7",
+        "  br i1 %_11, label %if.cond3, label %else.exit11",
+        "if.cond3:",
+        // NOTE: this is the cmp that should still exist because it is not implied by a < 10
+        "  %_15 = icmp sgt i64 5, %a7",
+        "  br i1 %_15, label %then.exit5, label %else.exit7",
+        "then.exit5:",
+        "  br label %if.exit8",
+        "else.exit7:",
+        "  br label %if.exit8",
+        "if.exit8:",
+        "  %b0 = phi i64 [ 200, %then.exit5 ], [ 2, %else.exit7 ]",
+        "  br label %then.exit9",
+        "then.exit9:",
+        "  br label %if.exit12",
+        "else.exit11:",
+        "  br label %if.exit12",
+        "if.exit12:",
+        "  %b1 = phi i64 [ %b0, %then.exit9 ], [ 20, %else.exit11 ]",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 %b1",
+        "}",
+    }, .{
+        .{ "main", .{ .cmp, .empty_bb } },
+    });
+}
+
+test "cmp-prop.ifelse-lhs-known" {
+    try expectResultsInIR(
+        \\fun main () int {
+        \\    int a, b;
+        \\    a = 5 * b;
+        \\    b = 2;
+        \\
+        \\    if (10 > a) {
+        // a < 10
+        \\        b = 20;
+        \\    } else {
+        // a >= 10
+        \\        if (5 > a) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    }
+        \\
+        \\    return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  %b5 = alloca i64",
+        "  %b6 = load i64, i64* %b5",
+        "  br label %body0",
+        "body0:",
+        "  %a7 = mul i64 5, %b6",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_11 = icmp sgt i64 10, %a7",
+        "  br i1 %_11, label %then.exit3, label %else.exit11",
+        "then.exit3:",
+        "  br label %if.exit12",
+        "else.exit11:",
+        // NOTE: lack of cmp 10 > a because it is implied to be false by !(5 > a)
+        "  br label %if.exit12",
+        "if.exit12:",
+        "  %b0 = phi i64 [ 20, %then.exit3 ], [ 2, %else.exit11 ]",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 %b0",
+        "}",
+    }, .{
+        .{ "main", .{ .cmp, .empty_bb } },
+    });
+}
+
+test "cmp-prop.ifelse-lhs-unknown" {
+    try expectResultsInIR(
+        \\fun main () int {
+        \\    int a, b;
+        \\    a = 5 * b;
+        \\    b = 2;
+        \\
+        \\    if (10 > a) {
+        // a < 10
+        \\        b = 20;
+        \\    } else {
+        // a >= 10
+        \\        if (20 > a) {
+        \\            b = 200;
+        \\        } else {
+        \\            b = 2;
+        \\        }
+        \\    }
+        \\
+        \\    return b;
+        \\}
+    , .{
+        "define i64 @main() {",
+        "entry:",
+        "  %b5 = alloca i64",
+        "  %b6 = load i64, i64* %b5",
+        "  br label %body0",
+        "body0:",
+        "  %a7 = mul i64 5, %b6",
+        "  br label %if.cond1",
+        "if.cond1:",
+        "  %_11 = icmp sgt i64 10, %a7",
+        "  br i1 %_11, label %then.exit3, label %if.cond5",
+        "then.exit3:",
+        "  br label %if.exit12",
+        "if.cond5:",
+        // NOTE: this is the cmp that should still exist because it is not implied by !(a < 10)
+        "  %_18 = icmp sgt i64 20, %a7",
+        "  br i1 %_18, label %then.exit7, label %else.exit9",
+        "then.exit7:",
+        "  br label %if.exit10",
+        "else.exit9:",
+        "  br label %if.exit10",
+        "if.exit10:",
+        "  %b1 = phi i64 [ 200, %then.exit7 ], [ 2, %else.exit9 ]",
+        "  br label %else.exit11",
+        "else.exit11:",
+        "  br label %if.exit12",
+        "if.exit12:",
+        "  %b0 = phi i64 [ 20, %then.exit3 ], [ %b1, %else.exit11 ]",
+        "  br label %exit",
+        "exit:",
+        "  ret i64 %b0",
+        "}",
+    }, .{
+        .{ "main", .{ .cmp, .empty_bb } },
     });
 }
