@@ -1155,19 +1155,19 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
     // go back through the instructions and set the selection of the registers
     for (armFunc.insts.items) |instID| {
         var inst = &arm.program.insts.items[instID];
-        if (inst.rd.irID == 0xDEADBEEF) {
+        if (inst.rd.irID == 0xDEADBEEF and inst.rd.selection == .none) {
             inst.rd.selection = unnamedRegs.get(inst.rd.name) orelse .none;
-        } else {
+        } else if (inst.rd.selection == .none) {
             inst.rd.selection = instToSelection.get(inst.rd.irID) orelse .none;
         }
-        if (inst.op1.reg.irID == 0xDEADBEEF) {
+        if (inst.op1.reg.irID == 0xDEADBEEF and inst.op1.reg.selection == .none) {
             inst.op1.reg.selection = unnamedRegs.get(inst.op1.reg.name) orelse .none;
-        } else {
+        } else if (inst.op1.reg.selection == .none) {
             inst.op1.reg.selection = instToSelection.get(inst.op1.reg.irID) orelse .none;
         }
-        if (inst.op2.reg.irID == 0xDEADBEEF) {
+        if (inst.op2.reg.irID == 0xDEADBEEF and inst.op2.reg.selection == .none) {
             inst.op2.reg.selection = unnamedRegs.get(inst.op2.reg.name) orelse .none;
-        } else {
+        } else if (inst.op2.reg.selection == .none) {
             inst.op2.reg.selection = instToSelection.get(inst.op2.reg.irID) orelse .none;
         }
     }
