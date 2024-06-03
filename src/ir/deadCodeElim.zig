@@ -23,8 +23,6 @@ pub fn deadCodeElim(ir: *IR, fun: *Function) !bool {
     var changed = false;
     defer arena_alloc.deinit();
 
-    var changed = false;
-
     var list = try markDeadCode(alloc, fun);
     for (fun.bbs.items()) |*bb| {
         var i: u32 = 0;
@@ -90,7 +88,6 @@ pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
             }
         }
     }
-    const instrunctionCount = function.insts.len;
 
     while (workingList.popOrNull()) |instID| {
         const inst = insts.get(instID).*;
