@@ -385,7 +385,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
             // eval
             const cond = cmp.cond;
             const l = lhs.constant.?.value;
-            const r = lhs.constant.?.value;
+            const r = rhs.constant.?.value;
             const res = switch (cond) {
                 .Eq => l == r,
                 .NEq => l != r,
@@ -409,7 +409,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
             break :misc value;
         },
         // FIXME: should probably be unknown
-        .Alloc, .Load => Value.undef(),
+        .Alloc, .Load => Value.unknown(),
         // NOTE: could do gep ourselves but it only matters
         // for making dylans life easier with lowering
         .Gep => Value.unknown(),
@@ -471,7 +471,12 @@ fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
         .local => values[ref.i],
         .immediate => switch (ref.type) {
             .bool => Value.const_bool(ref.i == IMMEDIATE_TRUE),
-            .int => Value.const_int(ir.parseInt(ref.i) catch unreachable),
+            .int => int: {
+                const int_str = ir.getIdent(ref.i);
+                const int_val = ir.parseInt(ref.i) catch unreachable;
+                std.debug.print("INT {s} -> {d}\n", .{ int_str, int_val });
+                break :int Value.const_int(int_val);
+            },
             .void => unreachable,
             else => Value.unknown(),
         },
