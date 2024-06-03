@@ -28,6 +28,7 @@ pub const Config = struct {
     sccp_instead_of_cmp_prop: bool,
     no_sccp_like: bool,
     no_empty_removal: bool,
+    no_dead_code_elim: bool,
 };
 
 pub fn optimize_program(ir: *IR, cfg: Config) !void {
@@ -40,12 +41,19 @@ pub fn optimize_program(ir: *IR, cfg: Config) !void {
 pub fn optimize_function(ir: *IR, fun: *Function, cfg: Config) !void {
     var changed = false;
     while (changed) {
-        if (cfg.sccp_instead_of_cmp_prop) {
-            changed = changed or try sccp(ir, fun);
-        } else {
-            changed = changed or try cmp_prop(ir, fun);
+        if (!cfg.no_sccp_like) {
+            if (cfg.sccp_instead_of_cmp_prop) {
+                changed = changed or try sccp(ir, fun);
+            } else {
+                changed = changed or try cmp_prop(ir, fun);
+            }
         }
-        changed = changed or try empty_block_removal_pass(fun);
+        if (!cfg.no_empty_removal) {
+            changed = changed or try empty_block_removal_pass(fun);
+        }
+        if (!cfg.no_dead_code_elim) {
+            changed = changed or try DeadCode.remove_dead_code(ir, fun);
+        }
     }
 }
 
