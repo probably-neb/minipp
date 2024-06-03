@@ -32,15 +32,17 @@ pub const Config = struct {
 };
 
 pub fn optimize_program(ir: *IR, cfg: Config) !void {
-    const funcs = ir.funcs.items.items;
-    for (funcs) |*func| {
+    // const funcs = &ir.funcs.items.items;
+    for (0..ir.funcs.items.items.len) |i| {
+        var func = &ir.funcs.items.items[i];
         try optimize_function(ir, func, cfg);
     }
 }
 
 pub fn optimize_function(ir: *IR, fun: *Function, cfg: Config) !void {
-    var changed = false;
+    var changed = true;
     while (changed) {
+        changed = false;
         if (!cfg.no_sccp_like) {
             if (cfg.sccp_instead_of_cmp_prop) {
                 changed = changed or try sccp(ir, fun);
@@ -52,7 +54,7 @@ pub fn optimize_function(ir: *IR, fun: *Function, cfg: Config) !void {
             changed = changed or try empty_block_removal_pass(fun);
         }
         if (!cfg.no_dead_code_elim) {
-            changed = changed or try DeadCode.remove_dead_code(ir, fun);
+            changed = changed or try DeadCode.deadCodeElim(ir, fun);
         }
     }
 }
@@ -89,7 +91,7 @@ fn sccp(ir: *IR, fun: *Function) !bool {
         var reg = fun.regs.getPtr(regID);
         const constant = value.constant.?;
 
-        const ref = sccp_const_to_ref(constant);
+        const ref = sccp_const_to_ref(ir, constant);
         const uses_list = try DefUse.uses_of(alloc, fun, reg.*);
         const uses = uses_list.items;
 
@@ -288,7 +290,7 @@ fn cmp_prop(ir: *IR, fun: *Function) !bool {
         var reg = fun.regs.getPtr(regID);
         const constant = value.constant.?;
 
-        const ref = sccp_const_to_ref(constant);
+        const ref = sccp_const_to_ref(ir, constant);
         const uses_list = try DefUse.uses_of(alloc, fun, reg.*);
         const uses = uses_list.items;
 
@@ -478,12 +480,19 @@ fn replace_all_uses(fun: *Function, ir: *const IR, reg: *Reg, ref: Ref, reachabl
     }
 }
 
-fn sccp_const_to_ref(value: SCCP.Value.Constant) Ref {
+fn sccp_const_to_ref(ir: *IR, value: SCCP.Value.Constant) Ref {
     return switch (value.kind) {
         .i1 => if (value.value != 0) Ref.immTrue() else Ref.immFalse(),
-        .i64 => if (value.value < std.math.maxInt(u32)) Ref.immu32(@as(u32, @intCast(value.value)), .int) else {
-            utils.todo("i64 constant too large for Ref.immu32... Need to intern\n", .{});
+        .i64 => int: {
+            var buf: [256]u8 = undefined;
+            std.debug.print("interning: {d}\n", .{value.value});
+            const int_str = std.fmt.bufPrint(&buf, "{d}", .{value.value}) catch unreachable;
+            const id = ir.internIdent(int_str);
+            break :int Ref.immediate(id, .int);
         },
+        // .i64 => if (value.value < std.math.maxInt(u32)) Ref.immu32(@as(u32, @intCast(value.value)), .int) else {
+        //     utils.todo("i64 constant too large for Ref.immu32... Need to intern\n", .{});
+        // },
     };
 }
 
