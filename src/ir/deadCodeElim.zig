@@ -17,9 +17,10 @@ const RegID = Register.ID;
 const Ref = IR.Ref;
 const OpCode = IR.Op;
 
-pub fn deadCodeElim(ir: *IR, fun: *Function, print: bool) !void {
+pub fn deadCodeElim(ir: *IR, fun: *Function, print: bool) !bool {
     var arena_alloc = std.heap.ArenaAllocator.init(ir.alloc);
     var alloc = arena_alloc.allocator();
+    var changed = false;
     defer arena_alloc.deinit();
 
     var list = try markDeadCode(alloc, fun);
@@ -29,6 +30,7 @@ pub fn deadCodeElim(ir: *IR, fun: *Function, print: bool) !void {
             const inst = bb.insts.items()[i];
             if (!list[inst]) {
                 bb.insts.remove(i);
+                changed = true;
             } else {
                 i += 1;
             }
@@ -45,6 +47,7 @@ pub fn deadCodeElim(ir: *IR, fun: *Function, print: bool) !void {
             }
         }
     }
+    return changed;
 }
 
 pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
@@ -65,7 +68,6 @@ pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
     //       if the source is not marked in the criticalMarkList
     //          mark the source operation in the criticalMarkList
     //          mark the source operation in the workingList
-    const instrunctionCount = function.insts.len;
     var workingList = workingList: {
         // var workingList = try alloc.alloc(bool, function.insts.len);
         var workingList = ArrayList(InstID).init(alloc);
@@ -86,6 +88,7 @@ pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
             if (inst.op == .Ret or
                 inst.op == .Call or
                 inst.op == .Load or
+                inst.op == .Store or
                 inst.op == .Br or
                 inst.op == .Jmp)
             {
@@ -94,18 +97,24 @@ pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
             }
         }
     }
+    const instrunctionCount = function.insts.len;
 
     while (workingList.items.len != 0) {
         const instID = workingList.pop();
         const inst = insts.get(instID).*;
         const sources = try getSources(inst, alloc);
         for (sources.items) |source| {
-            if (source < instrunctionCount) {
-                const sourceID = regs.get(source).inst;
-                if (!critMarkList[sourceID]) {
-                    critMarkList[sourceID] = true;
-                    try workingList.append(sourceID);
-                }
+            switch (source.kind) {
+                .local => {
+                    if (source.i < instrunctionCount) {
+                        const sourceID = regs.get(source.i).inst;
+                        if (!critMarkList[sourceID]) {
+                            critMarkList[sourceID] = true;
+                            try workingList.append(sourceID);
+                        }
+                    }
+                },
+                .global, .label, .immediate, .immediate_u32, .param, ._invalid => {},
             }
         }
     }
@@ -119,57 +128,57 @@ pub fn markDeadCode(alloc: Alloc, function: *const Function) ![]bool {
 }
 
 // take in an instruction and return an arrayList of the registerIDs that are used in the instruction
-fn getSources(inst: Inst, alloc: Alloc) !ArrayList(RegID) {
-    var sources = ArrayList(RegID).init(alloc);
+fn getSources(inst: Inst, alloc: Alloc) !ArrayList(Ref) {
+    var sources = ArrayList(Ref).init(alloc);
 
     switch (inst.op) {
         .Binop => {
             const binop = Inst.Binop.get(inst);
-            try sources.append(binop.lhs.i);
-            try sources.append(binop.rhs.i);
+            try sources.append(binop.lhs);
+            try sources.append(binop.rhs);
         },
         .Cmp => {
             const cmp = Inst.Cmp.get(inst);
-            try sources.append(cmp.lhs.i);
-            try sources.append(cmp.rhs.i);
+            try sources.append(cmp.lhs);
+            try sources.append(cmp.rhs);
         },
         .Zext, .Sext, .Trunc, .Bitcast => {
             const misc = Inst.Misc.get(inst);
-            try sources.append(misc.from.i);
+            try sources.append(misc.from);
         },
         .Load => {
             const load = Inst.Load.get(inst);
-            try sources.append(load.ptr.i);
+            try sources.append(load.ptr);
         },
         .Gep => {
             const gep = Inst.Gep.get(inst);
-            try sources.append(gep.ptrVal.i);
-            try sources.append(gep.index.i);
+            try sources.append(gep.ptrVal);
+            try sources.append(gep.index);
         },
         .Call => {
             const call = Inst.Call.get(inst);
             for (call.args) |arg| {
-                try sources.append(arg.i);
+                try sources.append(arg);
             }
         },
         .Phi => {
             const phi = Inst.Phi.get(inst);
             for (phi.entries.items) |entry| {
-                try sources.append(entry.ref.i);
+                try sources.append(entry.ref);
             }
         },
         .Ret => {
             const ret = Inst.Ret.get(inst);
-            try sources.append(ret.val.i);
+            try sources.append(ret.val);
         },
         .Store => {
             const store = Inst.Store.get(inst);
-            try sources.append(store.from.i);
-            try sources.append(store.to.i);
+            try sources.append(store.from);
+            try sources.append(store.to);
         },
         .Br => {
             const br = Inst.Br.get(inst);
-            try sources.append(br.on.i);
+            try sources.append(br.on);
         },
         // no registers
         .Alloc, .Param, .Jmp => {},
@@ -230,7 +239,7 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
                 //     try empty_block_removal_pass(fun);
                 // },
                 .dead_code_elim => {
-                    try deadCodeElim(&ir, fun, false);
+                    _ = try deadCodeElim(&ir, fun, false);
                 },
                 else => {
                     log.warn("unknown optimization pass: {s}\n", .{@tagName(pass)});
@@ -297,18 +306,48 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
 //
 //
 
-test "sccp.removes-nested-never-ran-while" {
+// test "sccp.removes-nested-never-ran-while" {
+//     log.empty();
+//     errdefer log.print();
+//     try expectResultsInIR(
+//         \\int global1;
+//         \\fun main() int {
+//         \\  int a, b, c, d, e;
+//         \\  a = 4;
+//         \\  a = 5;
+//         \\  a = 7;
+//         \\  a = 8;
+//         \\  b = 6;
+//         \\  b = 9;
+//         \\  b = 12;
+//         \\  b = 8;
+//         \\  c = 10;
+//         \\  c = 13;
+//         \\  c = 9;
+//         \\  d = 45;
+//         \\  d = 12;
+//         \\  d = 3;
+//         \\  e = 23;
+//         \\  e = 10;
+//         \\  global1 = 11;
+//         \\  global1 = 5;
+//         \\  global1 = 9;
+//         \\  return a + b + c + d + e;
+//         \\}
+//     , .{
+//         "define i64 @main() {",
+//         "}",
+//     }, .{
+//         .{ "main", .{.dead_code_elim} },
+//     });
+// }
+
+test "sccp.bertonacchi" {
     log.empty();
     errdefer log.print();
-    try expectResultsInIR(
-        \\fun main() int {
-        \\  int a,b,c;
-        \\  a = 2;
-        \\  b = a;
-        \\  c = 3;
-        \\  return b;
-        \\}
-    , .{
+    // try expectResultsInIR("fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }", .{
+
+    try expectResultsInIR(@embedFile("../../test-suite/tests/milestone2/benchmarks/OptimizationBenchmark/OptimizationBenchmark.mini"), .{
         "define i64 @main() {",
         "entry:",
         "  br label %body0",
@@ -320,6 +359,8 @@ test "sccp.removes-nested-never-ran-while" {
         "  ret i64 %return_reg4",
         "}",
     }, .{
-        .{ "main", .{.dead_code_elim} },
+        .{ "deadCodeElimination", .{.dead_code_elim} },
     });
 }
+//
+//
