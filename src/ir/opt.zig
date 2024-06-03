@@ -23,15 +23,29 @@ const CmpProp = @import("./cmp-info-prop.zig");
 
 const stringify_label = @import("stringify_phi.zig").stringify_label;
 
-pub fn optimize_program(ir: *IR) !void {
+pub const Config = struct {
+    sccp_instead_of_cmp_prop: bool,
+    no_sccp_like: bool,
+    no_empty_removal: bool,
+};
+
+pub fn optimize_program(ir: *IR, cfg: Config) !void {
     const funcs = ir.funcs.items.items;
     for (funcs) |*func| {
-        try optimize_function(func);
+        try optimize_function(ir, func, cfg);
     }
 }
 
-pub fn optimize_function(fun: *Function) !void {
-    _ = fun;
+pub fn optimize_function(ir: *IR, fun: *Function, cfg: Config) !void {
+    var changed = false;
+    while (changed) {
+        if (cfg.sccp_instead_of_cmp_prop) {
+            changed = changed or try sccp(ir, fun);
+        } else {
+            changed = changed or try cmp_prop(ir, fun);
+        }
+        changed = changed or try empty_block_removal_pass(fun);
+    }
 }
 
 fn sccp(ir: *IR, fun: *Function) !bool {
