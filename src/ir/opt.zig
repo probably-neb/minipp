@@ -484,10 +484,29 @@ fn sccp_const_to_ref(ir: *IR, value: SCCP.Value.Constant) Ref {
     return switch (value.kind) {
         .i1 => if (value.value != 0) Ref.immTrue() else Ref.immFalse(),
         .i64 => int: {
-            var buf: [256]u8 = undefined;
-            std.debug.print("interning: {d}\n", .{value.value});
-            const int_str = std.fmt.bufPrint(&buf, "{d}", .{value.value}) catch unreachable;
-            const id = ir.internIdent(int_str);
+            var buf = std.ArrayList(u8).init(ir.alloc);
+            var tmp: i64 = @intCast(value.value);
+            // std.debug.print("starting with {d}\n", .{tmp});
+            if (tmp == 0) {
+                buf.append(@intCast(48)) catch unreachable;
+            } else {
+                if (tmp < 0) {
+                    tmp = -tmp;
+                }
+                while (tmp > 0) {
+                    var digit = @mod(tmp, 10);
+                    tmp = @divTrunc(tmp, 10);
+                    // std.debug.print("aahhah {any}\n", .{tmp});
+                    buf.insert(0, @intCast(digit + '0')) catch unreachable;
+                }
+            }
+            if (value.value < 0) {
+                buf.insert(0, '-') catch unreachable;
+            }
+            var str = buf.toOwnedSlice() catch unreachable;
+            // std.debug.print("buf={s}\n", .{str});
+
+            const id = ir.internIdent(str);
             break :int Ref.immediate(id, .int);
         },
         // .i64 => if (value.value < std.math.maxInt(u32)) Ref.immu32(@as(u32, @intCast(value.value)), .int) else {

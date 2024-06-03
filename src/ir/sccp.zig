@@ -312,22 +312,29 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
                     const r = rhs_val.value;
                     const res = switch (op) {
                         .Mul => l * r,
+                        // .Mul => return Value.unknown(),
                         .Add => l + r,
+                        // .Add => return Value.unknown(),
                         .Sub => l - r,
+                        // .Sub => return Value.unknown(),
                         .And => l & r,
+                        // .And => return Value.unknown(),
                         .Or => l | r,
+                        // .Or => return Value.unknown(),
+                        // .Xor => return Value.unknown(),
                         .Xor => l ^ r,
-                        .Div => if (r != 0) @divExact(l, r) else {
+                        .Div => if (r != 0) @divTrunc(l, r) else {
                             utils.todo("Mistew Beawd... how do i evawuwate a divison by zewo...", .{});
                         },
                     };
                     // std.debug.print("======= EVAL =======\n{d} {s} {d} = {d}\n", .{ l, @tagName(op), r, res });
-                    utils.assert(
-                        lhs_val.kind == rhs_val.kind,
-                        "lhs_val.kind == rhs_val.kind\n {s} != {s}\n",
-                        .{ @tagName(lhs_val.kind), @tagName(rhs_val.kind) },
-                    );
+                    // utils.assert(
+                    //     lhs_val.kind == rhs_val.kind,
+                    //     "lhs_val.kind == rhs_val.kind\n {s} != {s}\n",
+                    //     .{ @tagName(lhs_val.kind), @tagName(rhs_val.kind) },
+                    // );
                     return Value.const_of(res, lhs_val.kind);
+                    // return Value.unknown();
                 }
             }
             // TODO: unknown x undefined -> undefined
@@ -343,7 +350,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
             if (lhs.is_int(0) and op == .Div) {
                 return Value.const_int(0);
             }
-            if ((lhs.is_int(0) or rhs.is_int(0)) and is_one_of(OpCode.Binop, op, .{ .Mul, .And })) {
+            if ((lhs.is_int(0) or rhs.is_int(0)) and is_one_of(OpCode.Binop, op, .{.Mul})) {
                 return Value.const_int(0);
             }
             if (lhs.is_int(0) and op == .Add) {
@@ -472,9 +479,9 @@ fn ref_value(ir: *const IR, ref: Ref, values: []const Value) Value {
         .immediate => switch (ref.type) {
             .bool => Value.const_bool(ref.i == IMMEDIATE_TRUE),
             .int => int: {
-                const int_str = ir.getIdent(ref.i);
+                // const int_str = ir.getIdent(ref.i);
                 const int_val = ir.parseInt(ref.i) catch unreachable;
-                std.debug.print("INT {s} -> {d}\n", .{ int_str, int_val });
+                // std.debug.print("INT {s} -> {d}\n", .{ int_str, int_val });
                 break :int Value.const_int(int_val);
             },
             .void => unreachable,
