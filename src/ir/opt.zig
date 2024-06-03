@@ -1006,12 +1006,14 @@ fn ptr_to_last(comptime T: type, elems: []T) ?*T {
     return &elems[elems.len - 1];
 }
 
-fn empty_block_removal_pass(fun: *Function) !void {
+fn empty_block_removal_pass(fun: *Function) !bool {
     const bbs = &fun.bbs;
     const insts = &fun.insts;
 
     var idsToRemove = std.ArrayList(BBID).init(fun.alloc);
     defer idsToRemove.deinit();
+
+    var changed = false;
 
     for (bbs.ids()) |bbID| {
         const bb = bbs.get(bbID);
@@ -1056,10 +1058,12 @@ fn empty_block_removal_pass(fun: *Function) !void {
         // NOTE: this use of undefined is only okay because we only have 1 outgoer
         try remove_block_edges(fun, bbID);
         try idsToRemove.append(bbID);
+        changed = true;
     }
     for (idsToRemove.items) |bbID| {
         bbs.remove(bbID);
     }
+    return changed;
 }
 
 fn bb_num_outgoers(bb: *const BasicBlock) usize {
