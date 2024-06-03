@@ -739,7 +739,7 @@ pub const Function = struct {
     pub fn addParams(self: *Function, ir: *IR, func: *IR.Function) !void {
         _ = ir;
         for (func.params.items) |param| {
-            var reg = Reg{ .id = self.program.regs.items.len, .name = param.name, .inst = null, .irID = undefined };
+            var reg = Reg{ .id = self.program.regs.items.len, .name = param.name, .inst = null, .irID = 0xDEADBEEF };
             try self.program.addReg(reg);
             try self.params.append(reg);
         }
@@ -922,7 +922,7 @@ pub const Program = struct {
                 return Operand.asOpReg(reg);
             },
             .param => {
-                var reg = Reg{ .id = self.regs.items.len, .name = ref.name, .inst = instID, .irID = ref.i };
+                var reg = Reg{ .id = self.regs.items.len, .name = ref.name, .inst = instID, .irID = 0xDEADBEEF };
                 try self.addReg(reg);
                 return Operand.asOpReg(reg);
             },
@@ -1130,6 +1130,21 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
         try phiSave.armFunc.insts.insert(funcIndex, movInst.id);
     }
 
+    // create mov from every param to a register of the index
+    // get the first basic block in the function
+    var firstBB = armFunc.blocks.items[0];
+    for (armFunc.params.items, 0..) |param, i| {
+        // var paramOperand = Operand.asOpReg(param);
+        var reg = Reg{ .id = arm.program.regs.items.len, .name = param.name, .inst = null, .irID = 0xDEADBEEF };
+        reg.selection = SelectedReg.fromInt(i);
+        try arm.program.addReg(reg);
+        var movInst = Inst.mov(param, Operand.asOpReg(reg), arm.program.insts.items.len);
+        try arm.program.insts.append(movInst);
+        // find in the function the first instruction
+        try firstBB.insts.insert(0, movInst.id);
+        try armFunc.insts.insert(0, movInst.id);
+    }
+
     // go through all of the instructions in the function, and make a map from their instruction ID to the register id
     // track all of the non irID registers, and add them to a list
 
@@ -1138,6 +1153,7 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
     var unnamedRegs = std.AutoHashMap(IR.StrID, SelectedReg).init(ir.alloc);
     var counter: usize = 9;
     for (armFunc.insts.items) |instID| {
+        if (counter == 16) counter = 17;
         var inst = &arm.program.insts.items[instID];
         // if instToReg does not contain the inst.rd.id, add it
         if (inst.rd.irID == 0xDEADBEEF) {
@@ -1230,7 +1246,20 @@ pub fn gen_inst(
             var ret = IR.Inst.Ret.get(irInst);
             switch (ret.ty) {
                 .void => {
-                    // do nothing lols
+                    // if the name of the function is "main" then we need to add a ret instruction with x0 = 0
+                    if (func.name == ir.internIdent("main")) {
+                        var x0 = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X0 };
+                        try arm.program.addReg(x0);
+                        var movInst = Inst.mov(x0, Operand.asOpImm(0), arm.program.insts.items.len);
+                        try armFunc.addInst(movInst, armBlock);
+                        var x8 = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X8 };
+                        try arm.program.addReg(x8);
+                        var movInst2 = Inst.mov(x8, Operand.asOpImm(ir.internIdent("93")), arm.program.insts.items.len);
+                        try armFunc.addInst(movInst2, armBlock);
+                        var strID = ir.internIdent("svc 0");
+                        var svcInst = Inst.print_this_lol(strID, arm.program.insts.items.len);
+                        try armFunc.addInst(svcInst, armBlock);
+                    }
                 },
                 else => {
                     var retOp = try arm.program.getOpfromIR(func, ret.val, null);

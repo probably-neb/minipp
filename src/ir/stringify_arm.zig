@@ -200,40 +200,32 @@ pub fn stringify(arm: *const Arm, ir: *const IR, alloc: Alloc) ![]const u8 {
         // FUNCTION:
         try buf.fmt("{s}:\n", .{ir.getIdent(fun.name)});
         //     // Reserve space on the stack including space to save the original SP
-        // try buf.write(INDENT);
-        // try buf.write("sub sp, sp, #16\n");
-        // try buf.write(INDENT);
-        // try buf.write("str x29, [sp]\n");
-        // try buf.write(INDENT);
-        // try buf.write("mov x29, sp\n");
-        // try buf.write(INDENT);
-        // try buf.write("sub sp, sp, #16\n");
-        // try buf.write(INDENT);
-        // try buf.write("str x29, [sp]\n");
-        // try buf.write(INDENT);
-        // try buf.write("sub sp, sp, #144  \n");
-        // try buf.write(INDENT);
-        // try buf.write("mov x29, sp\n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x30, x27, [x29, #0]  \n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x26, x25, [x29, #16] \n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x24, x23, [x29, #32] \n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x22, x21, [x29, #48] \n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x20, x19, [x29, #64] \n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x18, x17, [x29, #80] \n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x16, x15, [x29, #96] \n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x14, x13, [x29, #112]\n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x12, x11, [x29, #128]\n");
-        // try buf.write(INDENT);
-        // try buf.write("stp x10, x9,  [x29, #144]\n");
+        try buf.write("stp     x20, x19, [sp, #-32]!   \n");
+        try buf.write(INDENT);
+        try buf.write("stp     x29, x30, [sp, #16]     \n");
+        try buf.write(INDENT);
+        try buf.write("add     x29, sp, #16           \n");
+        try buf.write(INDENT);
+        try buf.write("stp     x27, x28, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("stp     x25, x26, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("stp     x23, x24, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("stp     x21, x22, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("stp     x17, x18, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("stp     x15, x16, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("stp     x14, x13, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("stp     x11, x12, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("stp     x10, x9, [sp, #-16]!\n");
+        try buf.write(INDENT);
+        try buf.write("mov x16, sp\n");
+        try buf.write(INDENT);
         // strinify basic blocks
         for (fun.blocks.items) |armBB| {
             var rp = Rope.str_str_num(armBB.name, "_", armBB.id);
@@ -310,7 +302,30 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             // try buf.write("   ");
             // try stringify_operand_comment(buf, inst.op1);
         },
-        .B, .Bcc => {
+        .Bcc => {
+            try buf.write("B");
+            switch (inst.cc) {
+                .EQ => try buf.write("EQ"),
+                .NE => try buf.write("NE"),
+                .CS => try buf.write("CS"),
+                .CC => try buf.write("CC"),
+                .MI => try buf.write("MI"),
+                .PL => try buf.write("PL"),
+                .VS => try buf.write("VS"),
+                .VC => try buf.write("VC"),
+                .HI => try buf.write("HI"),
+                .LS => try buf.write("LS"),
+                .GE => try buf.write("GE"),
+                .LT => try buf.write("LT"),
+                .GT => try buf.write("GT"),
+                .LE => try buf.write("LE"),
+                .AL => try buf.write("AL"),
+                else => unreachable,
+            }
+            try buf.write(" ");
+            try stringify_operand(inst.op1, ir, buf, fun);
+        },
+        .B => {
             try stringify_operand(inst.op1, ir, buf, fun);
         },
         .BL => {
@@ -339,40 +354,30 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             try buf.fmt("{s}", .{ir.getIdent(@truncate(inst.op1.imm))});
         },
         .RET => {
-            // try buf.write("ldp x10, x9,  [x29, #144]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x12, x11, [x29, #128]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x14, x13, [x29, #112]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x16, x15, [x29, #96]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x18, x17, [x29, #80]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x20, x19, [x29, #64]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x22, x21, [x29, #48]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x24, x23, [x29, #32]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x26, x25, [x29, #16]\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldp x30, x27, [x29, #0]\n");
-            // try buf.write(INDENT);
-            // try buf.write("mov sp, x29\n");
-            // try buf.write(INDENT);
-            // try buf.write("add sp, sp, #144\n");
-            // try buf.write(INDENT);
-            // try buf.write("ldr x29, [sp], #16  \n");
-            // try buf.write(INDENT);
-            // try buf.write("mov sp, x29  \n");
-            // try buf.write(INDENT);
-            // try buf.write("add sp, sp, #16     \n");
-            // try buf.write(INDENT);
-            // try buf.write("ldr x29, [sp], #16  \n");
-            // try buf.write(INDENT);
-            // try buf.write("add sp, sp, #16     \n");
-            // try buf.write(INDENT);
+            try buf.write("mov sp, x16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x10, x9, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x11, x12, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x14, x13, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x15, x16, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x17, x18, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x21, x22, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x23, x24, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x25, x26, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x27, x28, [sp], #16\n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x29, x30, [sp, #16]     \n");
+            try buf.write(INDENT);
+            try buf.write("ldp     x20, x19, [sp], #32    \n");
+            try buf.write(INDENT);
             try buf.write("ret\n");
         },
         else => unreachable,
@@ -395,7 +400,7 @@ pub fn stringify_operation(operation: Arm.Operation, buf: *Buf) !void {
         .CMP => try buf.write("CMP "),
         .MOV => try buf.write("MOV "),
         .B => try buf.write("B "),
-        .Bcc => try buf.write("BCC "),
+        .Bcc => {},
         .BL => try buf.write("BL "),
         .LDP => try buf.write("LDP "),
         .LDR => try buf.write("LDR "),
