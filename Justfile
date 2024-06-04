@@ -1,12 +1,14 @@
 minipp := "./zig-out/bin/minipp"
 TEST_SUITE := "./test-suite/tests/milestone2/benchmarks"
-
 test path="_" filter="":
     zig {{ if path == "_" {"build test"} else { "test --main-pkg-path " + justfile_directory() + " " + join(justfile_directory(), "src", replace(parent_directory(path), "src", ""), file_stem(path)) + ".zig" + " --test-filter '" + filter + "'"} }}
 
 watch path="_" filter="":
     watchexec -e zig -rc -- just test {{path}} {{filter}}
 
+render-dot:
+	for f in ./dot_generated/*.dot; do [ -f "$f" ] && dot -Tsvg "$f" -o "${f}.svg" || echo "Skipping invalid file: $f"; done
+	mv ./dot_generated/*.dot.svg ./dot_svg/
 build:
     zig build
 
@@ -43,6 +45,11 @@ run-suite-test name *BUILD_ARGS: ensure-test-suite
     YELLOW='\033[0;33m'
     BLUE='\033[0;34m'
     NC='\033[0m'
+
+    rm -rf ./dot_svg/
+    rm -rf ./dot_generated/
+    mkdir dot_generated
+    mkdir dot_svg
 
     echo -e "Running Test Suite Test: ${YELLOW}{{name}}${NC}"
     echo -e "${BLUE}Building Test Suite Test...${NC}"
