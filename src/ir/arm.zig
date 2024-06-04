@@ -1904,16 +1904,16 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     std.debug.print("{s}\n", .{str2});
 // }
 
-test "arm.fibbonachi_to_int_array" {
-    errdefer log.print();
-    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int_array a; int i; i=0; a = new int_array[20];  while(i<20){a[i] = fib(i); print a[i] endl; i= i +1;} print a[3] endl; }";
-    var str = try inputToIRStringHeader(in, testAlloc);
-    std.debug.print("{s}\n", .{str});
-    var ir = try testMe(in);
-    var arm = try gen_program(&ir);
-    var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
-    std.debug.print("{s}\n", .{str2});
-}
+// test "arm.fibbonachi_to_int_array" {
+//     errdefer log.print();
+//     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int_array a; int i; i=0; a = new int_array[20];  while(i<20){a[i] = fib(i); print a[i] endl; i= i +1;} print a[3] endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     var ir = try testMe(in);
+//     var arm = try gen_program(&ir);
+//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+//     std.debug.print("{s}\n", .{str2});
+// }
 
 // test "phi.print_first_struct" {
 //     errdefer log.print();
@@ -1936,3 +1936,15 @@ test "arm.fibbonachi_to_int_array" {
 //     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
 //     std.debug.print("{s}\n", .{str2});
 // }
+//
+
+test "arm_killerBubs" {
+    errdefer log.print();
+    const in = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
+    var str = try inputToIRStringHeader(in, testAlloc);
+    std.debug.print("{s}\n", .{str});
+    var ir = try testMe(in);
+    var arm = try gen_program(&ir);
+    var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+    std.debug.print("{s}\n", .{str2});
+}
