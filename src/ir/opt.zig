@@ -247,7 +247,6 @@ fn sccp(ir: *IR, fun: *Function) !bool {
         for (fun.bbs.ids()) |bbID| {
             if (!info.reachable[bbID]) {
                 // std.debug.print("removing unreachable block {d}\n", .{bbID});
-                // try remove_block_edges(fun, bbID);
                 _ = fun.bbs.remove(bbID);
                 changed = true;
                 break;
@@ -446,7 +445,6 @@ fn cmp_prop(ir: *IR, fun: *Function) !bool {
         for (fun.bbs.ids()) |bbID| {
             if (!info.reachable[bbID]) {
                 // std.debug.print("removing unreachable block {d}\n", .{bbID});
-                // try remove_block_edges(fun, bbID);
                 _ = fun.bbs.remove(bbID);
                 changed = true;
                 break;
@@ -690,174 +688,9 @@ fn refers_to_reg(ref: Ref, reg: Reg) bool {
     };
 }
 
-fn remove_unreachable_blocks(alloc: Alloc, ir: *const IR, fun: *Function, reachable: []bool) !void {
-    const bbs = &fun.bbs;
-    const insts = &fun.insts;
-    _ = insts;
-
-    // for (bbs.items(), bbs.ids()) |bb, bbID| {
-    //     std.debug.print("BEFOR bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
-    //     std.debug.print("BEFOR bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
-    // }
-    save_dot_to_file(ir, "pre_remove_edges.dot") catch {};
-
-    utils.assert(@as(usize, @intCast(bbs.len)) == reachable.len, "mismatch in block count", .{});
-    // for (reachable, 0..) |r, i| {
-    //     const bbID = bbs.ids()[i];
-    //     std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), r });
-    // }
-
-    // removes the edges from blocks that are unreachable
-    for (bbs.ids()) |bbID| {
-        var is_reachable = reachable[bbID];
-        if (is_reachable) {
-            continue;
-        }
-        // std.debug.print("remove_unreachable: removing edges from block {s} with incomers {any} and outgoers {any}\n", .{
-        //     stringify_label(fun, bbID),
-        //     bbs.get(bbID).incomers.items,
-        //     bbs.get(bbID).outgoers,
-        // });
-        try remove_block_edges(fun, bbID);
-        const bb = bbs.get(bbID);
-        bb.incomers.clearAndFree();
-        bb.*.outgoers = [_]?BBID{ null, null };
-    }
-    // for (bbs.items(), bbs.ids()) |bb, bbID| {
-    //     std.debug.print("AFTER bb [{d}] {s} incomers: {any}\n", .{ bbID, bb.name, bb.incomers.items });
-    //     std.debug.print("AFTER bb [{d}] {s} outgoers: {any}\n", .{ bbID, bb.name, bb.outgoers });
-    //     std.debug.print("br = {any}\n", .{(insts.get((ptr_to_last(BBID, bb.insts.list.items) orelse unreachable).*)).*});
-    // }
-
-    save_dot_to_file(ir, "post_remove_edges.dot") catch {};
-
-    var ids = try alloc.alloc(BBID, reachable.len);
-    @memcpy(ids, bbs.ids());
-
-    for (ids) |bbID| {
-        var is_reachable = reachable[bbID];
-        if (is_reachable) {
-            continue;
-        }
-        // std.debug.print("i-{d} ids-{d} bbID-{d}\n", .{ id, bbs.ids.items[id], bbID });
-        // std.debug.print("i-{d} bbID-{d}\n", .{ id, bbID });
-
-        // if (id == 5) bbs.remove(bbID);
-        // std.debug.print("WATCH ME DELETE {d}\n", .{bbID});
-        // std.debug.print("[{d}] {s} - {any}\n", .{ bbID, stringify_label(fun, bbID), is_reachable });
-        _ = bbs.remove(bbID);
-    }
-
-    save_dot_to_file(ir, "post_remove_unreachable.dot") catch {};
-}
 fn printIncomersAndOutgoers(bb: *BasicBlock) void {
     std.debug.print("Block {s} Incomers: {any}\n", .{ bb.name, bb.incomers.items });
     std.debug.print("Block {s} Outgoers: {any}\n", .{ bb.name, bb.outgoers });
-}
-// given a block remove itself from its predecessors and successors, and re-link the predecessors to the successors
-// removing phi entries that reference to itself,
-fn remove_block_edges(fun: *Function, bbID: BBID) !void {
-    const bbs = &fun.bbs;
-    const insts = &fun.insts;
-
-    const bb = bbs.get(bbID);
-    // brute_force_remove_block_edges(fun, bbID);
-    // brute_force_remove_phi_entires_referencing_dead_bb(fun, bbID);
-
-    if (bb_num_outgoers(bb) == 2) {
-        // std.debug.print("remove_block_edges: removing bb {s} with 2 outgoers {any} and these incomers {any}\n", .{ bb.name, bb.outgoers, bb.incomers.items });
-        var self_ref: BBID = undefined;
-        if (try is_self_ref(fun, bbID, bb.outgoers[0].?)) {
-            // std.debug.print("self ref detected at 0 ={?d} in {s}\n", .{ bb.outgoers[0], bb.name });
-            self_ref = bb.outgoers[0].?;
-            // const outgoer = bbs.get(outgoerID);
-            // remove_bb_from_incomers(outgoer, bbID);
-            // remove_bb_from_outgoers(outgoer, bbID);
-        } else if (try is_self_ref(fun, bbID, bb.outgoers[1].?)) {
-            // std.debug.print("self ref detected at 1 ={?d} in {s}\n", .{ bb.outgoers[1], bb.name });
-            self_ref = bb.outgoers[1].?;
-        }
-        // brute_force_remove_block_edges(fun, bbID);
-        // brute_force_remove_phi_entires_referencing_dead_bb(fun, bbID);
-        utils.assert(bb.incomers.items.len == 1, "FUCK - HOW TO HANDLE bb {s} with 2 outgoers and not 1 incomer\n", .{bb.name});
-        const incomer = bb.incomers.items[0];
-        var incomerBB = bbs.get(incomer);
-        var incomerBRID = (ptr_to_last(InstID, incomerBB.insts.list.items) orelse unreachable).*;
-        var incomerBR = insts.get(incomerBRID);
-        for (bb.outgoers) |_outgoer| {
-            const outgoer = _outgoer.?;
-            var outgoerBB = bbs.get(outgoer);
-            // std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
-
-            if (outgoer == self_ref) {
-                // self_ref could be self (bbID) or some other bb ID that
-                // eventually loops around
-
-                // remove phis just in case self_ref != self
-                try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
-                // remove bb from incomers of outgoer (could be self)
-                remove_bb_from_incomers(outgoerBB, bbID);
-                // remove bb from outgoers of incomer (could be self)
-                remove_bb_from_outgoers(incomerBB, bbID);
-                remove_bb_from_outgoers(bb, self_ref);
-                const selfBRID = (ptr_to_last(InstID, bb.insts.list.items) orelse unreachable).*;
-                var selfBR = insts.get(selfBRID);
-                _ = replace_branches_to_with(selfBR, self_ref, bbID);
-            } else {
-                _ = replace_branches_to_with(incomerBR, bbID, outgoer);
-                replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
-                replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
-                remove_bb_from_outgoers(incomerBB, bbID);
-                remove_bb_from_outgoers(outgoerBB, bbID);
-                try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
-            }
-        }
-        return;
-    }
-    if (bb.incomers.items.len > 0) {
-        if (bbID != fun.exitBBID and bb_num_outgoers(bb) == 0) {
-            // std.debug.print("removing {d} from incomers of {s} {any}\n", .{ bbID, bb.name, bb.incomers.items });
-            for (bb.incomers.items) |incomerID| {
-                var incomerBB = bbs.get(incomerID);
-                remove_bb_from_outgoers(incomerBB, bbID);
-                remove_bb_from_incomers(bb, incomerID);
-            }
-            return;
-        }
-
-        utils.assert(bb_num_outgoers(bb) != 2, "FUCK - FELL THROUGH this case should be handled above\n", .{});
-        // printIncomersAndOutgoers(bb);
-        // std.debug.print("we only have one outgoer\n", .{});
-        const outgoer = if (bb.outgoers[0]) |out| out else if (bb.outgoers[1]) |out| out else unreachable;
-
-        var outgoerBB = bbs.get(outgoer);
-        // link parent to child
-        for (bb.incomers.items) |incomer| {
-            var incomerBB = bbs.get(incomer);
-            var incomerBRID = (ptr_to_last(InstID, incomerBB.insts.list.items) orelse unreachable).*;
-            var incomerBR = insts.get(incomerBRID);
-
-            if (try is_self_ref(fun, incomer, bbID)) {
-                remove_bb_from_outgoers(incomerBB, bbID);
-                continue;
-            }
-
-            // std.debug.print("incomer={d} op={s}\n", .{ incomer, @tagName(incomerBR.*.op) });
-
-            _ = replace_branches_to_with(incomerBR, bbID, outgoer);
-            // replace_bb_in_outgoers_with(incomerBB, bbID, outgoer);
-            replace_bb_in_incomers_with(outgoerBB, bbID, incomer);
-        }
-        try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
-    } else if (bb_num_outgoers(bb) < 2) {
-        try remove_phi_entires_in_children_of_dead_bb(fun, bb, bbID);
-        for (bb.outgoers) |maybe_outgoerID| {
-            if (maybe_outgoerID == null) continue;
-            const outgoerID = maybe_outgoerID.?;
-            const outgoer = bbs.get(outgoerID);
-            remove_bb_from_incomers(outgoer, bbID);
-        }
-    }
 }
 
 fn remove_bb_from_incomers(fromBB: *BasicBlock, toRemoveBBID: BBID) void {
@@ -1058,8 +891,8 @@ fn ptr_to_last(comptime T: type, elems: []T) ?*T {
 }
 
 fn empty_block_removal_pass(fun: *Function) !bool {
-    const bbs = &fun.bbs;
-    const insts = &fun.insts;
+    var bbs = &fun.bbs;
+    var insts = &fun.insts;
 
     var idsToRemove = std.ArrayList(BBID).init(fun.alloc);
     defer idsToRemove.deinit();
@@ -1067,7 +900,7 @@ fn empty_block_removal_pass(fun: *Function) !bool {
     var changed = false;
 
     for (bbs.ids()) |bbID| {
-        const bb = bbs.get(bbID);
+        var bb = bbs.get(bbID);
 
         // std.debug.print("trying to remove edges from block {s} with incomers {any} and outgoers {any}\n", .{
         //     stringify_label(fun, bbID),
@@ -1085,18 +918,19 @@ fn empty_block_removal_pass(fun: *Function) !bool {
         }
         // the following two continues are a hack to skip entry and exit blocks
         // because entries have no incomers, and exits have no outgoers
-        if (bb.incomers.items.len == 0) {
+        if (bb.incomers.items.len == 0 or bb.incomers.items.len != 1) {
             // std.debug.print("skipping removing edges from block {s} because no incomers\n", .{
             //     stringify_label(fun, bbID),
             // });
             continue;
         }
-        if (bb_num_outgoers(bb) == 0) {
+        if (bb_num_outgoers(bb) == 0 or bb_num_outgoers(bb) != 1) {
             // std.debug.print("skipping removing edges from block {s} because no outgoers\n", .{
             //     stringify_label(fun, bbID),
             // });
             continue;
         }
+
         if (any_phi_depends_on_bb(fun, bbID)) {
             continue;
         }
@@ -1107,12 +941,47 @@ fn empty_block_removal_pass(fun: *Function) !bool {
         //     stringify_label(fun, bbID),
         // });
         // NOTE: this use of undefined is only okay because we only have 1 outgoer
-        try remove_block_edges(fun, bbID);
+
+        var incomer = bb.incomers.items[0];
+        if (bb_num_outgoers(fun.bbs.get(incomer)) != 1) {
+            continue;
+        }
+
+        var outgoer = bb.outgoers[0] orelse bb.outgoers[1] orelse unreachable;
+        fun.bbs.get(incomer).outgoers[0] = outgoer;
+        fun.bbs.get(incomer).outgoers[1] = null;
+        fun.bbs.get(outgoer).incomers.deinit();
+        fun.bbs.get(outgoer).incomers = std.ArrayList(BBID).init(fun.alloc);
+        try fun.bbs.get(outgoer).incomers.append(incomer);
+
+        for (fun.bbs.get(incomer).insts.items()) |instID| {
+            var inst_ = fun.insts.get(instID);
+            if (inst_.op != .Jmp) continue;
+            var jmp = Inst.Jmp.get(inst_.*);
+            jmp.dest = outgoer;
+            inst_.* = jmp.toInst();
+            fun.insts.set(instID, inst_.*);
+        }
+
+        std.debug.print("removing {d} from incomers of {s}\n", .{ bbID, fun.bbs.get(outgoer).name });
+
         try idsToRemove.append(bbID);
         changed = true;
     }
+
+    // var changed2: bool = true;
+    // while (changed2) {
+    //     changed2 = false;
+    //     for (idsToRemove.items, 0..) |bbID, idx| {
+    //         bbs.remove(bbID);
+    //         _ = idsToRemove.orderedRemove(idx);
+    //         changed2 = true;
+    //         changed = true;
+    //         break;
+    //     }
+    // }
     for (idsToRemove.items) |bbID| {
-        bbs.remove(bbID);
+        std.debug.print("removing {d}\n", .{bbID});
     }
     return changed;
 }
