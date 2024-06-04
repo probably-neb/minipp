@@ -5,6 +5,30 @@ const str = []const u8;
 
 const LineIter = std.mem.SplitIterator(u8, .scalar);
 
+pub fn generate_function(alloc: Alloc, fun_name: str, llvm_ir: str) !str {
+    var buf = Buf.init(alloc);
+    var lines: LineIter = std.mem.splitScalar(u8, llvm_ir, '\n');
+
+    try buf.write("digraph CFG {\n");
+    try buf.write("  node [shape=rectangle];\n");
+    try buf.write("  labeljust=l;\n");
+    try buf.write("  labelloc=t;\n");
+    try buf.write("\n");
+
+    while (lines.next()) |line| {
+        if (extract_fn_name(line)) |fn_name| {
+            if (std.mem.eql(u8, fn_name, fun_name)) {
+                try gen_function(&buf, fn_name, &lines);
+            }
+            continue;
+        }
+    }
+
+    try buf.write("}\n");
+
+    return buf.get_contents();
+}
+
 pub fn generate(alloc: Alloc, llvm_ir: str) !str {
     var buf = Buf.init(alloc);
     var lines: LineIter = std.mem.splitScalar(u8, llvm_ir, '\n');

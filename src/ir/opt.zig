@@ -33,30 +33,37 @@ pub const Config = struct {
 
 pub fn optimize_program(ir: *IR, cfg: Config) !void {
     // const funcs = &ir.funcs.items.items;
+    var passNum: usize = 0;
     for (0..ir.funcs.items.items.len) |i| {
         var func = &ir.funcs.items.items[i];
-        try optimize_function(ir, func, cfg);
+        try optimize_function(ir, func, cfg, &passNum);
     }
 }
 
-pub fn optimize_function(ir: *IR, fun: *Function, cfg: Config) !void {
+pub fn optimize_function(ir: *IR, fun: *Function, cfg: Config, passNum: *usize) !void {
     var changed = true;
+    try save_dot_to_file_fun_pass(ir, "pre_opt", fun.name, passNum, true);
     while (changed) {
         changed = false;
         if (!cfg.no_sccp_like) {
             if (cfg.sccp_instead_of_cmp_prop) {
                 changed = changed or try sccp(ir, fun);
+                try save_dot_to_file_fun_pass(ir, "sccp", fun.name, passNum, false);
             } else {
                 changed = changed or try cmp_prop(ir, fun);
+                try save_dot_to_file_fun_pass(ir, "comp_sccp", fun.name, passNum, false);
             }
         }
         if (!cfg.no_empty_removal) {
             changed = changed or try empty_block_removal_pass(fun);
+            try save_dot_to_file_fun_pass(ir, "empty_block", fun.name, passNum, false);
         }
         if (!cfg.no_dead_code_elim) {
             changed = changed or try DeadCode.deadCodeElim(ir, fun);
+            try save_dot_to_file_fun_pass(ir, "dead_code", fun.name, passNum, false);
         }
     }
+    try save_dot_to_file_fun_pass(ir, "post_opt", fun.name, passNum, true);
 }
 
 fn sccp(ir: *IR, fun: *Function) !bool {
@@ -1034,6 +1041,52 @@ fn save_dot_to_file(ir: *const IR, file: []const u8) !void {
     defer arena.deinit();
     var alloc = arena.allocator();
     try std.fs.cwd().writeFile(file, try dot.generate(alloc, try ir.stringify(alloc)));
+}
+
+fn save_dot_to_file_fun_pass(ir: *const IR, file: []const u8, funName: IR.StrID, passNum: *usize, functionOrFile: bool) !void {
+    const dot = @import("../dot.zig");
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    var alloc = arena.allocator();
+    var fileName = std.ArrayList(u8).init(std.heap.page_allocator);
+    var dirPath = "./dot_generated/";
+    for (dirPath) |c| {
+        _ = try fileName.append(c);
+    }
+    var passNumTmp = passNum.*;
+    passNum.* = passNumTmp + 1;
+    var passNumToStrArr = std.ArrayList(u8).init(std.heap.page_allocator);
+    while (passNumTmp != 0) {
+        const digit = @mod(passNumTmp, 10);
+        passNumTmp = @divTrunc(passNumTmp, 10);
+        _ = try passNumToStrArr.append(@intCast(digit + '0'));
+    }
+    // reverse the string
+    var i = passNumToStrArr.items.len;
+    while (i != 0) {
+        i -= 1;
+        _ = try fileName.append(passNumToStrArr.items[i]);
+    }
+
+    for (file) |c| {
+        _ = try fileName.append(c);
+    }
+    _ = try fileName.append('-');
+    var funNameStr = ir.getIdent(funName);
+    for (funNameStr) |c| {
+        _ = try fileName.append(c);
+    }
+    _ = try fileName.append('-');
+    _ = try fileName.append('.');
+    _ = try fileName.append('d');
+    _ = try fileName.append('o');
+    _ = try fileName.append('t');
+
+    if (functionOrFile) {
+        try std.fs.cwd().writeFile(try fileName.toOwnedSlice(), try dot.generate(alloc, try ir.stringify(alloc)));
+    } else {
+        try std.fs.cwd().writeFile(try fileName.toOwnedSlice(), try dot.generate_function(alloc, funNameStr, try ir.stringify(alloc)));
+    }
 }
 
 // NOTE: this is pub so it can be imported from files implementing a specific pass so they can use the mutations
