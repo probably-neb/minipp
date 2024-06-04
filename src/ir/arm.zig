@@ -1161,9 +1161,9 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
     var spillIndex = std.AutoHashMap(usize, ?u32).init(ir.alloc);
     var spillUnamedRegs = std.AutoHashMap(usize, ?u32).init(ir.alloc);
     var unnamedMap = std.AutoHashMap(Reg.ID, ?bool).init(ir.alloc);
-    var counter: usize = 13;
+    var counter: usize = 14;
     for (armFunc.insts.items) |instID| {
-        if (counter == 16) counter = 17;
+        if (counter == 16) counter = 18;
         var inst = &arm.program.insts.items[instID];
         // if instToReg does not contain the inst.rd.id, add it
         if (inst.rd.irID == 0xDEADBEEF) {
@@ -1699,18 +1699,22 @@ pub fn gen_inst(
                 try armFunc.ensureBothReg(ir, armBlock, &immOpt, &gepIdx);
                 gepIdx.reg.inst = arm.program.insts.items.len;
                 // do the mul
-                var mulInst = Inst.mul(gepIdx.getReg(), gepIdx.getReg(), immOpt.getReg(), false, arm.program.insts.items.len);
+                // add a new reg for the result of the index * 8
+                var mulRD = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
+                try arm.program.addReg(mulRD);
+                var mulInst = Inst.mul(mulRD, gepIdx.getReg(), immOpt.getReg(), false, arm.program.insts.items.len);
                 try armFunc.addInst(mulInst, armBlock);
+                var mulOp = Operand.asOpReg(mulRD);
 
                 // add the ptr val and the idx
                 var gepRD = try arm.program.getOpfromIR(func, gepIR.res, arm.program.insts.items.len);
                 try armFunc.ensureBothReg(ir, armBlock, &getPtrVal, &gepRD);
-                try armFunc.ensureBothReg(ir, armBlock, &gepRD, &gepIdx);
+                try armFunc.ensureBothReg(ir, armBlock, &gepRD, &mulOp);
                 if (gepRD.reg.name == IR.InternPool.NULL) {
                     gepRD.reg.name = ir.internIdent("gepRD");
                 }
                 gepRD.reg.inst = arm.program.insts.items.len;
-                var addInst = Inst.add(gepRD.getReg(), getPtrVal.getReg(), gepIdx, false, arm.program.insts.items.len);
+                var addInst = Inst.add(gepRD.getReg(), getPtrVal.getReg(), mulOp, false, arm.program.insts.items.len);
                 try armFunc.addInst(addInst, armBlock);
             }
         },
@@ -1889,9 +1893,20 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 //     std.debug.print("{s}\n", .{str2});
 // }
 
+// test "arm.fibbonachi_to_int_array" {
+//     errdefer log.print();
+//     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int_array a; int i; i=0; a = new int_array[20];  a[0] = 0; print a[0] endl; a[1] = 1; a[2] = 2; print a[2] endl; print a[3] endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     var ir = try testMe(in);
+//     var arm = try gen_program(&ir);
+//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+//     std.debug.print("{s}\n", .{str2});
+// }
+
 test "arm.fibbonachi_to_int_array" {
     errdefer log.print();
-    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int_array a; int i; i=0; a = new int_array[20];  while(i<20){ print i endl; i = i+1; } print a[3] endl; }";
+    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int_array a; int i; i=0; a = new int_array[20];  while(i<20){a[i] = fib(i); print a[i] endl; i= i +1;} print a[3] endl; }";
     var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
     var ir = try testMe(in);

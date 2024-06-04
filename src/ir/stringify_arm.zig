@@ -231,7 +231,7 @@ pub fn stringify(arm: *const Arm, ir: *const IR, alloc: Alloc) ![]const u8 {
         try buf.write(INDENT);
         try buf.write("stp     x10, x9, [sp, #-16]!\n");
         try buf.write(INDENT);
-        try buf.write("mov x16, sp\n");
+        try buf.write("mov x13, sp\n");
         try buf.write(INDENT);
         // strinify basic blocks
         for (fun.blocks.items) |armBB| {
@@ -478,7 +478,7 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             try buf.fmt("{s}", .{ir.getIdent(@truncate(inst.op1.imm))});
         },
         .RET => {
-            try buf.write("mov sp, x16\n");
+            try buf.write("mov sp, x13\n");
             try buf.write(INDENT);
             try buf.write("ldp     x10, x9, [sp], #16\n");
             try buf.write(INDENT);
