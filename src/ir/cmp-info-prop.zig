@@ -640,16 +640,16 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
                         .And => l & r,
                         .Or => l | r,
                         .Xor => l ^ r,
-                        .Div => if (r != 0) @divExact(l, r) else {
+                        .Div => if (r != 0) @divTrunc(l, r) else {
                             utils.todo("Mistew Beawd... how do i evawuwate a divison by zewo...", .{});
                         },
                     };
                     // std.debug.print("======= EVAL =======\n{d} {s} {d} = {d}\n", .{ l, @tagName(op), r, res });
-                    utils.assert(
-                        lhs_val.kind == rhs_val.kind,
-                        "lhs_val.kind == rhs_val.kind\n {s} != {s}\n",
-                        .{ @tagName(lhs_val.kind), @tagName(rhs_val.kind) },
-                    );
+                    // utils.assert(
+                    //     lhs_val.kind == rhs_val.kind,
+                    //     "lhs_val.kind == rhs_val.kind\n {s} != {s}\n",
+                    //     .{ @tagName(lhs_val.kind), @tagName(rhs_val.kind) },
+                    // );
                     return Value.const_of(res, lhs_val.kind);
                 }
             }
@@ -736,7 +736,7 @@ fn eval(ir: *const IR, inst: Inst, values: []const Value) !?Value {
             break :misc value;
         },
         // FIXME: should probably be unknown
-        .Alloc, .Load => Value.undef(),
+        .Alloc, .Load => Value.unknown(),
         // NOTE: could do gep ourselves but it only matters
         // for making dylans life easier with lowering
         .Gep => Value.unknown(),
