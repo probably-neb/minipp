@@ -206,6 +206,13 @@ pub fn stringify(arm: *const Arm, ir: *const IR, alloc: Alloc) ![]const u8 {
         try buf.write(INDENT);
         try buf.write("add     x29, sp, #16           \n");
         try buf.write(INDENT);
+        // add the spill area to the stack pointer
+        // calculate the size of the spill area
+        var spilledMin = (1 + fun.spilledNum) * 16;
+        // increase the pc by the size of the spill area
+        try buf.fmt("sub sp, sp, {d}\n", .{spilledMin});
+        // we are good to go
+
         try buf.write("stp     x27, x28, [sp, #-16]!\n");
         try buf.write(INDENT);
         try buf.write("stp     x25, x26, [sp, #-16]!\n");
@@ -231,7 +238,7 @@ pub fn stringify(arm: *const Arm, ir: *const IR, alloc: Alloc) ![]const u8 {
             var rp = Rope.str_str_num(armBB.name, "_", armBB.id);
             buf.fmt("{s}_{s}:\n", .{ ir.getIdent(fun.name), rp }) catch unreachable;
             for (armBB.insts.items) |inst| {
-                try stringify_inst(arm.program.insts.items[inst], &buf, ir, fun);
+                try stringify_spill_inst(arm.program.insts.items[inst], &buf, ir, fun);
             }
         }
     }
@@ -265,6 +272,123 @@ pub fn stringify_operand_comment(buf: *Buf, op: Arm.Operand) !void {
     }
     try buf.write(")");
 }
+
+pub fn stringify_spill_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Function) !void {
+    switch (inst.oper) {
+        .ADD, .SUB, .MUL, .DIV, .AND, .ORR, .EOR, .ASR, .LSL => {
+            // load and load 2, then store
+            if (inst.op1.reg.spillIndex != null) {
+                var inst1Index = inst.op1.reg.spillIndex.?;
+                var spillOffset = 16 + inst1Index * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("LDR x10, [x12, #0]\n");
+            }
+            if (inst.op2.reg.spillIndex != null) {
+                var inst2Index = inst.op2.reg.spillIndex.?;
+                var spillOffset = 16 + inst2Index * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("LDR x11, [x12, #0]\n");
+            }
+
+            try stringify_inst(inst, buf, ir, fun);
+            if (inst.rd.spillIndex != null) {
+                var rdIndex = inst.rd.spillIndex.?;
+                var spillOffset = 16 + rdIndex * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("STR x9, [x12, #0]\n");
+            }
+        },
+        .NEG, .MOV, .LDR => {
+            // load and store
+            if (inst.op1.reg.spillIndex != null) {
+                var inst1Index = inst.op1.reg.spillIndex.?;
+                var spillOffset = 16 + inst1Index * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("LDR x10, [x12, #0]\n");
+            }
+            try stringify_inst(inst, buf, ir, fun);
+            // store the result
+            if (inst.rd.spillIndex != null) {
+                var rdIndex = inst.rd.spillIndex.?;
+                var spillOffset = 16 + rdIndex * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("STR x9, [x12, #0]\n");
+            }
+        },
+        .CMP => {
+            // load and load2
+            if (inst.rd.spillIndex != null) {
+                var inst1Index = inst.rd.spillIndex.?;
+                var spillOffset = 16 + inst1Index * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("LDR x9, [x12, #0]\n");
+            }
+            if (inst.op1.reg.spillIndex != null) {
+                var inst2Index = inst.op1.reg.spillIndex.?;
+                var spillOffset = 16 + inst2Index * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("LDR x10, [x12, #0]\n");
+            }
+            try stringify_inst(inst, buf, ir, fun);
+        },
+        .STR => {
+            // load and load2
+            if (inst.rd.spillIndex != null) {
+                var inst1Index = inst.rd.spillIndex.?;
+                var spillOffset = 16 + inst1Index * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("LDR x10, [x12, #0]\n");
+            }
+            if (inst.op1.reg.spillIndex != null) {
+                var inst2Index = inst.op1.reg.spillIndex.?;
+                var spillOffset = 16 + inst2Index * 16;
+                try buf.write(INDENT);
+                try buf.write("ADD x12, x29, #-");
+                try buf.fmt("{d}", .{spillOffset});
+                try buf.write("\n");
+                try buf.write(INDENT);
+                try buf.write("LDR x11, [x12, #0]\n");
+            }
+            try stringify_inst(inst, buf, ir, fun);
+        },
+        else => {
+            try stringify_inst(inst, buf, ir, fun);
+        },
+    }
+}
+
 pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Function) !void {
     try buf.write(INDENT);
     try stringify_operation(inst.oper, buf);
@@ -272,11 +396,11 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
     // std.debug.print("inst: {s}\n", .{buf.str.items});
     switch (inst.oper) {
         .ADD, .SUB, .MUL, .DIV, .AND, .ORR, .EOR, .ASR, .LSL => {
-            try stringify_register(inst.rd, ir, buf);
+            try stringify_register(inst.rd, ir, buf, true, false);
             try buf.write(", ");
-            try stringify_operand(inst.op1, ir, buf, fun);
+            try stringify_operand(inst.op1, ir, buf, fun, false, false);
             try buf.write(", ");
-            try stringify_operand(inst.op2, ir, buf, fun);
+            try stringify_operand(inst.op2, ir, buf, fun, false, true);
             // try buf.write("; ");
             // try stringify_reg_comment(buf, inst.rd);
             // try buf.write(" = ");
@@ -285,18 +409,18 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             // try stringify_operand_comment(buf, inst.op2);
         },
         .NEG, .CMP => {
-            try stringify_register(inst.rd, ir, buf);
+            try stringify_register(inst.rd, ir, buf, true, false);
             try buf.write(", ");
-            try stringify_operand(inst.op1, ir, buf, fun);
+            try stringify_operand(inst.op1, ir, buf, fun, false, false);
             // try buf.write("; ");
             // try stringify_reg_comment(buf, inst.rd);
             // try buf.write("   ");
             // try stringify_operand_comment(buf, inst.op1);
         },
         .MOV => {
-            try stringify_register(inst.rd, ir, buf);
+            try stringify_register(inst.rd, ir, buf, true, false);
             try buf.write(", ");
-            try stringify_operand(inst.op1, ir, buf, fun);
+            try stringify_operand(inst.op1, ir, buf, fun, false, false);
             // try buf.write("; ");
             // try stringify_reg_comment(buf, inst.rd);
             // try buf.write("   ");
@@ -323,28 +447,28 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
                 else => unreachable,
             }
             try buf.write(" ");
-            try stringify_operand(inst.op1, ir, buf, fun);
+            try stringify_operand(inst.op1, ir, buf, fun, false, false);
         },
         .B => {
-            try stringify_operand(inst.op1, ir, buf, fun);
+            try stringify_operand(inst.op1, ir, buf, fun, false, false);
         },
         .BL => {
             // print out the function name, this is
             try buf.fmt("{s}", .{ir.getIdent(@truncate(inst.op1.label))});
         },
         .LDR => {
-            try stringify_register(inst.rd, ir, buf);
+            try stringify_register(inst.rd, ir, buf, true, false);
             try buf.write(", ");
-            try stringify_operand(inst.op1, ir, buf, fun);
+            try stringify_operand(inst.op1, ir, buf, fun, false, false);
             // try buf.write("; ");
             // try stringify_reg_comment(buf, inst.rd);
             // try buf.write("   ");
             // try stringify_operand_comment(buf, inst.op1);
         },
         .STR => {
-            try stringify_register(inst.rd, ir, buf);
+            try stringify_register(inst.rd, ir, buf, false, false);
             try buf.write(", ");
-            try stringify_operand(inst.op1, ir, buf, fun);
+            try stringify_operand(inst.op1, ir, buf, fun, false, true);
             try buf.write("; ");
             // try stringify_reg_comment(buf, inst.rd);
             // try buf.write("   ");
@@ -373,6 +497,10 @@ pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Functi
             try buf.write("ldp     x25, x26, [sp], #16\n");
             try buf.write(INDENT);
             try buf.write("ldp     x27, x28, [sp], #16\n");
+            try buf.write(INDENT);
+            // now we can undo the spill area
+            var spilledMin = (1 + fun.spilledNum) * 16;
+            try buf.fmt("add sp, sp, {d}\n", .{spilledMin});
             try buf.write(INDENT);
             try buf.write("ldp     x29, x30, [sp, #16]     \n");
             try buf.write(INDENT);
@@ -411,53 +539,66 @@ pub fn stringify_operation(operation: Arm.Operation, buf: *Buf) !void {
     }
 }
 
-pub fn stringify_register(reg: Arm.Reg, ir: *const IR, buf: *Buf) !void {
-    switch (reg.selection) {
-        .none => {
-            if (reg.name == IR.InternPool.NULL) {
-                try buf.fmt("R_{any}", .{reg.irID});
+pub fn stringify_register(reg: Arm.Reg, ir: *const IR, buf: *Buf, assignment: bool, alt: bool) !void {
+    if (reg.spillIndex == null) {
+        switch (reg.selection) {
+            .none => {
+                if (reg.name == IR.InternPool.NULL) {
+                    try buf.fmt("R_{any}", .{reg.irID});
+                } else {
+                    try buf.fmt("R{s}", .{ir.getIdent(reg.name)});
+                }
+            },
+            .X0 => try buf.write("X0"),
+            .X1 => try buf.write("X1"),
+            .X2 => try buf.write("X2"),
+            .X3 => try buf.write("X3"),
+            .X4 => try buf.write("X4"),
+            .X5 => try buf.write("X5"),
+            .X6 => try buf.write("X6"),
+            .X7 => try buf.write("X7"),
+            .X8 => try buf.write("X8"),
+            .X9 => try buf.write("X9"),
+            .X10 => try buf.write("X10"),
+            .X11 => try buf.write("X11"),
+            .X12 => try buf.write("X12"),
+            .X13 => try buf.write("X13"),
+            .X14 => try buf.write("X14"),
+            .X15 => try buf.write("X15"),
+            .X16 => try buf.write("X16"),
+            .X17 => try buf.write("X17"),
+            .X18 => try buf.write("X18"),
+            .X19 => try buf.write("X19"),
+            .X20 => try buf.write("X20"),
+            .X21 => try buf.write("X21"),
+            .X22 => try buf.write("X22"),
+            .X23 => try buf.write("X23"),
+            .X24 => try buf.write("X24"),
+            .X25 => try buf.write("X25"),
+            .X26 => try buf.write("X26"),
+            .X27 => try buf.write("X27"),
+            .X28 => try buf.write("X28"),
+            .X29 => try buf.write("X29"),
+            .X30 => try buf.write("X30"),
+            .SP => try buf.write("SP"),
+        }
+    } else {
+        if (assignment) {
+            try buf.write("x9");
+        } else {
+            if (alt) {
+                try buf.write("x11");
             } else {
-                try buf.fmt("R{s}", .{ir.getIdent(reg.name)});
+                try buf.write("x10");
             }
-        },
-        .X0 => try buf.write("X0"),
-        .X1 => try buf.write("X1"),
-        .X2 => try buf.write("X2"),
-        .X3 => try buf.write("X3"),
-        .X4 => try buf.write("X4"),
-        .X5 => try buf.write("X5"),
-        .X6 => try buf.write("X6"),
-        .X7 => try buf.write("X7"),
-        .X8 => try buf.write("X8"),
-        .X9 => try buf.write("X9"),
-        .X10 => try buf.write("X10"),
-        .X11 => try buf.write("X11"),
-        .X12 => try buf.write("X12"),
-        .X13 => try buf.write("X13"),
-        .X14 => try buf.write("X14"),
-        .X15 => try buf.write("X15"),
-        .X16 => try buf.write("X16"),
-        .X17 => try buf.write("X17"),
-        .X18 => try buf.write("X18"),
-        .X19 => try buf.write("X19"),
-        .X20 => try buf.write("X20"),
-        .X21 => try buf.write("X21"),
-        .X22 => try buf.write("X22"),
-        .X23 => try buf.write("X23"),
-        .X24 => try buf.write("X24"),
-        .X25 => try buf.write("X25"),
-        .X26 => try buf.write("X26"),
-        .X27 => try buf.write("X27"),
-        .X28 => try buf.write("X28"),
-        .X29 => try buf.write("X29"),
-        .X30 => try buf.write("X30"),
+        }
     }
 }
 
-pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *Arm.Function) !void {
+pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *Arm.Function, assignment: bool, alt: bool) !void {
     switch (operand.kind) {
         .Reg => {
-            try stringify_register(operand.reg, ir, buf);
+            try stringify_register(operand.reg, ir, buf, assignment, alt);
         },
         .Imm => {
             try buf.write("#");
@@ -465,7 +606,7 @@ pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *A
         },
         .MemReg => {
             try buf.write("[");
-            try stringify_register(operand.reg, ir, buf);
+            try stringify_register(operand.reg, ir, buf, assignment, alt);
             try buf.write("]");
         },
         .MemImm => {
@@ -475,13 +616,13 @@ pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *A
         },
         .MemPostInc => {
             try buf.write("[");
-            try stringify_register(operand.reg, ir, buf);
+            try stringify_register(operand.reg, ir, buf, assignment, alt);
             try buf.write("],");
             try buf.fmt("{d}", .{ir.getIdent(operand.imm)});
         },
         .MemPreInc => {
             try buf.write("[");
-            try stringify_register(operand.reg, ir, buf);
+            try stringify_register(operand.reg, ir, buf, assignment, alt);
             try buf.fmt(", {s}", .{ir.getIdent(operand.imm)});
             try buf.write("]!");
         },

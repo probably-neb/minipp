@@ -65,6 +65,7 @@ pub const SelectedReg = enum {
     X28,
     X29,
     X30,
+    SP,
     none,
     pub fn fromInt(n: usize) SelectedReg {
         switch (n) {
@@ -109,6 +110,7 @@ pub const Reg = struct {
     name: IR.StrID, // the name of the register
     // kind: RegKind, this could be useed for vector type beat
     inst: ?Inst.ID, // the ID of the instruction that defines this register
+    spillIndex: ?u32 = null, // the index of the register in the stack frame
     irID: IR.Register.ID,
     selection: SelectedReg = .none,
     pub const ID = usize;
@@ -686,6 +688,7 @@ pub const Function = struct {
     blocks: std.ArrayList(BasicBlock),
     insts: std.ArrayList(Inst.ID),
     phiSave: std.ArrayList(PhiSave),
+    spilledNum: u32,
     id: ID,
     program: *Program,
     params: std.ArrayList(Reg),
@@ -698,15 +701,18 @@ pub const Function = struct {
             .insts = std.ArrayList(Inst.ID).init(program.alloc),
             .params = std.ArrayList(Reg).init(program.alloc),
             .phiSave = std.ArrayList(PhiSave).init(program.alloc),
+            .spilledNum = 0,
             .id = id,
             .program = program,
         };
     }
 
-    pub fn addBlockBetween(self: *Function, src: *BasicBlock, dest: *BasicBlock) !*BasicBlock {
+    pub fn addBlockBetween(self: *Function, arm: *Arm, src: *BasicBlock, dest: *BasicBlock) !*BasicBlock {
         var bb_ = BasicBlock.init("tweener", self.blocks.items.len, self.program.alloc);
         try self.blocks.append(bb_);
         var bb = &self.blocks.items[bb_.id];
+        var srcIRID = arm.armBBtoIRBB.get(src.id).?;
+        try arm.armBBtoIRBB.put(bb.id, srcIRID);
         // go through te dest's incomers and replace the src with the new block
         for (dest.incomers.items, 0..) |incomerBlock, ibIDX| {
             if (incomerBlock.id == src.id) {
@@ -1056,6 +1062,7 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
             var found: bool = false;
             var incomer: *BasicBlock = aBPhi;
             for (aBPhi.incomers.items) |incomer_| {
+                // std.debug.print("Checking if incomer {any} is equal to {any}\n", .{ irBB, incomer_ });
                 if (irBB == arm.armBBtoIRBB.get(incomer_.id).?) {
                     found = true;
                     incomer = incomer_;
@@ -1069,7 +1076,7 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
             // check if it is self referential
             if (try aBPhi.isIncomerSelfRef(phiSave.armFunc, incomer)) {
                 // add a block between them
-                incomer = try phiSave.armFunc.addBlockBetween(incomer, aBPhi);
+                incomer = try phiSave.armFunc.addBlockBetween(arm, incomer, aBPhi);
             }
 
             // create a new name for the incoming value
@@ -1151,20 +1158,37 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
     var instToReg = std.AutoHashMap(IR.Function.InstID, Reg.ID).init(ir.alloc);
     var instToSelection = std.AutoHashMap(IR.Function.InstID, SelectedReg).init(ir.alloc);
     var unnamedRegs = std.AutoHashMap(IR.StrID, SelectedReg).init(ir.alloc);
-    var counter: usize = 9;
+    var spillIndex = std.AutoHashMap(usize, ?u32).init(ir.alloc);
+    var spillUnamedRegs = std.AutoHashMap(usize, ?u32).init(ir.alloc);
+    var unnamedMap = std.AutoHashMap(Reg.ID, ?bool).init(ir.alloc);
+    var counter: usize = 13;
     for (armFunc.insts.items) |instID| {
         if (counter == 16) counter = 17;
         var inst = &arm.program.insts.items[instID];
         // if instToReg does not contain the inst.rd.id, add it
         if (inst.rd.irID == 0xDEADBEEF) {
-            if (!unnamedRegs.contains(inst.rd.name)) {
-                try unnamedRegs.put(inst.rd.name, SelectedReg.fromInt(counter));
-                counter += 1;
+            if (counter <= 27) {
+                try spillUnamedRegs.put(inst.rd.name, null);
+                if (!unnamedRegs.contains(inst.rd.name)) {
+                    try unnamedRegs.put(inst.rd.name, SelectedReg.fromInt(counter));
+                    counter += 1;
+                }
+            } else {
+                std.debug.print("Spilling registername {any} with val {any}\n", .{ inst.rd.irID, inst.rd.name });
+                try spillUnamedRegs.put(inst.rd.name, armFunc.spilledNum);
+                armFunc.spilledNum += 1;
             }
         } else if (!instToReg.contains(inst.rd.irID)) {
-            try instToReg.put(inst.rd.irID, inst.rd.id);
-            try instToSelection.put(inst.rd.irID, SelectedReg.fromInt(counter));
-            counter += 1;
+            if (counter <= 27) {
+                try spillIndex.put(inst.rd.irID, null);
+                try instToReg.put(inst.rd.irID, inst.rd.id);
+                try instToSelection.put(inst.rd.irID, SelectedReg.fromInt(counter));
+                counter += 1;
+            } else {
+                std.debug.print("Spilling register {any} with val {any}\n", .{ inst.rd.irID, inst.rd.name });
+                try spillIndex.put(inst.rd.irID, armFunc.spilledNum);
+                armFunc.spilledNum += 1;
+            }
         }
     }
 
@@ -1173,18 +1197,53 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
         var inst = &arm.program.insts.items[instID];
         if (inst.rd.irID == 0xDEADBEEF and inst.rd.selection == .none) {
             inst.rd.selection = unnamedRegs.get(inst.rd.name) orelse .none;
+            try unnamedMap.put(inst.rd.id, null);
         } else if (inst.rd.selection == .none) {
             inst.rd.selection = instToSelection.get(inst.rd.irID) orelse .none;
         }
+
         if (inst.op1.reg.irID == 0xDEADBEEF and inst.op1.reg.selection == .none) {
             inst.op1.reg.selection = unnamedRegs.get(inst.op1.reg.name) orelse .none;
+            try unnamedMap.put(inst.op1.reg.id, null);
         } else if (inst.op1.reg.selection == .none) {
             inst.op1.reg.selection = instToSelection.get(inst.op1.reg.irID) orelse .none;
         }
+
         if (inst.op2.reg.irID == 0xDEADBEEF and inst.op2.reg.selection == .none) {
+            try unnamedMap.put(inst.op2.reg.id, null);
             inst.op2.reg.selection = unnamedRegs.get(inst.op2.reg.name) orelse .none;
         } else if (inst.op2.reg.selection == .none) {
             inst.op2.reg.selection = instToSelection.get(inst.op2.reg.irID) orelse .none;
+        }
+        inst.rd.spillIndex = null;
+        inst.op2.reg.spillIndex = null;
+        inst.op1.reg.spillIndex = null;
+    }
+
+    // go through and assign spillage
+    for (armFunc.insts.items) |instID| {
+        var inst = &arm.program.insts.items[instID];
+        // check if its in the unnamedMap
+        if (inst.rd.selection == .none) {
+            if (unnamedMap.contains(inst.rd.id)) {
+                inst.rd.spillIndex = spillUnamedRegs.get(inst.rd.name) orelse null;
+            } else {
+                inst.rd.spillIndex = spillIndex.get(inst.rd.irID) orelse null;
+            }
+        }
+        if (inst.op1.reg.selection == .none) {
+            if (unnamedMap.contains(inst.op1.reg.id)) {
+                inst.op1.reg.spillIndex = spillUnamedRegs.get(inst.op1.reg.name) orelse null;
+            } else {
+                inst.op1.reg.spillIndex = spillIndex.get(inst.op1.reg.irID) orelse null;
+            }
+        }
+        if (inst.op2.reg.selection == .none) {
+            if (unnamedMap.contains(inst.op2.reg.id)) {
+                inst.op2.reg.spillIndex = spillUnamedRegs.get(inst.op2.reg.name) orelse null;
+            } else {
+                inst.op2.reg.spillIndex = spillIndex.get(inst.op2.reg.irID) orelse null;
+            }
         }
     }
 
@@ -1451,6 +1510,9 @@ pub fn gen_inst(
             const loadIR = IR.Inst.Load.get(irInst);
             var loadRD = try arm.program.getOpfromIR(func, loadIR.res, arm.program.insts.items.len);
             var loadAddr = try arm.program.getOpfromIR(func, loadIR.ptr, null);
+            if (loadAddr.kind == OperandKind.Reg) {
+                loadAddr.kind = OperandKind.MemReg;
+            }
             var loadInst = Inst.ldr(loadRD.getReg(), loadAddr, true, arm.program.insts.items.len);
             try armFunc.addInst(loadInst, armBlock);
 
@@ -1484,6 +1546,9 @@ pub fn gen_inst(
                 else => {
                     var storeRT = try arm.program.getOpfromIR(func, storeIR.from, null);
                     var storeAddr = try arm.program.getOpfromIR(func, storeIR.to, null);
+                    if (storeAddr.kind == OperandKind.Reg) {
+                        storeAddr.kind = OperandKind.MemReg;
+                    }
                     var storeInst = Inst.str(storeRT.getReg(), storeAddr, true, arm.program.insts.items.len); //lololol always be signed
                     try armFunc.addInst(storeInst, armBlock);
                 },
@@ -1649,6 +1714,54 @@ pub fn gen_inst(
                 try armFunc.addInst(addInst, armBlock);
             }
         },
+        .Bitcast => {
+            const miscIR = IR.Inst.Misc.get(irInst);
+            var bitcastRD = try arm.program.getOpfromIR(func, miscIR.res, arm.program.insts.items.len);
+            var bitcastOp = try arm.program.getOpfromIR(func, miscIR.from, null);
+            bitcastRD.reg.inst = arm.program.insts.items.len;
+            var movInst = Inst.mov(bitcastRD.getReg(), bitcastOp, arm.program.insts.items.len);
+            try armFunc.addInst(movInst, armBlock);
+        },
+        .Alloc => {
+            const allocIR = IR.Inst.Alloc.get(irInst);
+            var printThisLolStrStart = "    sub sp, sp, #";
+            var length: usize = switch (allocIR.ty) {
+                .arr => blk: {
+                    var arrIRLen = allocIR.ty.arr.len;
+                    arrIRLen *= 8;
+                    // round to nearest 16
+                    var rem = arrIRLen % 16;
+                    arrIRLen += switch (rem) {
+                        0 => 0,
+                        else => arrIRLen + 8,
+                    };
+                    break :blk arrIRLen;
+                },
+                else => 16,
+            };
+            var resultString = std.ArrayList(u8).init(func.alloc);
+            for (printThisLolStrStart) |c| {
+                try resultString.append(c);
+            }
+            var tmpStr = std.ArrayList(u8).init(func.alloc);
+            var tmp = length;
+            while (tmp != 0) {
+                try tmpStr.insert(0, @intCast((tmp % 10) + 48));
+                tmp /= 10;
+            }
+            for (tmpStr.items) |c| {
+                try resultString.append(c);
+            }
+            try resultString.append('\n');
+            var strID = ir.internIdent(try resultString.toOwnedSlice());
+            var strInst = Inst.print_this_lol(strID, arm.program.insts.items.len);
+            try armFunc.addInst(strInst, armBlock);
+            var allocRD = try arm.program.getOpfromIR(func, allocIR.res, arm.program.insts.items.len);
+            // create mov from sp to the res
+            var sp = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = null, .irID = 0xDEADBEEF, .selection = SelectedReg.SP };
+            var movInst = Inst.mov(allocRD.getReg(), Operand.asOpReg(sp), arm.program.insts.items.len);
+            try armFunc.addInst(movInst, armBlock);
+        },
         else => {
             std.debug.print("The inst was {s}\n", .{@tagName(irInst.op)});
             return res or false;
@@ -1765,9 +1878,20 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
     return try ir.stringifyWithHeader(alloc);
 }
 
-test "arm.fibonacci" {
+// test "arm.fibonacci" {
+//     errdefer log.print();
+//     const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     var ir = try testMe(in);
+//     var arm = try gen_program(&ir);
+//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+//     std.debug.print("{s}\n", .{str2});
+// }
+
+test "arm.fibbonachi_to_int_array" {
     errdefer log.print();
-    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int a; a = fib(20); print a endl; }";
+    const in = "fun fib(int n) int { if(n <= 1) { return n;} return fib(n-1) + fib(n-2);} fun main() void { int_array a; int i; i=0; a = new int_array[20];  while(i<20){ print i endl; i = i+1; } print a[3] endl; }";
     var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
     var ir = try testMe(in);
