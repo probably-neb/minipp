@@ -989,6 +989,7 @@ fn empty_block_removal_pass(fun: *Function) !bool {
     // }
     for (idsToRemove.items) |bbID| {
         std.debug.print("removing {d}\n", .{bbID});
+        fun.bbs.remove(bbID);
     }
     return changed;
 }
@@ -1128,7 +1129,7 @@ pub fn expectResultsInIR(input: []const u8, expected: anytype, comptime fun_pass
                     _ = try DeadCode.deadCodeElim(&ir, fun);
                 },
                 .empty_bb => {
-                    try empty_block_removal_pass(fun);
+                    _ = try empty_block_removal_pass(fun);
                     try save_dot_to_file(&ir, "empty.dot");
                 },
                 else => {
