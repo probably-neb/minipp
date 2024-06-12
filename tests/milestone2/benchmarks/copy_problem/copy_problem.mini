@@ -1,0 +1,20 @@
+fun main() int
+{
+   int end;
+   int y;
+   int i;
+
+   end = read;
+
+   i = 1;
+   y = 0;
+   while(i < end)
+   {
+     y = i;
+     i = i + 1;
+   }
+
+   print y endl;
+
+   return 0;
+}

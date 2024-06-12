@@ -1,0 +1,27 @@
+fun main() int
+{
+   int times;
+   int x;
+   int y;
+
+   int temp;
+   int i;
+
+   x = read;
+   y = read;
+   times = read;
+
+   i = 0;
+   while(i < times)
+   {
+     temp = x;
+     x = y;
+     y = temp;
+     i = i + 1;
+   }
+
+   print x;
+   print y endl;
+
+   return 0;
+}
