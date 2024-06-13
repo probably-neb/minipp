@@ -623,9 +623,9 @@ pub const Function = struct {
             ir.getIdent(name),
         });
 
-        for (ir.funcs.items.items) |func| {
-            log.trace("func := {s}\n", .{ir.getIdent(func.name)});
-        }
+        // for (ir.funcs.items.items) |func| {
+        //     log.trace("func := {s}\n", .{ir.getIdent(func.name)});
+        // }
         // check if its a global
         // TODO: add it so that global vars are loaded on use, will have to do the same on store
         if (ir.globals.items.safeIndexOf(name)) |globalID| {
@@ -1656,7 +1656,7 @@ pub const CfgFunction = struct {
             const statementIndex = c_stat.kind.Statement.statement;
             const statementNode = c_stat.kind.Statement;
             // self.printBlockName(cBlock);
-            ast.printNodeLineTo(c_stat, log.trace);
+            // ast.printNodeLineTo(c_stat, log.trace);
             const innerNode = ast.get(statementIndex);
             const kind = innerNode.kind;
             const finalIndex = c_stat.kind.Statement.finalIndex;
@@ -2426,6 +2426,10 @@ pub fn OrderedList(comptime T: type) type {
             // const actual = self.order.items[idx];
             // utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
             // return &self.list.items[actual];
+        }
+
+        pub fn get_or_err(self: Self, idx: u32) !T {
+            return self.list.get(idx) orelse error.NotFound;
         }
 
         /// Appends an item and returns the index

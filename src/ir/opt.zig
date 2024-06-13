@@ -261,6 +261,8 @@ fn sccp(ir: *IR, fun: *Function) !bool {
         }
     }
 
+    try check_edges(fun);
+
     return true;
 }
 
@@ -458,6 +460,10 @@ fn cmp_prop(ir: *IR, fun: *Function) !bool {
             }
         }
     }
+
+    errdefer std.debug.print("EDGES TRACE = \n{any}\n", .{@errorReturnTrace()});
+
+    try check_edges(fun);
 
     return true;
 }
@@ -830,11 +836,17 @@ fn brute_force_remove_phi_entires_referencing_dead_bb(fun: *Function, badBBID: B
 }
 
 fn replace_bb_in_outgoers_with(bb: *BasicBlock, from: BBID, to: BBID) void {
+    // const outgoers_copy = bb.outgoers;
     std.mem.replaceScalar(?BBID, &bb.outgoers, from, to);
+    // std.debug.print("outgoers of {s} {any} -> {any} \n", .{ bb.name, outgoers_copy, bb.outgoers });
 }
 
 fn replace_bb_in_incomers_with(bb: *BasicBlock, from: BBID, to: BBID) void {
+    // var buf: [256]BBID = undefined;
+    // @memcpy(buf[0..bb.incomers.items.len], bb.incomers.items);
+    // const outgoers_copy = buf[0..bb.incomers.items.len];
     std.mem.replaceScalar(BBID, bb.incomers.items, from, to);
+    // std.debug.print("incomers of {s} {any} -> {any} \n", .{ bb.name, outgoers_copy, bb.incomers.items });
 }
 
 fn replace_branches_to_with(inst: *Inst, from: BBID, to: BBID) bool {
@@ -864,6 +876,31 @@ fn replace_branches_to_with(inst: *Inst, from: BBID, to: BBID) bool {
         else => unreachable,
     }
     return false;
+}
+
+fn remove_bb_edges(fun: *Function, bb: *BasicBlock, bbID: BBID) void {
+    var changed = false;
+    const outgoerID = bb.outgoers[0] orelse bb.outgoers[1] orelse return;
+    if (bb.outgoers[0] != null and bb.outgoers[1] != null) {
+        return;
+    }
+    const incomerID = bb.incomers.getLastOrNull() orelse return;
+    utils.assert(bb.incomers.items.len == 1, "bb [{d}] has more than one incomer\n", .{bbID});
+
+    var incomer = fun.bbs.get(incomerID);
+    const incomerCtrlFlowID = incomer.insts.list.getLastOrNull() orelse unreachable;
+    var incomerCtrlFlow = fun.insts.get(incomerCtrlFlowID);
+    changed = changed or replace_branches_to_with(incomerCtrlFlow, bbID, outgoerID);
+    replace_bb_in_outgoers_with(incomer, bbID, outgoerID);
+
+    var outgoer = fun.bbs.get(outgoerID);
+    replace_bb_in_incomers_with(outgoer, bbID, incomerID);
+
+    // remove_bb_from_incomers(bb, incomerID);
+    // remove_bb_from_outgoers(bb, outgoerID);
+    utils.assert(!contains(?BBID, &incomer.outgoers, bbID), "incomer {s} has bb {s} as outgoer\n", .{ incomer.name, bb.name });
+    utils.assert(!contains(BBID, outgoer.incomers.items, bbID), "outgoer {s} has bb {s} as incomer\n", .{ outgoer.name, bb.name });
+    // check_edges(fun) catch unreachable;
 }
 
 fn is_self_ref(fun: *const Function, selfBBID: BBID, outgoerBBID: BBID) !bool {
@@ -920,9 +957,10 @@ fn empty_block_removal_pass(fun: *Function) !bool {
         utils.assert(bb.insts.len != 0, "bb [{d}] has no insts\n", .{bbID});
 
         const inst = insts.get(bb.insts.get(0).*);
-        if (inst.op != .Jmp) {
+        if (inst.op == .Br or inst.op == .Ret) {
             continue;
         }
+        utils.assert(inst.op == .Jmp, "bb [{d}] has an unexpected inst {s}\n", .{ bbID, @tagName(inst.op) });
         // the following two continues are a hack to skip entry and exit blocks
         // because entries have no incomers, and exits have no outgoers
         if (bb.incomers.items.len == 0 or bb.incomers.items.len != 1) {
@@ -949,28 +987,28 @@ fn empty_block_removal_pass(fun: *Function) !bool {
         // });
         // NOTE: this use of undefined is only okay because we only have 1 outgoer
 
-        var incomer = bb.incomers.items[0];
-        if (bb_num_outgoers(fun.bbs.get(incomer)) != 1) {
-            continue;
-        }
+        // var incomer = bb.incomers.items[0];
+        // if (bb_num_outgoers(fun.bbs.get(incomer)) != 1) {
+        //     continue;
+        // }
 
-        var outgoer = bb.outgoers[0] orelse bb.outgoers[1] orelse unreachable;
-        fun.bbs.get(incomer).outgoers[0] = outgoer;
-        fun.bbs.get(incomer).outgoers[1] = null;
-        fun.bbs.get(outgoer).incomers.deinit();
-        fun.bbs.get(outgoer).incomers = std.ArrayList(BBID).init(fun.alloc);
-        try fun.bbs.get(outgoer).incomers.append(incomer);
-
-        for (fun.bbs.get(incomer).insts.items()) |instID| {
-            var inst_ = fun.insts.get(instID);
-            if (inst_.op != .Jmp) continue;
-            var jmp = Inst.Jmp.get(inst_.*);
-            jmp.dest = outgoer;
-            inst_.* = jmp.toInst();
-            fun.insts.set(instID, inst_.*);
-        }
-
-        std.debug.print("removing {d} from incomers of {s}\n", .{ bbID, fun.bbs.get(outgoer).name });
+        // var outgoer = bb.outgoers[0] orelse bb.outgoers[1] orelse unreachable;
+        // std.debug.print("removing bb {s}\n", .{stringify_label(fun, bbID)});
+        // remove_bb_edges(fun, bb, bbID);
+        // fun.bbs.get(incomer).outgoers[0] = outgoer;
+        // fun.bbs.get(incomer).outgoers[1] = null;
+        // fun.bbs.get(outgoer).incomers.deinit();
+        // fun.bbs.get(outgoer).incomers = std.ArrayList(BBID).init(fun.alloc);
+        // try fun.bbs.get(outgoer).incomers.append(incomer);
+        //
+        // for (fun.bbs.get(incomer).insts.items()) |instID| {
+        //     var inst_ = fun.insts.get(instID);
+        //     if (inst_.op != .Jmp) continue;
+        //     var jmp = Inst.Jmp.get(inst_.*);
+        //     jmp.dest = outgoer;
+        //     inst_.* = jmp.toInst();
+        //     fun.insts.set(instID, inst_.*);
+        // }
 
         try idsToRemove.append(bbID);
         changed = true;
@@ -988,9 +1026,11 @@ fn empty_block_removal_pass(fun: *Function) !bool {
     //     }
     // }
     for (idsToRemove.items) |bbID| {
-        std.debug.print("removing {d}\n", .{bbID});
+        // std.debug.print("removing {d}\n", .{bbID});
+        remove_bb_edges(fun, fun.bbs.get(bbID), bbID);
         fun.bbs.remove(bbID);
     }
+    try check_edges(fun);
     return changed;
 }
 
@@ -1000,6 +1040,106 @@ fn bb_num_outgoers(bb: *const BasicBlock) usize {
         num += @intCast(@intFromBool(outgoer != null));
     }
     return num;
+}
+
+fn contains(comptime T: type, items: []const T, value: T) bool {
+    return std.mem.indexOfScalar(T, items, value) != null;
+}
+
+fn check_edges(fun: *const Function) !void {
+    // const warn = log.warn;
+    const warn = std.log.warn;
+
+    const bbs = &fun.bbs;
+    var err = false;
+    for (bbs.items(), bbs.ids()) |bb, bbID| {
+        // check incomers
+        const incomers = &bb.incomers;
+        for (incomers.items) |incomerID| {
+            if (!bbs.list.contains(incomerID)) {
+                warn("incomer {d} not found in bbs but in {s} incomers\n", .{ incomerID, stringify_label(fun, bbID) });
+                err = true;
+            }
+            const incomer = bbs.get(incomerID);
+            if (!contains(?BBID, &incomer.outgoers, bbID)) {
+                warn("bb {d} not found in outgoers of incomer {s}\n", .{ bbID, stringify_label(fun, incomerID) });
+                err = true;
+            }
+        }
+
+        // check phis
+        for (bb.insts.items()) |instID| {
+            const inst = fun.insts.get(instID);
+            if (inst.op != .Phi) {
+                continue;
+            }
+            const entries = &Inst.Phi.get(inst.*).entries;
+            for (entries.items) |entry| {
+                if (!bbs.list.contains(entry.bb)) {
+                    warn("phi entry {d} not found in bbs but in {s} phi entries\n", .{ entry.bb, stringify_label(fun, bbID) });
+                    err = true;
+                }
+            }
+        }
+
+        // check ctrl flow
+        const ctrlFlowInstID = bb.insts.get(bb.insts.len - 1);
+        const ctrlFlow = fun.insts.get(ctrlFlowInstID.*);
+        switch (ctrlFlow.*.op) {
+            .Br => {
+                const br = Inst.Br.get(ctrlFlow.*);
+                if (!contains(?BBID, &bb.outgoers, br.iftrue)) {
+                    warn("outgoer {d} not found in outgoers of {s}\n", .{ br.iftrue, stringify_label(fun, bbID) });
+                    err = true;
+                }
+                if (!contains(?BBID, &bb.outgoers, br.iffalse)) {
+                    warn("outgoer {d} not found in outgoers of {s}\n", .{ br.iffalse, stringify_label(fun, bbID) });
+                    err = true;
+                }
+            },
+            .Jmp => {
+                const jmp = Inst.Jmp.get(ctrlFlow.*);
+                if (!contains(?BBID, &bb.outgoers, jmp.dest)) {
+                    warn("outgoer {d} not found in outgoers of {s}\n", .{ jmp.dest, stringify_label(fun, bbID) });
+                    err = true;
+                }
+                if (!contains(?BBID, &bb.outgoers, null)) {
+                    const extra = if (bb.outgoers[0] == jmp.dest) bb.outgoers[1] else bb.outgoers[0];
+                    warn("outgoer {?d} is not the dest of jmp to {d} in outgoers of {s}\n", .{ extra, jmp.dest, stringify_label(fun, bbID) });
+                    err = true;
+                }
+            },
+            .Ret => {
+                if (bb.outgoers[0] != null) {
+                    warn("outgoer {?d} not null in outgoers of {s} which is a return\n", .{ bb.outgoers[0], stringify_label(fun, bbID) });
+                }
+                if (bb.outgoers[1] != null) {
+                    warn("outgoer {?d} not null in outgoers of {s} which is a return\n", .{ bb.outgoers[1], stringify_label(fun, bbID) });
+                }
+            },
+            else => {
+                warn("last inst in block {s} is not control flow\n", .{stringify_label(fun, bbID)});
+                err = true;
+            },
+        }
+
+        // check outgoers
+        for (bb.outgoers) |maybe_outgoerID| {
+            if (maybe_outgoerID == null) continue;
+            const outgoerID = maybe_outgoerID.?;
+            if (!bbs.list.contains(outgoerID)) {
+                warn("outgoer {d} not found in bbs but in {s} outgoers\n", .{ outgoerID, stringify_label(fun, bbID) });
+                err = true;
+            }
+            const outgoer = bbs.get(outgoerID);
+            if (!contains(BBID, outgoer.incomers.items, bbID)) {
+                warn("bb {d} not found in incomers of outgoer {s}\n", .{ bbID, stringify_label(fun, outgoerID) });
+                err = true;
+            }
+        }
+    }
+
+    if (err) return error.InvalidState;
 }
 
 /// WARN: this is pathologically inefficient

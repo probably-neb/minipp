@@ -138,7 +138,7 @@ pub fn cmp_prop(alloc: Alloc, ir: *const IR, fun: *const Function) !SCCPRes {
     const insts = &fun.insts;
     const regs = &fun.regs;
 
-    std.debug.print("starting\n", .{});
+    // std.debug.print("starting\n", .{});
     main_loop: while (bbWL.items.len > 0 or ssaWL.items.len > 0) {
         if (bbWL.popOrNull()) |bbID| {
             // std.debug.print("BBID={d}\n", .{bbID});
@@ -431,9 +431,9 @@ fn apply_cmp_info(ir: *const IR, fun: *const Function, dom: *const Dominance, in
             .ifthenBB = br.iftrue,
             .ifelseBB = br.iffalse,
         };
-        std.debug.print("cmp info = {any}\n", .{cmpInfo});
+        // std.debug.print("cmp info = {any}\n", .{cmpInfo});
         if (cmpInfo.reg.kind == .local) {
-            std.debug.print("setting cmpInfo\n", .{});
+            // std.debug.print("setting cmpInfo\n", .{});
             cmp_info[cmpInfo.reg.i] = cmpInfo;
         }
     }
@@ -530,26 +530,26 @@ fn cmp_info_implications_on_subsequent_cmp(ir: *const IR, info: CmpInfo, cmp: In
             // variance is on rhs
             const infoVal = ref_value(ir, info.rhs(), values);
             const cmpVal = ref_value(ir, cmp.rhs, values);
-            std.debug.print("info.val = {any}\ncmp.val = {any}\n", .{ infoVal, cmpVal });
+            // std.debug.print("info.val = {any}\ncmp.val = {any}\n", .{ infoVal, cmpVal });
             const maybe_res = eval_cmp(cond, infoVal, cmpVal);
             if (maybe_res == null) {
                 return CmpImplications.none();
             }
             const res = maybe_res.?;
-            std.debug.print("res = {}\n", .{res});
+            // std.debug.print("res = {}\n", .{res});
             return if (res) CmpImplications.only_true_in_ifthen() else CmpImplications.only_false_in_ifelse();
         }
         if (std.meta.eql(info.rhs(), cmp.rhs)) {
             // variance is on lhs
             const infoVal = ref_value(ir, info.lhs(), values);
             const cmpVal = ref_value(ir, cmp.lhs, values);
-            std.debug.print("info.val = {any}\ncmp.val = {any}\n", .{ infoVal, cmpVal });
+            // std.debug.print("info.val = {any}\ncmp.val = {any}\n", .{ infoVal, cmpVal });
             const maybe_res = eval_cmp(cond, cmpVal, infoVal);
             if (maybe_res == null) {
                 return CmpImplications.none();
             }
             const res = maybe_res.?;
-            std.debug.print("res = {}\n", .{res});
+            // std.debug.print("res = {}\n", .{res});
             return if (res) CmpImplications.only_true_in_ifthen() else CmpImplications.only_false_in_ifelse();
         }
     }
@@ -903,7 +903,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
         .Jmp => {
             const jmp = Inst.Jmp.get(inst);
             if (reachable[jmp.dest] and !visited[jmp.dest]) {
-                std.debug.print("WATCH ME VISIT {d}\n", .{jmp.dest});
+                // std.debug.print("WATCH ME VISIT {d}\n", .{jmp.dest});
                 return try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,
@@ -917,7 +917,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
         .Br => {
             const br = Inst.Br.get(inst);
             if (reachable[br.iftrue] and !visited[br.iftrue]) {
-                std.debug.print("WATCH ME VISIT {d}\n", .{br.iftrue});
+                // std.debug.print("WATCH ME VISIT {d}\n", .{br.iftrue});
                 try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,
@@ -928,7 +928,7 @@ fn add_reachable_uses_of_reg_from_bb(fun: *const Function, reg: Register, bbID: 
                 );
             }
             if (reachable[br.iffalse] and !visited[br.iffalse]) {
-                std.debug.print("WATCH ME VISIT {d}\n", .{br.iffalse});
+                // std.debug.print("WATCH ME VISIT {d}\n", .{br.iffalse});
                 return try add_reachable_uses_of_reg_from_bb(
                     fun,
                     reg,

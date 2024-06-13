@@ -775,9 +775,11 @@ fn gen_statement(
         .Print => |print| {
             const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(print.expr).*);
             const lenb4 = fun.insts.len;
+            _ = lenb4;
             try gen_print(ir, fun, bb, exprRef, print.hasEndl);
             const lenAfter = fun.insts.len;
-            log.trace("print expr: {any} :: {d} -> {d}\n", .{ exprRef, lenb4, lenAfter });
+            _ = lenAfter;
+            // log.trace("print expr: {any} :: {d} -> {d}\n", .{ exprRef, lenb4, lenAfter });
         },
         // TODO: V5 Revs
         .Delete => |del| {
