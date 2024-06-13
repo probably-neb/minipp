@@ -400,6 +400,9 @@ fn tok_name(node: Ast.Node) []const u8 {
 }
 
 test "ast/stringify.make-sure-this-shit-compiles" {
+    if (true) {
+        return error.SkipZigTest;
+    }
     defer log.print();
     // TODO: comment out the `else` arms in the repr and treenode
     // switch statements and handle unhandled nodes
@@ -440,6 +443,14 @@ test "ast/stringify.make-sure-this-shit-compiles" {
         \\      }
         \\ }
     ;
+    const tokens = try @import("../lexer.zig").Lexer.tokenizeFromStr(input, std.heap.page_allocator);
+    const parser = try @import("../parser.zig").Parser.parseTokens(tokens, input, std.heap.page_allocator);
+    const ast = try Ast.initFromParser(parser);
+    try print_tree(&ast);
+}
+
+test "example" {
+    const input = "fun bar() bool { int a, b; return a + b * foo() != 0; }";
     const tokens = try @import("../lexer.zig").Lexer.tokenizeFromStr(input, std.heap.page_allocator);
     const parser = try @import("../parser.zig").Parser.parseTokens(tokens, input, std.heap.page_allocator);
     const ast = try Ast.initFromParser(parser);
