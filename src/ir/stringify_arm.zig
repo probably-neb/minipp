@@ -164,11 +164,12 @@ const Rope = struct {
     }
 };
 
-pub fn stringify(arm: *const Arm, ir: *const IR, alloc: Alloc) ![]const u8 {
+pub fn stringify(arm: *const Arm, ir: *IR, alloc: Alloc) ![]const u8 {
     var buf = Buf.init(alloc);
 
     // stringify global variables
     {
+        try buf.write(";(c) dylan leifer-ives \n\n");
         try buf.write(INDENT);
         try buf.write(".section .data\n");
         try buf.write("_print:\n");
@@ -273,7 +274,7 @@ pub fn stringify_operand_comment(buf: *Buf, op: Arm.Operand) !void {
     try buf.write(")");
 }
 
-pub fn stringify_spill_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Function) !void {
+pub fn stringify_spill_inst(inst: Arm.Inst, buf: *Buf, ir: *IR, fun: *Arm.Function) !void {
     switch (inst.oper) {
         .ADD, .SUB, .MUL, .DIV, .AND, .ORR, .EOR, .ASR, .LSL => {
             // load and load 2, then store
@@ -312,6 +313,7 @@ pub fn stringify_spill_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.
         },
         .NEG, .MOV, .LDR => {
             // load and store
+            var insttmp = inst;
             if (inst.op1.reg.spillIndex != null) {
                 var inst1Index = inst.op1.reg.spillIndex.?;
                 var spillOffset = 16 + inst1Index * 16;
@@ -321,8 +323,19 @@ pub fn stringify_spill_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.
                 try buf.write("\n");
                 try buf.write(INDENT);
                 try buf.write("LDR x10, [x12, #0]\n");
+            } else if (inst.op1.kind == .MemGlobal) {
+                // load into x10 using ldr
+                // if (inst.op1.reg.name == ir.internIdent("_print") or inst.op1.reg.name == ir.internIdent("_println") or inst.op1.reg.name == ir.internIdent("_read")) {} else {
+                //     try buf.write(INDENT);
+                //     try buf.write("LDR x10, =");
+                //     try buf.fmt("{s}\n", .{ir.getIdent(inst.op1.reg.name)});
+                //     try buf.write(INDENT);
+                //     try buf.write("LDR x10, [x10]\n");
+                //     insttmp.op1.reg.selection = .X10;
+                //     insttmp.op1.kind = .Reg;
+                // }
             }
-            try stringify_inst(inst, buf, ir, fun);
+            try stringify_inst(insttmp, buf, ir, fun);
             // store the result
             if (inst.rd.spillIndex != null) {
                 var rdIndex = inst.rd.spillIndex.?;
@@ -361,6 +374,7 @@ pub fn stringify_spill_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.
         },
         .STR => {
             // load and load2
+            var insttmp = inst;
             if (inst.rd.spillIndex != null) {
                 var inst1Index = inst.rd.spillIndex.?;
                 var spillOffset = 16 + inst1Index * 16;
@@ -380,8 +394,16 @@ pub fn stringify_spill_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.
                 try buf.write("\n");
                 try buf.write(INDENT);
                 try buf.write("LDR x11, [x12, #0]\n");
+            } else if (inst.op1.kind == .MemGlobal) {
+                // // load into x11 using ldr
+                // if (inst.op1.reg.name == ir.internIdent("_print") or inst.op1.reg.name == ir.internIdent("_println") or inst.op1.reg.name == ir.internIdent("_read")) {} else {
+                //     try buf.write(INDENT);
+                //     try buf.write("LDR x11, =");
+                //     try buf.fmt("{s}\n", .{ir.getIdent(inst.op1.reg.name)});
+                // }
+                // insttmp.op1.reg.selection = .X11;
             }
-            try stringify_inst(inst, buf, ir, fun);
+            try stringify_inst(insttmp, buf, ir, fun);
         },
         else => {
             try stringify_inst(inst, buf, ir, fun);
@@ -389,7 +411,7 @@ pub fn stringify_spill_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.
     }
 }
 
-pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *const IR, fun: *Arm.Function) !void {
+pub fn stringify_inst(inst: Arm.Inst, buf: *Buf, ir: *IR, fun: *Arm.Function) !void {
     try buf.write(INDENT);
     try stringify_operation(inst.oper, buf);
     // print out the buffer
@@ -519,7 +541,7 @@ pub fn stringify_operation(operation: Arm.Operation, buf: *Buf) !void {
         .ADD => try buf.write("ADD "),
         .SUB => try buf.write("SUB "),
         .MUL => try buf.write("MUL "),
-        .DIV => try buf.write("DIV "),
+        .DIV => try buf.write("SDIV "),
         .AND => try buf.write("AND "),
         .ORR => try buf.write("ORR "),
         .EOR => try buf.write("EOR "),
@@ -595,7 +617,7 @@ pub fn stringify_register(reg: Arm.Reg, ir: *const IR, buf: *Buf, assignment: bo
     }
 }
 
-pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *Arm.Function, assignment: bool, alt: bool) !void {
+pub fn stringify_operand(operand: Arm.Operand, ir: *IR, buf: *Buf, fun: *Arm.Function, assignment: bool, alt: bool) !void {
     switch (operand.kind) {
         .Reg => {
             try stringify_register(operand.reg, ir, buf, assignment, alt);
@@ -603,6 +625,8 @@ pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *A
         .Imm => {
             try buf.write("#");
             try buf.fmt("{s}", .{ir.getIdent(operand.imm)});
+            // try buf.fmt("{d}", .{operand.imm});
+            // std.debug.print("imm: {d}\n", .{operand.imm});
         },
         .MemReg => {
             try buf.write("[");
@@ -629,6 +653,16 @@ pub fn stringify_operand(operand: Arm.Operand, ir: *const IR, buf: *Buf, fun: *A
         .MemGlobal => {
             try buf.write("=");
             try buf.fmt("{s}", .{ir.getIdent(operand.reg.name)});
+            // if (operand.reg.name == ir.internIdent("_print") or operand.reg.name == ir.internIdent("_println") or operand.reg.name == ir.internIdent("_read")) {
+            // } else {
+            //     if (operand.reg.selection == .none) {
+            //         try buf.write("[X10]");
+            //     } else {
+            //         try buf.write("[");
+            //         try stringify_register(operand.reg, ir, buf, false, false);
+            //         try buf.write("]");
+            //     }
+            // }
         },
         .Label => {
             var bb = fun.blocks.items[operand.label];

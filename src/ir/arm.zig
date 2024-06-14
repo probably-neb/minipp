@@ -763,6 +763,7 @@ pub const Function = struct {
 
     pub fn ensureBothReg(self: *Function, ir: *IR, bb: *BasicBlock, o1: *Operand, o2: *Operand) !void {
         const name = ir.internIdent("_");
+        _ = name;
         switch (o1.kind) {
             .Reg => {
                 switch (o2.kind) {
@@ -770,7 +771,7 @@ pub const Function = struct {
                         return;
                     },
                     .Imm => {
-                        var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = self.program.insts.items.len, .irID = o2.imm };
+                        var reg = Reg{ .id = self.program.regs.items.len, .name = o2.imm, .inst = self.program.insts.items.len, .irID = 0xDEADBEEF };
                         try self.program.addReg(reg);
                         var movInst = Inst.mov(reg, Operand.asOpImm(o2.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
@@ -784,7 +785,7 @@ pub const Function = struct {
             .Imm => {
                 switch (o2.kind) {
                     .Reg => {
-                        var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = self.program.insts.items.len, .irID = o1.imm };
+                        var reg = Reg{ .id = self.program.regs.items.len, .name = o1.imm, .inst = self.program.insts.items.len, .irID = 0xDEADBEEF };
                         try self.program.addReg(reg);
                         var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
@@ -792,13 +793,13 @@ pub const Function = struct {
                         return;
                     },
                     .Imm => {
-                        var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = self.program.insts.items.len, .irID = o1.imm };
+                        var reg = Reg{ .id = self.program.regs.items.len, .name = o1.imm, .inst = self.program.insts.items.len, .irID = 0xDEADBEEF };
                         try self.program.addReg(reg);
                         var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
                         o1.* = Operand.asOpReg(reg);
 
-                        reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = self.program.insts.items.len, .irID = o2.imm };
+                        reg = Reg{ .id = self.program.regs.items.len, .name = o2.imm, .inst = self.program.insts.items.len, .irID = 0xDEADBEEF };
                         try self.program.addReg(reg);
                         movInst = Inst.mov(reg, Operand.asOpImm(o2.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
@@ -817,7 +818,7 @@ pub const Function = struct {
     }
 
     pub fn ensureImmOrAtLeastOneRegNoSwap(self: *Function, armBB: *BasicBlock, ir: *IR, o1: *Operand, o2: *Operand) !void {
-        const name = ir.internIdent("_");
+        _ = ir;
         // check if the operands are registers or immediates
         switch (o1.kind) {
             .Reg => {
@@ -834,7 +835,7 @@ pub const Function = struct {
                 }
             },
             .Imm => {
-                var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = self.program.insts.items.len, .irID = o1.imm };
+                var reg = Reg{ .id = self.program.regs.items.len, .name = o1.imm, .inst = self.program.insts.items.len, .irID = 0xDEADBEEF };
                 try self.program.addReg(reg);
                 var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm), self.program.insts.items.len);
                 try self.addInst(movInst, armBB);
@@ -858,6 +859,7 @@ pub const Function = struct {
     }
     pub fn ensureImmOrAtLeastOneReg(self: *Function, ir: *IR, bb: *BasicBlock, o1: *Operand, o2: *Operand) !void {
         const name = ir.internIdent("_");
+        _ = name;
         // check if the operands are registers or immediates
         switch (o1.kind) {
             .Reg => {
@@ -884,7 +886,7 @@ pub const Function = struct {
                     },
                     .Imm => {
                         // we need to create an instruction to mv o1 into a register, then change the operand to a register
-                        var reg = Reg{ .id = self.program.regs.items.len, .name = name, .inst = self.program.insts.items.len, .irID = o1.imm };
+                        var reg = Reg{ .id = self.program.regs.items.len, .name = o1.imm, .inst = self.program.insts.items.len, .irID = o1.imm };
                         try self.program.addReg(reg);
                         var movInst = Inst.mov(reg, Operand.asOpImm(o1.imm), self.program.insts.items.len);
                         try self.addInst(movInst, bb);
@@ -918,7 +920,7 @@ pub const Program = struct {
         try program.regs.append(reg);
     }
 
-    pub fn getOpfromIR(self: *Program, func: *IR.Function, ref: IR.Ref, instID: ?usize) !Operand {
+    pub fn getOpfromIR(self: *Program, func: *IR.Function, ir: *IR, ref: IR.Ref, instID: ?usize) !Operand {
         switch (ref.kind) {
             .local => {
                 var irReg = func.regs.get(ref.i);
@@ -935,16 +937,52 @@ pub const Program = struct {
             .global => {
                 var reg = Reg{ .id = self.regs.items.len, .name = ref.name, .inst = instID, .irID = ref.i };
                 try self.addReg(reg);
+                // add the global to the list of globals
+
+                try self.addUniqueGlobal(ref.name);
                 return Operand.asMemGlobal(reg);
             },
-            .immediate, .immediate_u32 => {
+            .immediate => {
                 return Operand.asOpImm(ref.i);
+            },
+            .immediate_u32 => {
+                // ref.i is the actual value we want, we have to intern this as a string
+                var immStr = std.ArrayList(u8).init(self.alloc);
+                var tmp = ref.i;
+                while (tmp != 0) {
+                    try immStr.insert(0, @intCast((tmp % 10) + 48));
+                    tmp /= 10;
+                }
+                var str = try immStr.toOwnedSlice();
+                if (str.len == 0) {
+                    var ident: Imm = IR.InternPool.ZERO;
+                    return Operand.asOpImm(ident);
+                } else {
+                    var ident = ir.internIdent(str);
+                    return Operand.asOpImm(ident);
+                }
             },
             else => {
                 std.debug.panic("The ref {any} was not expected in the program", .{ref});
             },
         }
         std.debug.panic("The ref {any} was not expected in the program", .{ref});
+    }
+    pub fn addUniqueGlobal(self: *Program, name: IR.StrID) !void {
+        for (self.globals.items) |global| {
+            if (global == name) {
+                return;
+            }
+        }
+        try self.globals.append(name);
+    }
+    pub fn inGlobals(self: *Program, name: IR.StrID) bool {
+        for (self.globals.items) |global| {
+            if (global == name) {
+                return true;
+            }
+        }
+        return false;
     }
 };
 
@@ -1028,6 +1066,24 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
     arm.irBBtoARMBB = irBBtoARMBB;
     arm.armBBtoIRBB = armBBtoIRBB;
 
+    // create mov from every param to a register of the index
+    // get the first basic block in the function
+    var firstBB = &armFunc.blocks.items[0];
+    for (armFunc.params.items, 0..) |param, i| {
+        // var paramOperand = Operand.asOpReg(param);
+        var reg = Reg{ .id = arm.program.regs.items.len, .name = param.name, .inst = null, .irID = 0xDEADBEEF };
+        reg.selection = SelectedReg.fromInt(i);
+        try arm.program.addReg(reg);
+        var movInst = Inst.mov(param, Operand.asOpReg(reg), arm.program.insts.items.len);
+        // add the instruction to the function
+        try armFunc.addInst(movInst, firstBB);
+
+        // try arm.program.insts.append(movInst);
+        // // find in the function the first instruction
+        // try firstBB.insts.insert(0, movInst.id);
+        // try armFunc.insts.insert(0, movInst.id);
+    }
+
     // generate the instructions within them
     for (func.bbs.items(), 0..) |block, i| {
         var armBlock = &armFunc.blocks.items[i];
@@ -1084,7 +1140,7 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
             // resulting reg
             var reg = Reg{ .id = arm.program.regs.items.len, .name = newName, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
             try arm.program.addReg(reg);
-            var fromOp = try arm.program.getOpfromIR(phiSave.func, ref, null);
+            var fromOp = try arm.program.getOpfromIR(phiSave.func, ir, ref, null);
             var movInst = Inst.mov(reg, fromOp, arm.program.insts.items.len);
             try arm.program.insts.append(movInst);
 
@@ -1120,7 +1176,22 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
         // now move from new name to old name inside of the block
         var fromReg = Reg{ .id = arm.program.regs.items.len, .name = newName, .inst = null, .irID = 0xDEADBEEF };
         try arm.program.addReg(fromReg);
-        var toReg = Reg{ .id = arm.program.regs.items.len, .name = phiRes.name, .inst = arm.program.insts.items.len, .irID = phiRes.i };
+
+        // make a new regName for the phiRes
+        var regNameStr = std.ArrayList(u8).init(ir.alloc);
+        for (phiResStr) |c| {
+            try regNameStr.append(c);
+        }
+        try regNameStr.append('_');
+        var tmpi = arm.program.regs.items.len;
+        while (tmpi != 0) {
+            try regNameStr.append(@intCast((tmpi % 10) + 48));
+            tmpi /= 10;
+        }
+
+        var regName = ir.internIdent(try regNameStr.toOwnedSlice());
+
+        var toReg = Reg{ .id = arm.program.regs.items.len, .name = regName, .inst = arm.program.insts.items.len, .irID = phiRes.i };
         try arm.program.addReg(toReg);
         var movInst = Inst.mov(toReg, Operand.asOpReg(fromReg), arm.program.insts.items.len);
         try arm.program.insts.append(movInst);
@@ -1135,21 +1206,24 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
             }
         }
         try phiSave.armFunc.insts.insert(funcIndex, movInst.id);
-    }
 
-    // create mov from every param to a register of the index
-    // get the first basic block in the function
-    var firstBB = armFunc.blocks.items[0];
-    for (armFunc.params.items, 0..) |param, i| {
-        // var paramOperand = Operand.asOpReg(param);
-        var reg = Reg{ .id = arm.program.regs.items.len, .name = param.name, .inst = null, .irID = 0xDEADBEEF };
-        reg.selection = SelectedReg.fromInt(i);
-        try arm.program.addReg(reg);
-        var movInst = Inst.mov(param, Operand.asOpReg(reg), arm.program.insts.items.len);
-        try arm.program.insts.append(movInst);
-        // find in the function the first instruction
-        try firstBB.insts.insert(0, movInst.id);
-        try armFunc.insts.insert(0, movInst.id);
+        // go through all of the instructions that follow this one in the function and update the register name
+        var start = funcIndex;
+        var idX = start + 1;
+        while (idX < phiSave.armFunc.insts.items.len) {
+            var instID = phiSave.armFunc.insts.items[idX];
+            var inst = &arm.program.insts.items[instID];
+            if (inst.rd.name == phiRes.name) {
+                inst.rd.name = toReg.name;
+            }
+            if (inst.op1.reg.name == phiRes.name) {
+                inst.op1.reg.name = toReg.name;
+            }
+            if (inst.op2.reg.name == phiRes.name) {
+                inst.op2.reg.name = toReg.name;
+            }
+            idX += 1;
+        }
     }
 
     // go through all of the instructions in the function, and make a map from their instruction ID to the register id
@@ -1161,7 +1235,7 @@ pub fn gen_function(arm: *Arm, armFunc: *Function, ir: *IR, func: *IR.Function) 
     var spillIndex = std.AutoHashMap(usize, ?u32).init(ir.alloc);
     var spillUnamedRegs = std.AutoHashMap(usize, ?u32).init(ir.alloc);
     var unnamedMap = std.AutoHashMap(Reg.ID, ?bool).init(ir.alloc);
-    var counter: usize = 14;
+    var counter: usize = 15;
     for (armFunc.insts.items) |instID| {
         if (counter == 16) counter = 18;
         var inst = &arm.program.insts.items[instID];
@@ -1321,11 +1395,25 @@ pub fn gen_inst(
                     }
                 },
                 else => {
-                    var retOp = try arm.program.getOpfromIR(func, ret.val, null);
-                    var x0 = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X0 };
-                    try arm.program.addReg(x0);
-                    var movInst = Inst.mov(x0, retOp, arm.program.insts.items.len);
-                    try armFunc.addInst(movInst, armBlock);
+                    if (func.name == ir.internIdent("main")) {
+                        var x0 = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X0 };
+                        try arm.program.addReg(x0);
+                        var movInst = Inst.mov(x0, Operand.asOpImm(0), arm.program.insts.items.len);
+                        try armFunc.addInst(movInst, armBlock);
+                        var x8 = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X8 };
+                        try arm.program.addReg(x8);
+                        var movInst2 = Inst.mov(x8, Operand.asOpImm(ir.internIdent("93")), arm.program.insts.items.len);
+                        try armFunc.addInst(movInst2, armBlock);
+                        var strID = ir.internIdent("svc 0");
+                        var svcInst = Inst.print_this_lol(strID, arm.program.insts.items.len);
+                        try armFunc.addInst(svcInst, armBlock);
+                    } else {
+                        var retOp = try arm.program.getOpfromIR(func, ir, ret.val, null);
+                        var x0 = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X0 };
+                        try arm.program.addReg(x0);
+                        var movInst = Inst.mov(x0, retOp, arm.program.insts.items.len);
+                        try armFunc.addInst(movInst, armBlock);
+                    }
                 },
             }
             var retInst = Inst.ret(arm.program.insts.items.len);
@@ -1342,9 +1430,9 @@ pub fn gen_inst(
             switch (binopIr.op) {
                 // order with two reg
                 .Mul => {
-                    var mulRD = try arm.program.getOpfromIR(func, binopIr.register, arm.program.insts.items.len);
-                    var mulRn = try arm.program.getOpfromIR(func, binopIr.lhs, null);
-                    var mulRm = try arm.program.getOpfromIR(func, binopIr.rhs, null);
+                    var mulRD = try arm.program.getOpfromIR(func, ir, binopIr.register, arm.program.insts.items.len);
+                    var mulRn = try arm.program.getOpfromIR(func, ir, binopIr.lhs, null);
+                    var mulRm = try arm.program.getOpfromIR(func, ir, binopIr.rhs, null);
                     try armFunc.ensureBothReg(ir, armBlock, &mulRn, &mulRm);
                     mulRD.reg.inst = arm.program.insts.items.len;
 
@@ -1352,9 +1440,9 @@ pub fn gen_inst(
                     try armFunc.addInst(mulInst, armBlock);
                 },
                 .Div => {
-                    var divRD = try arm.program.getOpfromIR(func, binopIr.register, arm.program.insts.items.len);
-                    var divRn = try arm.program.getOpfromIR(func, binopIr.lhs, null);
-                    var divRm = try arm.program.getOpfromIR(func, binopIr.rhs, null);
+                    var divRD = try arm.program.getOpfromIR(func, ir, binopIr.register, arm.program.insts.items.len);
+                    var divRn = try arm.program.getOpfromIR(func, ir, binopIr.lhs, null);
+                    var divRm = try arm.program.getOpfromIR(func, ir, binopIr.rhs, null);
                     divRD.reg.inst = arm.program.insts.items.len;
 
                     try armFunc.ensureBothReg(ir, armBlock, &divRn, &divRm);
@@ -1363,9 +1451,9 @@ pub fn gen_inst(
                 },
                 // order with one imm
                 .Sub => {
-                    var subRD = try arm.program.getOpfromIR(func, binopIr.register, arm.program.insts.items.len);
-                    var subRn = try arm.program.getOpfromIR(func, binopIr.lhs, null);
-                    var subO2 = try arm.program.getOpfromIR(func, binopIr.rhs, null);
+                    var subRD = try arm.program.getOpfromIR(func, ir, binopIr.register, arm.program.insts.items.len);
+                    var subRn = try arm.program.getOpfromIR(func, ir, binopIr.lhs, null);
+                    var subO2 = try arm.program.getOpfromIR(func, ir, binopIr.rhs, null);
                     try armFunc.ensureImmOrAtLeastOneRegNoSwap(armBlock, ir, &subRn, &subO2);
                     subRD.reg.inst = arm.program.insts.items.len;
 
@@ -1374,9 +1462,9 @@ pub fn gen_inst(
                 },
                 // order does not matter
                 .And, .Or, .Xor => {
-                    var rd = try arm.program.getOpfromIR(func, binopIr.register, arm.program.insts.items.len);
-                    var rn = try arm.program.getOpfromIR(func, binopIr.lhs, null);
-                    var o2 = try arm.program.getOpfromIR(func, binopIr.rhs, null);
+                    var rd = try arm.program.getOpfromIR(func, ir, binopIr.register, arm.program.insts.items.len);
+                    var rn = try arm.program.getOpfromIR(func, ir, binopIr.lhs, null);
+                    var o2 = try arm.program.getOpfromIR(func, ir, binopIr.rhs, null);
                     try armFunc.ensureBothReg(ir, armBlock, &rn, &o2);
                     rd.reg.inst = arm.program.insts.items.len;
 
@@ -1391,9 +1479,9 @@ pub fn gen_inst(
                     try armFunc.addInst(the_inst, armBlock);
                 },
                 .Add => {
-                    var rd = try arm.program.getOpfromIR(func, binopIr.register, arm.program.insts.items.len);
-                    var rn = try arm.program.getOpfromIR(func, binopIr.lhs, null);
-                    var o2 = try arm.program.getOpfromIR(func, binopIr.rhs, null);
+                    var rd = try arm.program.getOpfromIR(func, ir, binopIr.register, arm.program.insts.items.len);
+                    var rn = try arm.program.getOpfromIR(func, ir, binopIr.lhs, null);
+                    var o2 = try arm.program.getOpfromIR(func, ir, binopIr.rhs, null);
                     try armFunc.ensureImmOrAtLeastOneReg(ir, armBlock, &rn, &o2);
                     rd.reg.inst = arm.program.insts.items.len;
 
@@ -1418,8 +1506,8 @@ pub fn gen_inst(
             // we need to add a cmp instruction
             // and then the branch instruction
             // generate the cmp
-            var cmpRD = try arm.program.getOpfromIR(func, compIR.lhs, null);
-            var cmpO2 = try arm.program.getOpfromIR(func, compIR.rhs, null);
+            var cmpRD = try arm.program.getOpfromIR(func, ir, compIR.lhs, null);
+            var cmpO2 = try arm.program.getOpfromIR(func, ir, compIR.rhs, null);
             try armFunc.ensureImmOrAtLeastOneRegNoSwap(armBlock, ir, &cmpRD, &cmpO2);
 
             // gen cmp
@@ -1480,7 +1568,7 @@ pub fn gen_inst(
                 },
                 .Binop => {
                     switch (compInst.extra.op) {
-                        .And => {
+                        .And, .Add => {
                             // jmp to false
                             var jumpInst = Inst.b(brFalse.getLabel(), arm.program.insts.items.len);
                             try armFunc.addInst(jumpInst, armBlock);
@@ -1491,12 +1579,26 @@ pub fn gen_inst(
                             try armFunc.addInst(jumpInst, armBlock);
                         },
                         else => {
+                            std.debug.print("Binop: {s}\n", .{@tagName(compInst.extra.op)});
                             unreachable;
                         },
                     }
                 },
                 else => {
-                    unreachable;
+                    // do != 0 compare
+                    var zero = Operand.asOpImm(IR.InternPool.ZERO);
+                    var op = try arm.program.getOpfromIR(func, ir, brOn, null);
+                    try armFunc.ensureBothReg(ir, armBlock, &op, &zero);
+
+                    var cmpInst = Inst.cmp(op.getReg(), zero, arm.program.insts.items.len);
+                    try armFunc.addInst(cmpInst, armBlock);
+                    var CC = ConditionCode.EQ;
+                    var bccInst = Inst.bcc(brFalse.getLabel(), CC, arm.program.insts.items.len);
+                    try armFunc.addInst(bccInst, armBlock);
+                    // jmp to the True block
+                    var bInst = Inst.b(brTrue.getLabel(), arm.program.insts.items.len);
+                    try armFunc.addInst(bInst, armBlock);
+                    // unreachable;
                 },
             }
         },
@@ -1508,8 +1610,8 @@ pub fn gen_inst(
         },
         .Load => {
             const loadIR = IR.Inst.Load.get(irInst);
-            var loadRD = try arm.program.getOpfromIR(func, loadIR.res, arm.program.insts.items.len);
-            var loadAddr = try arm.program.getOpfromIR(func, loadIR.ptr, null);
+            var loadRD = try arm.program.getOpfromIR(func, ir, loadIR.res, arm.program.insts.items.len);
+            var loadAddr = try arm.program.getOpfromIR(func, ir, loadIR.ptr, null);
             if (loadAddr.kind == OperandKind.Reg) {
                 loadAddr.kind = OperandKind.MemReg;
             }
@@ -1534,18 +1636,18 @@ pub fn gen_inst(
                 .global => {
                     var strAdrTmp = Reg{ .id = arm.program.regs.items.len, .name = storeIR.to.name, .inst = arm.program.insts.items.len, .irID = 0xdeadbeef };
                     try arm.program.addReg(strAdrTmp);
-                    var storeAddr = try arm.program.getOpfromIR(func, storeIR.to, null);
+                    var storeAddr = try arm.program.getOpfromIR(func, ir, storeIR.to, null);
                     var loadInst = Inst.ldr(strAdrTmp, storeAddr, true, arm.program.insts.items.len);
                     try armFunc.addInst(loadInst, armBlock);
                     // we have to load the address to a register
                     var storeAdrOp = Operand.asOpMemReg(strAdrTmp);
-                    var storeRT = try arm.program.getOpfromIR(func, storeIR.from, null);
+                    var storeRT = try arm.program.getOpfromIR(func, ir, storeIR.from, null);
                     var storeInst = Inst.str(storeRT.getReg(), storeAdrOp, true, arm.program.insts.items.len); //lololol always be signed
                     try armFunc.addInst(storeInst, armBlock);
                 },
                 else => {
-                    var storeRT = try arm.program.getOpfromIR(func, storeIR.from, null);
-                    var storeAddr = try arm.program.getOpfromIR(func, storeIR.to, null);
+                    var storeRT = try arm.program.getOpfromIR(func, ir, storeIR.from, null);
+                    var storeAddr = try arm.program.getOpfromIR(func, ir, storeIR.to, null);
                     if (storeAddr.kind == OperandKind.Reg) {
                         storeAddr.kind = OperandKind.MemReg;
                     }
@@ -1567,9 +1669,18 @@ pub fn gen_inst(
                     var emptyReg = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
                     emptyReg.selection = SelectedReg.fromInt(idx);
                     try arm.program.addReg(emptyReg);
-                    var argOp = try arm.program.getOpfromIR(func, arg, arm.program.insts.items.len);
-                    var movInst = Inst.mov(emptyReg, argOp, arm.program.insts.items.len);
-                    try armFunc.addInst(movInst, armBlock);
+                    var argOp = try arm.program.getOpfromIR(func, ir, arg, arm.program.insts.items.len);
+                    if (argOp.kind == OperandKind.MemGlobal) {
+                        // do load
+                        var loadRD = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
+                        loadRD.selection = SelectedReg.fromInt(idx);
+                        try arm.program.addReg(loadRD);
+                        var loadInst = Inst.ldr(loadRD, argOp, true, arm.program.insts.items.len);
+                        try armFunc.addInst(loadInst, armBlock);
+                    } else {
+                        var movInst = Inst.mov(emptyReg, argOp, arm.program.insts.items.len);
+                        try armFunc.addInst(movInst, armBlock);
+                    }
                 }
                 var blInst = Inst.bl(funName, arm.program.insts.items.len);
                 try armFunc.addInst(blInst, armBlock);
@@ -1580,9 +1691,18 @@ pub fn gen_inst(
                     var emptyReg = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
                     emptyReg.selection = SelectedReg.fromInt(idx);
                     try arm.program.addReg(emptyReg);
-                    var argOp = try arm.program.getOpfromIR(func, arg, arm.program.insts.items.len);
-                    var movInst = Inst.mov(emptyReg, argOp, arm.program.insts.items.len);
-                    try armFunc.addInst(movInst, armBlock);
+                    var argOp = try arm.program.getOpfromIR(func, ir, arg, arm.program.insts.items.len);
+                    if (argOp.kind == OperandKind.MemGlobal) {
+                        // do load
+                        var loadRD = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
+                        loadRD.selection = SelectedReg.fromInt(idx);
+                        try arm.program.addReg(loadRD);
+                        var loadInst = Inst.ldr(loadRD, argOp, true, arm.program.insts.items.len);
+                        try armFunc.addInst(loadInst, armBlock);
+                    } else {
+                        var movInst = Inst.mov(emptyReg, argOp, arm.program.insts.items.len);
+                        try armFunc.addInst(movInst, armBlock);
+                    }
                 }
                 var blInst = Inst.bl(funName, arm.program.insts.items.len);
                 try armFunc.addInst(blInst, armBlock);
@@ -1592,19 +1712,25 @@ pub fn gen_inst(
                     var emptyReg = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
                     emptyReg.selection = SelectedReg.fromInt(idx);
                     try arm.program.addReg(emptyReg);
-                    var argOp = try arm.program.getOpfromIR(func, arg, arm.program.insts.items.len);
+                    var argOp = try arm.program.getOpfromIR(func, ir, arg, arm.program.insts.items.len);
                     var movInst = Inst.mov(emptyReg, argOp, arm.program.insts.items.len);
                     try armFunc.addInst(movInst, armBlock);
                 }
                 var blInst = Inst.bl(funName, arm.program.insts.items.len);
                 try armFunc.addInst(blInst, armBlock);
+                // mov x0 into the result register
+                var retReg = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X0 };
+                try arm.program.addReg(retReg);
+                var res_ = try arm.program.getOpfromIR(func, ir, callIR.res, arm.program.insts.items.len);
+                var movInst = Inst.mov(res_.getReg(), Operand.asOpReg(retReg), arm.program.insts.items.len);
+                try armFunc.addInst(movInst, armBlock);
             } else if (funName == ir.internIdent("free")) {
                 for (callIR.args, 0..) |arg, idx| {
                     if (idx > 1) break;
                     var emptyReg = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
                     emptyReg.selection = SelectedReg.fromInt(idx);
                     try arm.program.addReg(emptyReg);
-                    var argOp = try arm.program.getOpfromIR(func, arg, arm.program.insts.items.len);
+                    var argOp = try arm.program.getOpfromIR(func, ir, arg, arm.program.insts.items.len);
                     var movInst = Inst.mov(emptyReg, argOp, arm.program.insts.items.len);
                     try armFunc.addInst(movInst, armBlock);
                 }
@@ -1634,7 +1760,7 @@ pub fn gen_inst(
                     std.debug.print("armFunc.params.items.len {d}\n", .{funF.params.items.len});
                     var armReg = funF.params.items[idx];
                     armReg.selection = SelectedReg.fromInt(idx);
-                    var arg = try arm.program.getOpfromIR(func, irArg, arm.program.insts.items.len);
+                    var arg = try arm.program.getOpfromIR(func, ir, irArg, arm.program.insts.items.len);
                     var movInst = Inst.mov(armReg, arg, arm.program.insts.items.len);
                     try armFunc.addInst(movInst, armBlock);
                 }
@@ -1648,7 +1774,7 @@ pub fn gen_inst(
                 if (callIR.retTy != .void) {
                     var retReg = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = null, .irID = 0xDEADBEEF, .selection = SelectedReg.X0 };
                     try arm.program.addReg(retReg);
-                    var res_ = try arm.program.getOpfromIR(func, callIR.res, arm.program.insts.items.len);
+                    var res_ = try arm.program.getOpfromIR(func, ir, callIR.res, arm.program.insts.items.len);
                     // var newName = std.ArrayList(u8).init(ir.alloc);
                     // for (ir.getIdent(callIR.res.name)) |c| {
                     //     try newName.append(c);
@@ -1669,45 +1795,52 @@ pub fn gen_inst(
         .Gep => {
             // this is going to be the big kahuna
             const gepIR = IR.Inst.Gep.get(irInst);
-            var getPtrVal = try arm.program.getOpfromIR(func, gepIR.ptrVal, null);
+            var getPtrVal = try arm.program.getOpfromIR(func, ir, gepIR.ptrVal, null);
             if (getPtrVal.reg.name == ir.internIdent(".println")) {
                 var gepPtrName = ir.internIdent("_println");
                 getPtrVal.reg.name = gepPtrName;
-                var gepRD = try arm.program.getOpfromIR(func, gepIR.res, arm.program.insts.items.len);
+                var gepRD = try arm.program.getOpfromIR(func, ir, gepIR.res, arm.program.insts.items.len);
                 gepRD.reg.selection = .X0;
                 var loadInst = Inst.ldr(gepRD.getReg(), getPtrVal, true, arm.program.insts.items.len);
                 try armFunc.addInst(loadInst, armBlock);
             } else if (getPtrVal.reg.name == ir.internIdent(".print")) {
                 var gepPtrName = ir.internIdent("_print");
                 getPtrVal.reg.name = gepPtrName;
-                var gepRD = try arm.program.getOpfromIR(func, gepIR.res, arm.program.insts.items.len);
+                var gepRD = try arm.program.getOpfromIR(func, ir, gepIR.res, arm.program.insts.items.len);
                 gepRD.reg.selection = .X0;
                 var loadInst = Inst.ldr(gepRD.getReg(), getPtrVal, true, arm.program.insts.items.len);
                 try armFunc.addInst(loadInst, armBlock);
             } else if (getPtrVal.reg.name == ir.internIdent(".read")) {
                 var gepPtrName = ir.internIdent("_read");
                 getPtrVal.reg.name = gepPtrName;
-                var gepRD = try arm.program.getOpfromIR(func, gepIR.res, arm.program.insts.items.len);
+                var gepRD = try arm.program.getOpfromIR(func, ir, gepIR.res, arm.program.insts.items.len);
                 gepRD.reg.selection = .X0;
                 var loadInst = Inst.ldr(gepRD.getReg(), getPtrVal, true, arm.program.insts.items.len);
                 try armFunc.addInst(loadInst, armBlock);
             } else {
-                var gepIdx = try arm.program.getOpfromIR(func, gepIR.index, null);
+                var gepIdx = try arm.program.getOpfromIR(func, ir, gepIR.index, null);
                 // mul gepIDX by the size of the type (8)
                 var imm = ir.internIdent("8");
                 var immOpt = Operand.asOpImm(imm);
-                try armFunc.ensureBothReg(ir, armBlock, &immOpt, &gepIdx);
+                // load 8 to x14
+                var x14 = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X14 };
+                try arm.program.addReg(x14);
+                var movInst = Inst.mov(x14, immOpt, arm.program.insts.items.len);
+                try armFunc.addInst(movInst, armBlock);
+                var x14Op = Operand.asOpReg(x14);
+
+                try armFunc.ensureBothReg(ir, armBlock, &x14Op, &gepIdx);
                 gepIdx.reg.inst = arm.program.insts.items.len;
                 // do the mul
                 // add a new reg for the result of the index * 8
-                var mulRD = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF };
+                var mulRD = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = arm.program.insts.items.len, .irID = 0xDEADBEEF, .selection = SelectedReg.X14 };
                 try arm.program.addReg(mulRD);
-                var mulInst = Inst.mul(mulRD, gepIdx.getReg(), immOpt.getReg(), false, arm.program.insts.items.len);
+                var mulInst = Inst.mul(mulRD, gepIdx.getReg(), x14Op.getReg(), false, arm.program.insts.items.len);
                 try armFunc.addInst(mulInst, armBlock);
                 var mulOp = Operand.asOpReg(mulRD);
 
                 // add the ptr val and the idx
-                var gepRD = try arm.program.getOpfromIR(func, gepIR.res, arm.program.insts.items.len);
+                var gepRD = try arm.program.getOpfromIR(func, ir, gepIR.res, arm.program.insts.items.len);
                 try armFunc.ensureBothReg(ir, armBlock, &getPtrVal, &gepRD);
                 try armFunc.ensureBothReg(ir, armBlock, &gepRD, &mulOp);
                 if (gepRD.reg.name == IR.InternPool.NULL) {
@@ -1720,8 +1853,8 @@ pub fn gen_inst(
         },
         .Bitcast => {
             const miscIR = IR.Inst.Misc.get(irInst);
-            var bitcastRD = try arm.program.getOpfromIR(func, miscIR.res, arm.program.insts.items.len);
-            var bitcastOp = try arm.program.getOpfromIR(func, miscIR.from, null);
+            var bitcastRD = try arm.program.getOpfromIR(func, ir, miscIR.res, arm.program.insts.items.len);
+            var bitcastOp = try arm.program.getOpfromIR(func, ir, miscIR.from, null);
             bitcastRD.reg.inst = arm.program.insts.items.len;
             var movInst = Inst.mov(bitcastRD.getReg(), bitcastOp, arm.program.insts.items.len);
             try armFunc.addInst(movInst, armBlock);
@@ -1730,6 +1863,11 @@ pub fn gen_inst(
             const allocIR = IR.Inst.Alloc.get(irInst);
             var printThisLolStrStart = "    sub sp, sp, #";
             var length: usize = switch (allocIR.ty) {
+                .strct => blk: {
+                    var structName = allocIR.ty.strct;
+                    var structSize = try getTypeSize(ir, structName);
+                    break :blk structSize;
+                },
                 .arr => blk: {
                     var arrIRLen = allocIR.ty.arr.len;
                     arrIRLen *= 8;
@@ -1760,10 +1898,18 @@ pub fn gen_inst(
             var strID = ir.internIdent(try resultString.toOwnedSlice());
             var strInst = Inst.print_this_lol(strID, arm.program.insts.items.len);
             try armFunc.addInst(strInst, armBlock);
-            var allocRD = try arm.program.getOpfromIR(func, allocIR.res, arm.program.insts.items.len);
+            var allocRD = try arm.program.getOpfromIR(func, ir, allocIR.res, arm.program.insts.items.len);
             // create mov from sp to the res
             var sp = Reg{ .id = arm.program.regs.items.len, .name = IR.InternPool.NULL, .inst = null, .irID = 0xDEADBEEF, .selection = SelectedReg.SP };
             var movInst = Inst.mov(allocRD.getReg(), Operand.asOpReg(sp), arm.program.insts.items.len);
+            try armFunc.addInst(movInst, armBlock);
+        },
+        .Sext => {
+            const sextIR = IR.Inst.Misc.get(irInst);
+            var sextRD = try arm.program.getOpfromIR(func, ir, sextIR.res, arm.program.insts.items.len);
+            var sextOp = try arm.program.getOpfromIR(func, ir, sextIR.from, null);
+            sextRD.reg.inst = arm.program.insts.items.len;
+            var movInst = Inst.mov(sextRD.getReg(), sextOp, arm.program.insts.items.len);
             try armFunc.addInst(movInst, armBlock);
         },
         else => {
@@ -1772,6 +1918,10 @@ pub fn gen_inst(
         },
     }
     return res or false;
+}
+
+pub fn getTypeSize(ir: *IR, name: Imm) !u32 {
+    return (try ir.types.get(name)).size;
 }
 
 /////////////
@@ -1938,9 +2088,9 @@ fn inputToIRStringHeader(input: []const u8, alloc: std.mem.Allocator) ![]const u
 // }
 //
 
-test "arm_killerBubs" {
+test "arm_primes" {
     errdefer log.print();
-    const in = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
+    const in = @embedFile("../../test-suite/tests/milestone2/benchmarks/primes/primes.mini");
     var str = try inputToIRStringHeader(in, testAlloc);
     std.debug.print("{s}\n", .{str});
     var ir = try testMe(in);
@@ -1948,3 +2098,34 @@ test "arm_killerBubs" {
     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
     std.debug.print("{s}\n", .{str2});
 }
+
+// test "arm_killerBubs" {
+//     errdefer log.print();
+//     const in = @embedFile("../../test-suite/tests/milestone2/benchmarks/killerBubbles/killerBubbles.mini");
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     var ir = try testMe(in);
+//     var arm = try gen_program(&ir);
+//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+//     std.debug.print("{s}\n", .{str2});
+// }
+//
+// test "arm_scanf" {
+//     errdefer log.print();
+//     const in = "fun main() void { int a; a = read; print a endl; }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     var ir = try testMe(in);
+//     var arm = try gen_program(&ir);
+//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+//     std.debug.print("{s}\n", .{str2});
+// }
+// test "arm-create-free" {
+//     const in = "struct S {int a; struct S s;}; fun freeMe(struct S s) void {delete s;} fun main() void { struct S s; s = new S; s.s = new S; freeMe(s); }";
+//     var str = try inputToIRStringHeader(in, testAlloc);
+//     std.debug.print("{s}\n", .{str});
+//     var ir = try testMe(in);
+//     var arm = try gen_program(&ir);
+//     var str2 = try Stringify.stringify(&arm, &ir, ir.alloc);
+//     std.debug.print("{s}\n", .{str2});
+// }
