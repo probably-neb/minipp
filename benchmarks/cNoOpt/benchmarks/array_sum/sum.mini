@@ -1,0 +1,28 @@
+fun sum(int_array arr, int size, int index) int
+{
+   if (index >= size)
+   {
+      return 0;
+   }
+
+   return arr[index] + sum(arr, size, index + 1);
+}
+
+fun main() int
+{
+    int_array arr;
+    int index;
+
+    arr = new int_array[10];
+    index = 0;
+
+    while (index < 10)
+    {
+        arr[index] = read;
+        index = index + 1;
+    }
+
+    print sum(arr, 10, 0) endl;
+
+    return 0;
+}

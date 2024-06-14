@@ -1,0 +1,254 @@
+# Semantic testing
+#
+# Each group represents a certain area of testing (math, booleans, etc.).
+# All tests output 1 on success, 0 on failure.
+# Any non-zero output in the first column is for visual help in spotting spots
+# where tests output.
+# To easily check if all tests fail, just redirect the output to grep:
+#  ./a.out | grep "^0|[:alpha:]"
+
+struct thing {
+	int i;
+	bool b;
+	struct thing s;
+};
+
+int gi1;
+bool gb1;
+struct thing gs1;
+
+# Global counter
+int counter;
+
+fun printgroup(int groupnum) void
+{
+	# Prints out test group number in a easily recognizable pattern
+	print 1;
+	print 0;
+	print 1;
+	print 0;
+	print 1;
+	print 0;
+	print groupnum endl;
+
+	return;
+}
+
+fun setcounter(int val) bool
+{
+	# Used for testing of for non-short circuit usage by conditionals
+	counter = val;
+
+	return true;
+}
+
+fun takealltypes(int i, bool b, struct thing s) void
+{
+	if (i == 3) { print 1 endl; } else { print 0 endl; }
+	if (b) { print 1 endl; } else { print 0 endl; }
+	if (s.b) { print 1 endl; } else { print 0 endl; }
+}
+
+fun tonofargs(int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8)
+void
+{
+	if (a5 == 5) { print 1 endl; } else { print 0; print a5 endl; }
+	if (a6 == 6) { print 1 endl; } else { print 0; print a6 endl; }
+	if (a7 == 7) { print 1 endl; } else { print 0; print a7 endl; }
+	if (a8 == 8) { print 1 endl; } else { print 0; print a8 endl; }
+}
+
+fun returnint(int ret)             int          { return ret; }
+fun returnbool(bool ret)           bool         { return ret; }
+fun returnstruct(struct thing ret) struct thing { return ret; }
+
+fun main() int {
+
+	# Tests
+	bool b1, b2;
+	int i1, i2, i3;
+	struct thing s1, s2;
+
+	# Reset global counter
+	counter = 0;
+
+	# ------------
+	# Conditionals
+	# Test '&&'
+	printgroup(1);
+
+	b1 = false;
+	b2 = false;
+	if (b1 && b2) { print 0 endl; } else { print 1 endl; }
+
+	b1 = true;
+	b2 = false;
+	if (b1 && b2) { print 0 endl; } else { print 1 endl; }
+
+	b1 = false;
+	b2 = true;
+	if (b1 && b2) { print 0 endl; } else { print 1 endl; }
+
+	b1 = true;
+	b2 = true;
+	if (b1 && b2) { print 1 endl; } else { print 0 endl; }
+
+	counter = 0;
+
+	# Test '||'
+	printgroup(2);
+
+	b1 = true;
+	b2 = true;
+	if (b1 || b2) { print 1 endl; } else { print 0 endl; }
+
+	b1 = true;
+	b2 = false;
+	if (b1 || b2) { print 1 endl; } else { print 0 endl; }
+
+	b1 = false;
+	b2 = true;
+	if (b1 || b2) { print 1 endl; } else { print 0 endl; }
+
+	b1 = false;
+	b2 = false;
+	if (b1 || b2) { print 0 endl; } else { print 1 endl; }
+
+	# -----------------
+	# Boolean comparison
+	printgroup(3);
+
+	if (42 > 1) { print 1 endl; } else { print 0 endl; }
+	if (42 >= 1) { print 1 endl; } else { print 0 endl; }
+	if (42 < 1) { print 0 endl; } else { print 1 endl; }
+	if (42 <= 1) { print 0 endl; } else { print 1 endl; }
+	if (42 == 1) { print 0 endl; } else { print 1 endl; }
+	if (42 != 1) { print 1 endl; } else { print 0 endl; }
+	if (true) { print 1 endl; } else { print 0 endl; }
+	if (!true) { print 0 endl; } else { print 1 endl; }
+	if (false) { print 0 endl; } else { print 1 endl; }
+	if (!false) { print 1 endl; } else { print 0 endl; }
+	if (!false) { print 1 endl; } else { print 0 endl; }
+	# structs comparison tested in struct section
+
+	# ----------------
+	# Math
+	printgroup(4);
+
+	if ((2 + 3) == 5) { print 1 endl; }
+	else { print 0; print (2 + 3) endl; }
+	if ((2 * 3) == 6) { print 1 endl; }
+	else { print 0; print (2 * 3) endl; }
+	if ((3 - 2) == 1) { print 1 endl; }
+	else { print 0; print (3 - 2) endl; }
+	if ((6 / 3) == 2) {print 1 endl; }
+	else { print 0; print (6 / 3) endl; }
+	if (-6 < 0) { print 1 endl; } else { print 0 endl; }
+
+	# ---------------
+	# Locals
+	printgroup(5);
+	i1 = 42;
+	if (i1 == 42) { print 1 endl; } else { print 0 endl; }
+
+	i1 = 3;
+	i2 = 2;
+	i3 = i1 + i2;
+	if (i3 == 5) { print 1 endl; } else { print 0 endl; }	
+
+	b1 = true;
+	if (b1) { print 1 endl; } else { print 0 endl; }
+	if (!b1) { print 0 endl; } else { print 1 endl; }
+	
+	b1 = false;
+	if (b1) { print 0 endl; } else { print 1 endl; }
+	if (!b1) { print 1 endl; } else { print 0 endl; }
+	if (b1) { print 0 endl; } else { print 1 endl; }
+
+	# ---------------
+	# flow control
+	printgroup(6);
+	i1 = 0;
+	while (i1 < 5) {
+		if (i1 >= 5) { print 0 endl;}
+		i1 = i1 + 5;
+	}
+	if (i1 == 5)  { print 1 endl; } else { print 0; print i1 endl; }
+
+	# ---------------
+	# Structs
+	printgroup(7);
+
+	s1 = new thing;
+	s1.i = 42;
+	s1.b = true;
+	if (s1.i == 42) { print 1 endl; } else { print 0; print s1.i endl; }
+	if (s1.b) { print 1 endl; } else { print 0 endl; }
+	
+	s1.s = new thing;
+	s1.s.i = 13;
+	s1.s.b = false;
+
+	if (s1.s.i == 13) { print 1 endl; } else { print 0; print s1.s.i endl; }
+	if (!s1.s.b) { print 1 endl; } else { print 0 endl; }
+
+	if (s1 == s1) { print 1 endl; } else { print 0 endl; }
+	if (s1 != s1.s) { print 1 endl; } else { print 0 endl; }
+
+	delete s1.s;
+	delete s1;
+
+	# ---------------
+	# Globals
+	printgroup(8);
+
+	gi1 = 7;
+	if (gi1 == 7) { print 1 endl; } else { print 0; print gi1 endl;}
+
+	gb1 = true;
+	if (gb1) { print 1 endl; } else { print 0 endl; }
+
+	gs1 = new thing;
+	gs1.i = 34;
+	gs1.b = false;
+	if (gs1.i == 34) { print 1 endl; }
+	else { print 0; print gs1.i endl; }
+	if (!gs1.b) { print 1 endl; } else { print 0 endl; }
+
+	gs1.s = new thing;
+	gs1.s.i = 16;
+	gs1.s.b = true;
+	if (gs1.s.i == 16) { print 1 endl; }
+	else { print 0; print gs1.s.i endl; }
+	if (gs1.s.b) { print 1 endl; } else { print 0 endl; }
+
+	delete gs1.s;
+	delete gs1;
+
+	# ---------------
+	# Fxn calls
+	printgroup(9);
+	# passing all 3 types
+	s1 = new thing;
+	s1.b = true;
+	takealltypes(3, true, s1);
+	# going past 6 args
+	print 2 endl;
+	tonofargs(1, 2, 3, 4, 5, 6, 7, 8);
+	# returning all 3 types
+	print 3 endl;
+
+	i1 = returnint(3);
+	if (i1 == 3) { print 1 endl; } else { print 0; print i1 endl; }
+
+	b1 = returnbool(true);
+	if (b1) { print 1 endl; } else { print 0 endl; }
+
+	s1 = new thing;
+	s2 = returnstruct(s1);
+	if (s1 == s2) { print 1 endl; } else { print 0 endl; }
+
+	printgroup (10);
+
+	return 0;
+}
