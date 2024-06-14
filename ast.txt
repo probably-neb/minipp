@@ -1,0 +1,33 @@
+Program
+├─ ProgramDeclarations
+└─ Functions
+    └─ Fun bar
+        ├─ bar -> Bool
+        └─ FunctionBody
+            ├─ LocalDeclarations
+            │   ├─ Int a
+            │   └─ Int b
+            └─ StatementList
+                └─ Statement
+                    └─ Return
+                        └─ Expression
+                            └─ BinaryOperation NotEq
+                                ├─ BinaryOperation Plus
+                                │   ├─ Selector
+                                │   │   └─ Factor
+                                │   │       └─ Identifier a
+                                │   └─ BinaryOperation Mul
+                                │       ├─ Selector
+                                │       │   └─ Factor
+                                │       │       └─ Identifier b
+                                │       └─ Selector
+                                │           └─ Factor
+                                │               └─ Call foo
+                                └─ Selector
+                                    └─ Factor
+                                        └─ Number 0
+
+fun bar() bool {
+	int a, b;
+	return a + b * foo() != 0;
+}
