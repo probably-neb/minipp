@@ -1,0 +1,189 @@
+{
+  "results": [
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/hanoi_benchmark/hanoi_benchmark < /home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/hanoi_benchmark/input",
+      "mean": 0.23294117884000004,
+      "stddev": 0.005491274644483497,
+      "median": 0.23327255664000002,
+      "user": 0.23293780000000003,
+      "system": 0.00043667199999999993,
+      "min": 0.22481759914000002,
+      "max": 0.24250236514,
+      "times": [
+        0.22481759914000002,
+        0.23486838214000003,
+        0.23590960314,
+        0.22839728914000001,
+        0.22655032814,
+        0.23097012514,
+        0.24250236514,
+        0.23395520614,
+        0.23258990714000002,
+        0.23885098314000003
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cNoOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/hanoi_benchmark/hanoi_benchmark < /home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/hanoi_benchmark/input",
+      "mean": 0.11895064814,
+      "stddev": 0.0036326180448259214,
+      "median": 0.11947050464,
+      "user": 0.11808759999999999,
+      "system": 0.0008281300000000001,
+      "min": 0.11113742014000001,
+      "max": 0.12401248514000002,
+      "times": [
+        0.12401248514000002,
+        0.11972176514000002,
+        0.11617684714000001,
+        0.11943447014000001,
+        0.11113742014000001,
+        0.11950653914,
+        0.12226674914000002,
+        0.12192978214000001,
+        0.11748615814000002,
+        0.11783426514000002
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/hanoi_benchmark/hanoi_benchmark < /home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/hanoi_benchmark/input",
+      "mean": 0.13734096824000003,
+      "stddev": 0.0076689755543421275,
+      "median": 0.13592855364,
+      "user": 0.1361677,
+      "system": 0.001152844,
+      "min": 0.12921323414000002,
+      "max": 0.15285895214,
+      "times": [
+        0.14148960014,
+        0.14102134614,
+        0.13831976414000002,
+        0.13353734314000001,
+        0.13161188714000002,
+        0.12921323414000002,
+        0.12955409914000002,
+        0.13149149214000003,
+        0.15285895214,
+        0.14431196414000003
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "stack"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/hanoi_benchmark/hanoi_benchmark < /home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/hanoi_benchmark/input",
+      "mean": 0.14456457074,
+      "stddev": 0.011845616717524713,
+      "median": 0.14077544564,
+      "user": 0.1441169,
+      "system": 0.0008431579999999999,
+      "min": 0.13425968214,
+      "max": 0.17118215414000001,
+      "times": [
+        0.13901659014,
+        0.14253430114,
+        0.13582705114000002,
+        0.13489909714,
+        0.13425968214,
+        0.13694305414000002,
+        0.14392994014000002,
+        0.15003579414,
+        0.17118215414000001,
+        0.15701804314
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "phi"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/hanoi_benchmark/hanoi_benchmark < /home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/hanoi_benchmark/input",
+      "mean": 0.13744758284,
+      "stddev": 0.012154894357122041,
+      "median": 0.13480186864000002,
+      "user": 0.1376424,
+      "system": 0.0,
+      "min": 0.12658194914,
+      "max": 0.16824243714,
+      "times": [
+        0.12658194914,
+        0.12836235114000002,
+        0.14543944614,
+        0.13598778914,
+        0.16824243714,
+        0.13884251814,
+        0.13361594814000002,
+        0.12956380414000002,
+        0.13156671914,
+        0.13627286614
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "opt"
+      }
+    }
+  ]
+}

@@ -1,0 +1,189 @@
+{
+  "results": [
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/primes/primes < /home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/primes/input",
+      "mean": 0.20195034148,
+      "stddev": 0.0038972504842681773,
+      "median": 0.20225857888,
+      "user": 0.20088548,
+      "system": 0.0010555719999999998,
+      "min": 0.19595059238,
+      "max": 0.21013981438,
+      "times": [
+        0.20214591338000001,
+        0.21013981438,
+        0.20237124438,
+        0.19786966138,
+        0.19595059238,
+        0.20307919138,
+        0.20475408938,
+        0.20093231438,
+        0.19951032638000002,
+        0.20275026738000002
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cNoOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/primes/primes < /home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/primes/input",
+      "mean": 0.06461857128000001,
+      "stddev": 0.0016288211260928327,
+      "median": 0.06562671787999999,
+      "user": 0.06396247999999999,
+      "system": 0.0007674039999999999,
+      "min": 0.06152936638,
+      "max": 0.06598766337999999,
+      "times": [
+        0.06575982538,
+        0.06582374238,
+        0.06362444437999999,
+        0.06358268638,
+        0.06266847337999999,
+        0.06152936638,
+        0.06589657538,
+        0.06598766337999999,
+        0.06581932538,
+        0.06549361038
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/primes/primes < /home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/primes/input",
+      "mean": 0.08152288958000001,
+      "stddev": 0.0037151246072454126,
+      "median": 0.08101389687999999,
+      "user": 0.08047867999999998,
+      "system": 0.001113304,
+      "min": 0.07620111138,
+      "max": 0.08770041238,
+      "times": [
+        0.08651577338,
+        0.08444225638,
+        0.08770041238,
+        0.08151209538,
+        0.08060845138,
+        0.08141934238,
+        0.08027516838,
+        0.07891395538,
+        0.07764032938,
+        0.07620111138
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "stack"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/primes/primes < /home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/primes/input",
+      "mean": 0.07702912328,
+      "stddev": 0.003190069033460612,
+      "median": 0.07573089438,
+      "user": 0.07605158,
+      "system": 0.0010794399999999999,
+      "min": 0.07314959738,
+      "max": 0.08403622738,
+      "times": [
+        0.07538777737999999,
+        0.07497359638,
+        0.07314959738,
+        0.08403622738,
+        0.08017942338,
+        0.07876332738,
+        0.07730237338,
+        0.07607401138,
+        0.07520694438,
+        0.07521795438
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "phi"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/primes/primes < /home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/primes/input",
+      "mean": 0.07692582218,
+      "stddev": 0.0027162139616621543,
+      "median": 0.07577384788,
+      "user": 0.07631428,
+      "system": 0.0007396039999999999,
+      "min": 0.07489413137999999,
+      "max": 0.08349494538,
+      "times": [
+        0.07523108338,
+        0.07665861438,
+        0.07777787638,
+        0.07616781638,
+        0.07537987938,
+        0.07531677838,
+        0.07495740438,
+        0.07489413137999999,
+        0.08349494538,
+        0.07937969238
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "opt"
+      }
+    }
+  ]
+}

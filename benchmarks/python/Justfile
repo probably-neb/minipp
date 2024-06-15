@@ -1,0 +1,2 @@
+gen:
+    pandoc -i report.md --from markdown -o report.pdf --lua-filter=include.lua --number-sections --toc

@@ -9,3 +9,4 @@ clang+llvm-7.0.1-x86_64-linux-gnu-ubuntu-18.04.tar.xz
 .zig_debug_last_executable.txt
 tmp.ll
 tmp.s
+benchmarks/python/.venv

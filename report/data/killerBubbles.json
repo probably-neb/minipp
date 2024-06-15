@@ -1,0 +1,189 @@
+{
+  "results": [
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/killerBubbles/killerBubbles < /home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/killerBubbles/input",
+      "mean": 2.23462717982,
+      "stddev": 0.08050435056302296,
+      "median": 2.22946138052,
+      "user": 2.2281285199999994,
+      "system": 0.002421612,
+      "min": 2.1337965200199998,
+      "max": 2.33238504502,
+      "times": [
+        2.29572872302,
+        2.28551364602,
+        2.16184864202,
+        2.16910787102,
+        2.16127162702,
+        2.33238504502,
+        2.30875383602,
+        2.32445677302,
+        2.17340911502,
+        2.1337965200199998
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cNoOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/killerBubbles/killerBubbles < /home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/killerBubbles/input",
+      "mean": 0.82205242262,
+      "stddev": 0.04715317746147871,
+      "median": 0.81534124902,
+      "user": 0.8207366199999999,
+      "system": 0.00040383199999999996,
+      "min": 0.77104767102,
+      "max": 0.88977376202,
+      "times": [
+        0.79656330702,
+        0.78965443902,
+        0.83592178302,
+        0.77692641602,
+        0.88240235402,
+        0.77152363502,
+        0.77104767102,
+        0.83411919102,
+        0.88977376202,
+        0.87259166802
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/killerBubbles/killerBubbles < /home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/killerBubbles/input",
+      "mean": 0.9669332873200001,
+      "stddev": 0.039640789757199445,
+      "median": 0.96718071652,
+      "user": 0.9548751200000002,
+      "system": 0.0010766640000000002,
+      "min": 0.90811769002,
+      "max": 1.02073793802,
+      "times": [
+        0.93646147102,
+        0.90811769002,
+        0.92112728602,
+        0.99282458002,
+        1.01182608702,
+        1.02073793802,
+        0.99735942002,
+        0.98632716602,
+        0.94651696802,
+        0.94803426702
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "stack"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/killerBubbles/killerBubbles < /home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/killerBubbles/input",
+      "mean": 0.9473759214199999,
+      "stddev": 0.03601290329479282,
+      "median": 0.9308857955200001,
+      "user": 0.94515652,
+      "system": 0.00131118,
+      "min": 0.91869818102,
+      "max": 1.03548578802,
+      "times": [
+        0.91869818102,
+        0.9309167230200001,
+        1.03548578802,
+        0.92431356802,
+        0.92952172902,
+        0.9308548680200001,
+        0.94177273102,
+        0.97623995702,
+        0.96283850002,
+        0.92311716902
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "phi"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/killerBubbles/killerBubbles < /home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/killerBubbles/input",
+      "mean": 0.9124342910200001,
+      "stddev": 0.040711261734297274,
+      "median": 0.89465683602,
+      "user": 0.90986642,
+      "system": 0.0018918799999999999,
+      "min": 0.87575804502,
+      "max": 0.99322365502,
+      "times": [
+        0.99322365502,
+        0.95187259302,
+        0.88735688202,
+        0.87575804502,
+        0.89560667802,
+        0.87585388302,
+        0.95832051102,
+        0.89370699402,
+        0.88484222502,
+        0.90780144402
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "opt"
+      }
+    }
+  ]
+}

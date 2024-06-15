@@ -1,0 +1,189 @@
+{
+  "results": [
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/binaryConverter/binaryConverter < /home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/binaryConverter/input",
+      "mean": 2.09172096854,
+      "stddev": 0.03624826821970208,
+      "median": 2.0858838645400004,
+      "user": 2.0892198199999994,
+      "system": 0.00094141,
+      "min": 2.05205677354,
+      "max": 2.1538212045400003,
+      "times": [
+        2.08229325354,
+        2.1538212045400003,
+        2.1422959445400003,
+        2.0894744755400003,
+        2.05752736854,
+        2.05205677354,
+        2.0897685575400002,
+        2.07759752154,
+        2.12017448954,
+        2.05220009654
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cNoOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/binaryConverter/binaryConverter < /home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/binaryConverter/input",
+      "mean": 0.00017096444000000042,
+      "stddev": 0.000014465479593770057,
+      "median": 0.0001772685400000004,
+      "user": 0.0007337159999999995,
+      "system": 0.000364784,
+      "min": 0.0001487885400000004,
+      "max": 0.0001899315400000004,
+      "times": [
+        0.00015734154000000052,
+        0.00015550354000000042,
+        0.00018070154000000057,
+        0.00015844754000000037,
+        0.0001487885400000004,
+        0.0001899315400000004,
+        0.00017383554000000023,
+        0.00018117654000000035,
+        0.00018114354000000037,
+        0.00018277454000000058
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/binaryConverter/binaryConverter < /home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/binaryConverter/input",
+      "mean": 0.0003063537400000004,
+      "stddev": 0.00004050010071537549,
+      "median": 0.00030063454000000037,
+      "user": 0.0003925639999999996,
+      "system": 0.0005734259999999999,
+      "min": 0.00024565654000000036,
+      "max": 0.0003599295400000006,
+      "times": [
+        0.0003535345400000004,
+        0.0003599295400000006,
+        0.0003384245400000004,
+        0.0003419585400000003,
+        0.00024565654000000036,
+        0.0002931745400000002,
+        0.00027890954000000037,
+        0.0002580475400000004,
+        0.0003080945400000005,
+        0.00028580754000000035
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "stack"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/binaryConverter/binaryConverter < /home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/binaryConverter/input",
+      "mean": 0.0009961878400000005,
+      "stddev": 0.0011955351029423373,
+      "median": 0.00040551954000000046,
+      "user": 0.0014592199999999994,
+      "system": 0.000184442,
+      "min": 0.00033391054000000064,
+      "max": 0.003385463540000001,
+      "times": [
+        0.00033391054000000064,
+        0.00038000554000000054,
+        0.003385463540000001,
+        0.003129171540000001,
+        0.0005616165400000005,
+        0.0005606435400000004,
+        0.0004034855400000003,
+        0.0003985735400000006,
+        0.0004075535400000006,
+        0.0004014545400000003
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "phi"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/binaryConverter/binaryConverter < /home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/binaryConverter/input",
+      "mean": 0.0011974370400000005,
+      "stddev": 0.0014978643494931376,
+      "median": 0.00043759804000000047,
+      "user": 0.0016730199999999995,
+      "system": 0.000116084,
+      "min": 0.0003741285400000005,
+      "max": 0.0049083005400000004,
+      "times": [
+        0.0004493705400000006,
+        0.00042582554000000035,
+        0.0003909045400000005,
+        0.0004497255400000002,
+        0.0003741285400000005,
+        0.00038956454000000024,
+        0.0004102175400000005,
+        0.0015781135400000008,
+        0.0049083005400000004,
+        0.0025982195400000006
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "opt"
+      }
+    }
+  ]
+}

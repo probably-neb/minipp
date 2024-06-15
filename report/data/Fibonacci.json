@@ -1,0 +1,189 @@
+{
+  "results": [
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/Fibonacci/Fibonacci < /home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/Fibonacci/input",
+      "mean": 1.3426491251,
+      "stddev": 0.06913999885000903,
+      "median": 1.308233978,
+      "user": 1.33263226,
+      "system": 0.0013065099999999999,
+      "min": 1.284520452,
+      "max": 1.500420568,
+      "times": [
+        1.284520452,
+        1.396104249,
+        1.500420568,
+        1.389491384,
+        1.287184023,
+        1.296573169,
+        1.300014729,
+        1.316453227,
+        1.35579492,
+        1.29993453
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cNoOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/Fibonacci/Fibonacci < /home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/Fibonacci/input",
+      "mean": 0.686856865,
+      "stddev": 0.044823183500523577,
+      "median": 0.6682086285,
+      "user": 0.6830608600000001,
+      "system": 0.000841068,
+      "min": 0.644196291,
+      "max": 0.772006864,
+      "times": [
+        0.662803831,
+        0.666447557,
+        0.681035723,
+        0.644196291,
+        0.766709348,
+        0.772006864,
+        0.658454219,
+        0.664639266,
+        0.682305851,
+        0.6699697
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/Fibonacci/Fibonacci < /home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/Fibonacci/input",
+      "mean": 1.0054135624,
+      "stddev": 0.04127728233492294,
+      "median": 0.999815574,
+      "user": 1.0019911599999998,
+      "system": 0.001754752,
+      "min": 0.955245204,
+      "max": 1.094206369,
+      "times": [
+        1.000727419,
+        1.094206369,
+        1.02136449,
+        1.049516713,
+        1.001477762,
+        0.988253649,
+        0.998903729,
+        0.981048583,
+        0.963391706,
+        0.955245204
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "stack"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/Fibonacci/Fibonacci < /home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/Fibonacci/input",
+      "mean": 0.9993128331,
+      "stddev": 0.07965188766412665,
+      "median": 0.964329049,
+      "user": 0.99704196,
+      "system": 0.001096826,
+      "min": 0.9476618290000001,
+      "max": 1.203039828,
+      "times": [
+        1.0164660079999999,
+        1.203039828,
+        1.059734848,
+        0.965053398,
+        0.9636047,
+        0.951983948,
+        0.9693591850000001,
+        0.958902837,
+        0.95732175,
+        0.9476618290000001
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "phi"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/Fibonacci/Fibonacci < /home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/Fibonacci/input",
+      "mean": 1.1175043671,
+      "stddev": 0.2946064285189738,
+      "median": 0.981284916,
+      "user": 1.1142983599999998,
+      "system": 0.0011912679999999999,
+      "min": 0.960460229,
+      "max": 1.7678870789999999,
+      "times": [
+        1.7678870789999999,
+        1.569495547,
+        0.983849348,
+        1.0134074849999999,
+        0.989229156,
+        0.964411245,
+        0.960460229,
+        0.970598089,
+        0.978720484,
+        0.9769850090000001
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "opt"
+      }
+    }
+  ]
+}

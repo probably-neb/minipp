@@ -1,0 +1,189 @@
+{
+  "results": [
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/GeneralFunctAndOptimize/GeneralFunctAndOptimize < /home/neb/poly/csc-431-compilers/benchmarks/cNoOpt/benchmarks/GeneralFunctAndOptimize/input",
+      "mean": 1.1971972241000002,
+      "stddev": 0.1319968954468593,
+      "median": 1.1126255787,
+      "user": 1.19201054,
+      "system": 0.00266961,
+      "min": 1.0958770782,
+      "max": 1.4143312322,
+      "times": [
+        1.1004473451999999,
+        1.0980103182,
+        1.0998756122,
+        1.0969586102,
+        1.0958770782,
+        1.1248038122,
+        1.2556380782,
+        1.4119207552,
+        1.4143312322,
+        1.2741093991999999
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cNoOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/GeneralFunctAndOptimize/GeneralFunctAndOptimize < /home/neb/poly/csc-431-compilers/benchmarks/cOpt/benchmarks/GeneralFunctAndOptimize/input",
+      "mean": 0.1283151773,
+      "stddev": 0.005487079784665922,
+      "median": 0.1263609292,
+      "user": 0.12749754000000002,
+      "system": 0.0010632500000000002,
+      "min": 0.1221807292,
+      "max": 0.1420147492,
+      "times": [
+        0.1263796112,
+        0.12623834820000002,
+        0.12513514820000002,
+        0.1221807292,
+        0.1420147492,
+        0.1309318202,
+        0.1312695682,
+        0.1265935172,
+        0.1263422472,
+        0.1260660342
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "cOpt"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/GeneralFunctAndOptimize/GeneralFunctAndOptimize < /home/neb/poly/csc-431-compilers/benchmarks/stack/benchmarks/GeneralFunctAndOptimize/input",
+      "mean": 0.13371997070000002,
+      "stddev": 0.010098393202827563,
+      "median": 0.13069722620000002,
+      "user": 0.13190374,
+      "system": 0.00184294,
+      "min": 0.1256427572,
+      "max": 0.16114691620000002,
+      "times": [
+        0.1344794642,
+        0.1316005482,
+        0.1297939042,
+        0.1297774892,
+        0.1270786332,
+        0.1256427572,
+        0.16114691620000002,
+        0.1331782322,
+        0.1350415762,
+        0.1294601862
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "stack"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/GeneralFunctAndOptimize/GeneralFunctAndOptimize < /home/neb/poly/csc-431-compilers/benchmarks/phi/benchmarks/GeneralFunctAndOptimize/input",
+      "mean": 0.13841225470000001,
+      "stddev": 0.012159790045659046,
+      "median": 0.1355724932,
+      "user": 0.13664024,
+      "system": 0.0018264799999999997,
+      "min": 0.1294770452,
+      "max": 0.16951668420000002,
+      "times": [
+        0.1297226202,
+        0.1354339832,
+        0.1357110032,
+        0.1320683332,
+        0.13654985220000002,
+        0.1294770452,
+        0.1295828272,
+        0.1467329822,
+        0.1393272162,
+        0.16951668420000002
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "phi"
+      }
+    },
+    {
+      "command": "/home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/GeneralFunctAndOptimize/GeneralFunctAndOptimize < /home/neb/poly/csc-431-compilers/benchmarks/opt/benchmarks/GeneralFunctAndOptimize/input",
+      "mean": 0.1601552339,
+      "stddev": 0.016692758642280155,
+      "median": 0.1570438352,
+      "user": 0.15804433999999998,
+      "system": 0.0018737799999999998,
+      "min": 0.14440854820000001,
+      "max": 0.1983836562,
+      "times": [
+        0.14440854820000001,
+        0.1604372632,
+        0.1983836562,
+        0.1763382412,
+        0.1536504072,
+        0.1461226662,
+        0.1525454622,
+        0.1610995442,
+        0.1634894742,
+        0.14507707620000002
+      ],
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "parameters": {
+        "TYPE": "opt"
+      }
+    }
+  ]
+}

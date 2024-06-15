@@ -3,8 +3,8 @@ import sys
 import time
 import json
 import subprocess
-from llvmlite import ir
-from llvmlite import binding as llvm
+# from llvmlite import ir
+# from llvmlite import binding as llvm
 tests = {
         "BenchMarkishTopics" : 100,
         "Fibonacci" :10,
@@ -36,7 +36,10 @@ types = [("cNoOpt", "Clang -O0"),
          ("phi", "Phi"),
          ("opt", "Optimized")]
 
-wdir = "/home/spenc/calPoly/class/Csc341/minipp/benchmarks/"
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+_bench_dir = os.path.join(_this_dir, "../../benchmarks/")
+wdir = os.path.join(os.path.abspath(_bench_dir), '')
+print(wdir)
 
 def compeleCfiles():
     for key in tests.keys():
@@ -46,18 +49,41 @@ def compeleCfiles():
         
 def runTests():
     times = {}
-    for key in tests.keys():
+    types_str = ','.join(t[0] for t in types)
+    types_map = {t[0]: t[1] for t in types}
+    for test in tests.keys():
+        print(f"Running - {test}")
         individualTimes = {}
-        for tp in types:
-            dir = f"{wdir}{tp[0]}/benchmarks/{key}/"
-            perRunTimes = []
-            for i in range(tests[key]):
-                start = time.time()
-                os.system(f"{dir}{key} < {dir}input")
-                end = time.time()
-                perRunTimes.append(end - start)
-            individualTimes[tp[1]] = perRunTimes
-        times[key] = individualTimes
+        numRuns = tests[test]
+        data_file_name = f"data-{test}.json"
+        cmd = f"{wdir}{{TYPE}}/benchmarks/{test}/{test} < {wdir}{{TYPE}}/benchmarks/{test}/input"
+        bench_cmd = f"hyperfine --export-json {data_file_name} --shell='bash -norc' --warmup 10 --runs {numRuns} -L TYPE {types_str} '{cmd}' &> /dev/null"
+        os.system(bench_cmd)
+
+        # read the times.json from hyperfine + extract timing info
+        with open(data_file_name, "r") as f:
+            data = json.load(f)
+        stats = {}
+        for res in data["results"]:
+            assert sum(res["exit_codes"]) == 0, "Non-zero exit code"
+            tp = res["parameters"]["TYPE"]
+            individualTimes[types_map[tp]] = res["times"]
+            stats[tp] = {k: v for k, v in res.items() if k in ["mean", "stddev", "median"]}
+            print(f"    {tp}: {', '.join(f'{k}={v}' for k,v in stats[tp].items())}")
+        
+        # save stats for checking
+        with open(f'./stats-{test}-{tp}.json', 'w') as f:
+            json.dump(stats, f, indent=4)
+        # for tp in types:
+        #     dir = f"{wdir}{tp[0]}/benchmarks/{test}/"
+        #     perRunTimes = []
+        #     for i in range(tests[test]):
+        #         start = time.time()
+        #         os.system(f"{dir}{test} < {dir}input")
+        #         end = time.time()
+        #         perRunTimes.append(end - start)
+        #     individualTimes[tp[1]] = perRunTimes
+        times[test] = individualTimes
     return times
 
 def count_instructions(filename):
@@ -92,13 +118,17 @@ def calculateInstructionCount():
         instrCounts[key] = programInstrCounts
     return instrCounts
 
-if __name__ == "__main__":
+def main():
     # compeleCfiles()
     times = runTests()
     # print the times to times.json
-    with open("times.json", "w") as f:
+    times_file = wdir + "times.json"
+    with open(times_file, "w") as f:
         json.dump(times, f, indent=4)
-    instrCounts = calculateInstructionCount()
-    with open("instrCounts.json", "w") as f:
-        json.dump(instrCounts, f, indent=4)
+    # instrCounts = calculateInstructionCount()
+    # with open("instrCounts.json", "w") as f:
+    #     json.dump(instrCounts, f, indent=4)
 
+if __name__ == "__main__":
+    main()
+    pass
