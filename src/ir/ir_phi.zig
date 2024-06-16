@@ -3143,7 +3143,7 @@ pub const Ref = struct {
     /// The scratch variable to store the `%ld` scanned in using
     /// scanf before it is stored somewhere else
     pub inline fn read_scratch(ir: *IR) Ref {
-        const name = ir.internIdent(".read_scratch");
+        const name = ir.internIdent("_read_scratch");
         const ty = .i32;
         return Ref{ .kind = .global, .i = 0xdeadbeef, .type = ty, .name = name };
     }

@@ -931,7 +931,7 @@ fn gen_expression(
                 .False => false: {
                     const trueRef = IR.Ref.immFalse();
                     const falseRef = IR.Ref.immFalse();
-                    const orInst = Inst.or_(trueRef, falseRef);
+                    const orInst = Inst.and_(trueRef, falseRef);
                     const name = ir.internIdent("imm_false");
                     const res = try fun.addNamedInst(bb, orInst, name, .bool);
                     break :false IR.Ref.fromRegLocal(res);
@@ -1205,14 +1205,16 @@ fn gen_print(ir: *IR, fun: *IR.Function, bb: IR.BasicBlock.ID, expr: IR.Ref, nl:
     // with a trailing newline or a trailing space
     const fmtRef = if (nl) IR.Ref.print_ln_fmt(ir) else IR.Ref.print_fmt(ir);
 
+    var gepName = ir.internIdent("gep_fmt");
     // the pointer to format string as an i8* instead of an array
     const fmti8PtrRef = blk: {
         // use gep to get the fmt string as an i8*
         // (ptr to first element) instead of an array
         // i.e. `i8* ptr = &fmt[0];`
         const zeroIndex = IR.Ref.immediate(0, .i32);
-        const gepFmtPtr = Inst.gep(fmtRef.type, fmtRef, zeroIndex);
-        const res = try fun.addInst(bb, gepFmtPtr, .i8);
+        var gepFmtPtr = Inst.gep(fmtRef.type, fmtRef, zeroIndex);
+        gepFmtPtr.res.name = gepName;
+        var res = try fun.addNamedInst(bb, gepFmtPtr, gepName, .i8);
         break :blk IR.Ref.fromRegLocal(res);
     };
     const printRef = IR.Ref.printf(ir);
