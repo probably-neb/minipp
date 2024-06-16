@@ -1,0 +1,50 @@
+fun sort(int_array arr, int size) void
+{
+   int index;
+   int tmpVal;
+   int tmpIndex;
+
+   index = 0;
+
+   while (index < size)
+   {
+      tmpIndex = index;
+
+      while (tmpIndex > 0 && arr[tmpIndex] < arr[tmpIndex - 1])
+      {
+         tmpVal = arr[tmpIndex];
+         arr[tmpIndex] = arr[tmpIndex - 1];
+         arr[tmpIndex - 1] = tmpVal;
+
+         tmpIndex = tmpIndex - 1;
+      }
+
+      index = index + 1;
+   }
+}
+
+fun main() int
+{
+    int_array arr;
+    int index;
+
+    arr = new int_array[10];
+    index = 0;
+
+    while (index < 10)
+    {
+        arr[index] = read;
+        index = index + 1;
+    }
+
+    sort(arr, 10);
+    index = 0;
+
+    while (index < 10)
+    {
+        print arr[index] endl;
+        index = index + 1;
+    }
+
+    return 0;
+}

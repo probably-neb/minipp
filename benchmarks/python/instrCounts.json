@@ -1,0 +1,244 @@
+{
+    "BenchMarkishTopics": {
+        "Stack": [
+            142
+        ],
+        "Phi": [
+            107
+        ],
+        "Optimized": [
+            93
+        ]
+    },
+    "Fibonacci": {
+        "Stack": [
+            43
+        ],
+        "Phi": [
+            35
+        ],
+        "Optimized": [
+            25
+        ]
+    },
+    "GeneralFunctAndOptimize": {
+        "Stack": [
+            161
+        ],
+        "Phi": [
+            170
+        ],
+        "Optimized": [
+            105
+        ]
+    },
+    "OptimizationBenchmark": {
+        "Stack": [
+            1082
+        ],
+        "Phi": [
+            703
+        ],
+        "Optimized": [
+            246
+        ]
+    },
+    "TicTac": {
+        "Stack": [
+            491
+        ],
+        "Phi": [
+            551
+        ],
+        "Optimized": [
+            351
+        ]
+    },
+    "array_sort": {
+        "Stack": [
+            122
+        ],
+        "Phi": [
+            123
+        ],
+        "Optimized": [
+            85
+        ]
+    },
+    "array_sum": {
+        "Stack": [
+            61
+        ],
+        "Phi": [
+            49
+        ],
+        "Optimized": [
+            35
+        ]
+    },
+    "bert": {
+        "Stack": [
+            756
+        ],
+        "Phi": [
+            596
+        ],
+        "Optimized": [
+            466
+        ]
+    },
+    "biggest": {
+        "Stack": [
+            106
+        ],
+        "Phi": [
+            68
+        ],
+        "Optimized": [
+            62
+        ]
+    },
+    "binaryConverter": {
+        "Stack": [
+            141
+        ],
+        "Phi": [
+            108
+        ],
+        "Optimized": [
+            76
+        ]
+    },
+    "brett": {
+        "Stack": [
+            800
+        ],
+        "Phi": [
+            1053
+        ],
+        "Optimized": [
+            510
+        ]
+    },
+    "creativeBenchMarkName": {
+        "Stack": [
+            274
+        ],
+        "Phi": [
+            199
+        ],
+        "Optimized": [
+            163
+        ]
+    },
+    "fact_sum": {
+        "Stack": [
+            90
+        ],
+        "Phi": [
+            75
+        ],
+        "Optimized": [
+            48
+        ]
+    },
+    "hailstone": {
+        "Stack": [
+            61
+        ],
+        "Phi": [
+            57
+        ],
+        "Optimized": [
+            42
+        ]
+    },
+    "hanoi_benchmark": {
+        "Stack": [
+            214
+        ],
+        "Phi": [
+            211
+        ],
+        "Optimized": [
+            163
+        ]
+    },
+    "killerBubbles": {
+        "Stack": [
+            204
+        ],
+        "Phi": [
+            182
+        ],
+        "Optimized": [
+            142
+        ]
+    },
+    "mile1": {
+        "Stack": [
+            86
+        ],
+        "Phi": [
+            75
+        ],
+        "Optimized": [
+            53
+        ]
+    },
+    "mixed": {
+        "Stack": [
+            245
+        ],
+        "Phi": [
+            193
+        ],
+        "Optimized": [
+            160
+        ]
+    },
+    "primes": {
+        "Stack": [
+            107
+        ],
+        "Phi": [
+            97
+        ],
+        "Optimized": [
+            68
+        ]
+    },
+    "programBreaker": {
+        "Stack": [
+            92
+        ],
+        "Phi": [
+            70
+        ],
+        "Optimized": [
+            47
+        ]
+    },
+    "stats": {
+        "Stack": [
+            268
+        ],
+        "Phi": [
+            217
+        ],
+        "Optimized": [
+            170
+        ]
+    },
+    "wasteOfCycles": {
+        "Stack": [
+            57
+        ],
+        "Phi": [
+            49
+        ],
+        "Optimized": [
+            36
+        ]
+    }
+}

@@ -459,7 +459,20 @@ pub fn gen_function(
     }
 
     try fun.addCtrlFlowInst(entryBB, Inst.jmp(IR.Ref.label(fun.cfgToBBs.get(0).?)));
+    try add_phis_to_bb_insts(fun);
     return fun;
+}
+
+/// Helper to be called at the end of gen_function that puts
+/// phi instructions
+fn add_phis_to_bb_insts(fun: *IR.Function) !void {
+    const bbs = fun.bbs.items();
+    for (bbs) |*bb| {
+        const len_b4 = bb.insts.len;
+        try bb.insts.insertSlice(0, bb.phiInsts.items);
+        const len_after = bb.insts.len;
+        utils.assert(len_after == len_b4 + bb.phiInsts.items.len, "failed to insert phi insts into bb\n", .{});
+    }
 }
 
 fn gen_function_params(
@@ -762,9 +775,11 @@ fn gen_statement(
         .Print => |print| {
             const exprRef = try gen_expression(ir, ast, fun, bb, ast.get(print.expr).*);
             const lenb4 = fun.insts.len;
+            _ = lenb4;
             try gen_print(ir, fun, bb, exprRef, print.hasEndl);
             const lenAfter = fun.insts.len;
-            log.trace("print expr: {any} :: {d} -> {d}\n", .{ exprRef, lenb4, lenAfter });
+            _ = lenAfter;
+            // log.trace("print expr: {any} :: {d} -> {d}\n", .{ exprRef, lenb4, lenAfter });
         },
         // TODO: V5 Revs
         .Delete => |del| {

@@ -1,12 +1,14 @@
 minipp := "./zig-out/bin/minipp"
 TEST_SUITE := "./test-suite/tests/milestone2/benchmarks"
-
 test path="_" filter="":
-    zig {{ if path == "_" {"build test"} else { "test --main-pkg-path " + join(justfile_directory(), "src") + " " + join(justfile_directory(), "src", replace(parent_directory(path), "src", ""), file_stem(path)) + ".zig" + " --test-filter '" + filter + "'"} }}
+    zig {{ if path == "_" {"build test"} else { "test --main-pkg-path " + justfile_directory() + " " + join(justfile_directory(), "src", replace(parent_directory(path), "src", ""), file_stem(path)) + ".zig" + " --test-filter '" + filter + "'"} }}
 
 watch path="_" filter="":
-    watchexec -e zig -- just test {{path}} {{filter}}
+    watchexec -e zig -rc -- just test {{path}} {{filter}}
 
+render-dot:
+	for f in ./dot_generated/*.dot; do [ -f "$f" ] && dot -Tsvg "$f" -o "${f}.svg" || echo "Skipping invalid file: $f"; done
+	mv ./dot_generated/*.dot.svg ./dot_svg/
 build:
     zig build
 
@@ -43,6 +45,11 @@ run-suite-test name *BUILD_ARGS: ensure-test-suite
     YELLOW='\033[0;33m'
     BLUE='\033[0;34m'
     NC='\033[0m'
+
+    rm -rf ./dot_svg/
+    rm -rf ./dot_generated/
+    mkdir dot_generated
+    mkdir dot_svg
 
     echo -e "Running Test Suite Test: ${YELLOW}{{name}}${NC}"
     echo -e "${BLUE}Building Test Suite Test...${NC}"
@@ -83,6 +90,8 @@ build-suite-test name *BUILD_ARGS: build
     name="{{name}}"
     name="${name#array_}"
     dir="{{TEST_SUITE}}/{{name}}"
+    rm -f "{{TEST_SUITE}}/input"
+    rm -f "{{TEST_SUITE}}/input.longer"
     {{minipp}} -i "$dir/${name}.mini" -o "$dir/{{name}}.ll" {{BUILD_ARGS}}
     clang "$dir/{{name}}.ll" -o "$dir/{{name}}"
 
@@ -128,3 +137,26 @@ check-llvm path *BUILD_ARGS:
 
 nix:
     sudo nix develop --extra-experimental-features nix-command --extra-experimental-features flakes
+
+
+par-run-suite *BUILD_ARGS: ensure-test-suite
+    #!/usr/bin/env bash
+    set -uo pipefail
+
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    NC='\033[0m'
+
+    run_test() {
+        test=$1
+        if just run-suite-test "$test" {{BUILD_ARGS}} > /dev/null 2>&1; then
+            echo -e "${GREEN}SUCCESS${NC} - ${test}"
+        else
+            echo -e "${RED}FAIL   ${NC} - ${test}"
+        fi
+    }
+
+    export -f run_test
+    export RED GREEN NC
+
+    ls {{TEST_SUITE}} | parallel run_test

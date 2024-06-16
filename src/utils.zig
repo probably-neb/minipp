@@ -9,8 +9,16 @@ pub fn assert(a: bool, comptime fmt: []const u8, vars: anytype) void {
 
 pub fn todo(comptime fmt: []const u8, vars: anytype) noreturn {
     const prefix = "TODO: ";
-    comptime var prefixedFmt: [prefix.len + fmt.len]u8 = .{0};
-    @memcpy(prefixedFmt[0..prefix.len], prefix[0..prefix.len]);
-    @memcpy(prefixedFmt[prefix.len..], fmt[0..fmt.len]);
-    std.debug.panic(&prefixedFmt, vars);
+    std.debug.panic(prefix ++ fmt, vars);
+}
+
+// Like todo, but for unreachable
+// had to name it impossible because unreachable is a keyword
+pub fn impossible(comptime fmt: []const u8, vars: anytype) noreturn {
+    const prefix = "UNREACHABLE: ";
+    std.debug.panic(prefix ++ fmt, vars);
+}
+
+pub fn xor(a: bool, b: bool) bool {
+    return (a and !b) or (!a and b);
 }

@@ -14,6 +14,9 @@ const files = [_]SourceFile{
     .{ .path = "src/ir/stack.zig", .name = "stack-ir-gen" },
     .{ .path = "src/ir/phi.zig", .name = "phi-ir-gen" },
     .{ .path = "src/ir/ir_phi.zig", .name = "phi-ir" },
+    .{ .path = "src/ir/opt.zig", .name = "opt" },
+    .{ .path = "src/ir/sccp.zig", .name = "sccp" },
+    .{ .path = "src/ir/cmp-info-prop.zig", .name = "cmp-prop" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -41,7 +44,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = .{ .path = file.path },
             .target = target,
             .optimize = build_mode,
-            .main_pkg_path = .{ .path = "src" },
+            .main_pkg_path = .{ .path = "./" },
         });
         const run_test = b.addRunArtifact(file_tests);
         test_step.dependOn(&run_test.step);

@@ -134,14 +134,19 @@ pub fn getIdent(self: *const IR, id: StrID) []const u8 {
     return self.intern_pool.get(id) catch unreachable;
 }
 
-pub fn getFun(self: *const IR, nameID: StrID) !Function {
-    for (self.funcs.items.items) |func| {
+pub fn getFun(self: *const IR, nameID: StrID) !*Function {
+    for (self.funcs.items.items) |*func| {
         if (func.name == nameID) {
             return func;
         }
     }
 
     return error.NotFound;
+}
+
+pub fn parseInt(self: *const IR, id: StrID) !i64 {
+    const str = try self.safeGetIdent(id);
+    return std.fmt.parseInt(i64, str, 10);
 }
 
 pub fn getIdentID(self: *const IR, ident: []const u8) !StrID {
@@ -618,9 +623,9 @@ pub const Function = struct {
             ir.getIdent(name),
         });
 
-        for (ir.funcs.items.items) |func| {
-            log.trace("func := {s}\n", .{ir.getIdent(func.name)});
-        }
+        // for (ir.funcs.items.items) |func| {
+        //     log.trace("func := {s}\n", .{ir.getIdent(func.name)});
+        // }
         // check if its a global
         // TODO: add it so that global vars are loaded on use, will have to do the same on store
         if (ir.globals.items.safeIndexOf(name)) |globalID| {
@@ -1197,6 +1202,7 @@ pub const CfgFunction = struct {
     }
 
     pub fn printallChildren(self: *CfgFunction) void {
+        std.debug.print("children\n", .{});
         for (self.postOrder.items) |node| {
             self.printChildren(node);
         }
@@ -1568,7 +1574,7 @@ pub const CfgFunction = struct {
         try self.genDominance();
         // self.printallChildren();
         // try self.printDomFront();
-        self.printOutFunAsDot(ir);
+        // self.printOutFunAsDot(ir);
 
         // for every blocks's assignments add to the functions assignemnts
         for (self.postOrder.items) |blockID| {
@@ -1650,7 +1656,7 @@ pub const CfgFunction = struct {
             const statementIndex = c_stat.kind.Statement.statement;
             const statementNode = c_stat.kind.Statement;
             // self.printBlockName(cBlock);
-            // ast.printNodeLine(c_stat);
+            // ast.printNodeLineTo(c_stat, log.trace);
             const innerNode = ast.get(statementIndex);
             const kind = innerNode.kind;
             const finalIndex = c_stat.kind.Statement.finalIndex;
@@ -1952,6 +1958,73 @@ pub const CfgFunction = struct {
     }
 };
 
+pub fn OrderedArrayList(comptime T: type) type {
+    return struct {
+        list: std.ArrayList(T),
+        len: u32,
+
+        pub const Self = @This();
+
+        pub fn init(alloc: std.mem.Allocator) Self {
+            return .{
+                .list = std.ArrayList(T).init(alloc),
+                .len = 0,
+            };
+        }
+
+        pub fn deinit(self: Self) void {
+            self.list.deinit();
+        }
+
+        /// A helper for iterating instead of `field.list.items`
+        pub inline fn items(self: Self) []T {
+            return self.list.items[0..self.len];
+        }
+
+        // TODO: consider refactoring to return just `T`
+        // and create another `getPtr` for when you need a pointer
+        // the `.*` everywhere is kinda annoying ngl
+        pub inline fn get(self: Self, idx: u32) *T {
+            return &self.list.items[idx];
+        }
+
+        /// Appends an item and returns the index
+        pub fn add(self: *Self, item: T) !u32 {
+            const id = self.len;
+            try self.list.append(item);
+            self.len += 1;
+            return id;
+        }
+
+        pub inline fn set(self: *Self, idx: u32, item: T) void {
+            self.list.items[idx] = item;
+        }
+
+        /// same as add, but does not return the index
+        /// for when you just don't care yk?
+        pub fn append(self: *Self, item: T) !void {
+            _ = try self.add(item);
+        }
+
+        // actuall remove from ids and list
+        pub fn remove(self: *Self, idx: u32) void {
+            _ = self.list.orderedRemove(idx);
+            self.len -= 1;
+        }
+
+        pub fn orderedRemove(self: *Self, idx: u32) T {
+            const val = self.list.orderedRemove(idx);
+            self.len -= 1;
+            return val;
+        }
+
+        pub fn insertSlice(self: *Self, index: usize, values: []T) !void {
+            try self.list.insertSlice(index, values);
+            self.len += @intCast(values.len);
+        }
+    };
+}
+
 pub const BasicBlock = struct {
     name: []const u8,
     incomers: std.ArrayList(Label),
@@ -1964,6 +2037,11 @@ pub const BasicBlock = struct {
     insts: List,
     phiInsts: std.ArrayList(Function.InstID),
     phiMap: std.AutoHashMap(StrID, Function.InstID),
+
+    pub fn reinitIncomers(self: *BasicBlock, fun: *Function) void {
+        self.incomers.deinit();
+        self.incomers = std.ArrayList(Label).init(fun.alloc);
+    }
 
     pub fn addRefToPhi(self: BasicBlock.ID, fun: *Function, ref: Ref, bbIn: BasicBlock.ID, name: StrID) !Function.InstID {
         // std.debug.print("ref.i {any}\n", .{ref.i});
@@ -2112,7 +2190,7 @@ pub const BasicBlock = struct {
     /// everthing else in the IR because the order of the basic blocks
     pub const ID = u32;
 
-    pub const List = OrderedList(Function.InstID);
+    pub const List = OrderedArrayList(Function.InstID);
 
     pub fn init(alloc: std.mem.Allocator, name: []const u8) BasicBlock {
         return .{
@@ -2222,6 +2300,10 @@ pub fn StaticSizeLookupTable(comptime Key: type, comptime Value: type, comptime 
             return self.items[key];
         }
 
+        pub fn get(self: Self, key: Index) *Value {
+            return &self.items[key];
+        }
+
         /// Helper mainly for the `fromLUT` function for when the value is the key
         pub fn IDgetKeyHelper(val: anytype) @TypeOf(val) {
             return val;
@@ -2289,6 +2371,10 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
             return self.items.items[key];
         }
 
+        pub fn getPtr(self: Self, key: ID) *Value {
+            return &self.items.items[key];
+        }
+
         pub fn set(self: *Self, key: ID, value: Value) void {
             self.items.items[key] = value;
         }
@@ -2303,57 +2389,194 @@ pub fn LookupTable(comptime Key: type, comptime Value: type, comptime getKey: fn
     };
 }
 
-/// A wrapper around `std.ArrayList` to provide a way to get
-/// the index when you append, and some other helpers TBD + nicer interface
-/// (.len field, .get method etc.)
 pub fn OrderedList(comptime T: type) type {
     return struct {
-        list: std.ArrayList(T),
+        list: std.AutoArrayHashMap(u32, T),
         len: u32,
-
-        // TODO: the initial idea for this was to have an `order`
-        // array that just keeps the indexes of the items in `list`
-        // in order and can be updated however.
-        // so far I have not encountered a time I couldn't just make
-        // the basic blocks in order, and the instructions order is
-        // maintained by keeping the list of instructions
-        // added to the `insts` field in the basic block in order
-        // We might still need it though, I just haven't seen the reason
-        // to add the additional complexity it would introduce/
-        // refactors it would possibly require
-        // the field would look like:
-        // order: std.ArrayList(u32),
-        // and we'd just add some helper functions to ensure something
-        // comes after something else, do manipulations, etc.
+        removed: u32,
 
         pub const Self = @This();
+        pub const UNDEF = std.math.maxInt(u32);
 
         pub fn init(alloc: std.mem.Allocator) Self {
-            return .{ .list = std.ArrayList(T).init(alloc), .len = 0 };
+            return .{
+                .list = std.AutoArrayHashMap(u32, T).init(alloc),
+                .len = 0,
+                .removed = 0,
+            };
+        }
+
+        pub fn ids(self: *const Self) []u32 {
+            return self.list.keys();
         }
 
         /// A helper for iterating instead of `field.list.items`
         pub inline fn items(self: Self) []T {
-            return self.list.items;
+            // return self.list.values();
+            return self.list.values();
         }
 
         // TODO: consider refactoring to return just `T`
         // and create another `getPtr` for when you need a pointer
         // the `.*` everywhere is kinda annoying ngl
         pub inline fn get(self: Self, idx: u32) *T {
-            return &self.list.items[idx];
+            return self.list.getPtr(idx) orelse {
+                utils.impossible("tried to access removed element in ordered list {d}\n", .{idx});
+            };
+            // const actual = self.order.items[idx];
+            // utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            // return &self.list.items[actual];
+        }
+
+        pub fn get_or_err(self: Self, idx: u32) !T {
+            return self.list.get(idx) orelse error.NotFound;
+        }
+
+        /// Appends an item and returns the index
+        pub fn add(self: *Self, item: T) !u32 {
+            const id: u32 = @intCast(self.list.values().len);
+            try self.list.put(id, item);
+            self.len += 1;
+            return id;
+            // const id = self.len;
+            // try self.list.append(item);
+            // try self.ids.append(id);
+            // try self.order.append(id);
+            // self.len += 1;
+            // return id;
+        }
+
+        pub inline fn set(self: *Self, idx: u32, item: T) void {
+            self.list.put(idx, item) catch unreachable;
+            // const actual = self.order.items[idx];
+            // utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            // self.list.items[actual] = item;
+        }
+
+        /// same as add, but does not return the index
+        /// for when you just don't care yk?
+        pub fn append(self: *Self, item: T) !void {
+            const id = self.list.values().len;
+            try self.list.put(id, item);
+            self.len += 1;
+            // _ = try self.add(item);
+        }
+
+        // actuall remove from ids and list
+        pub fn remove(self: *Self, id: u32) void {
+            const ok = self.list.orderedRemove(id);
+            if (ok) {
+                self.len -= 1;
+                self.*.removed += 1;
+            }
+            // const index = self.order.items[id];
+            // utils.assert(index != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{id});
+            // self.order.items[id] = Self.UNDEF;
+            // _ = self.list.orderedRemove(index);
+            // _ = self.ids.orderedRemove(index);
+            // if (id + 1 < self.order.items.len) {
+            //     for (id + 1..self.order.items.len) |i| {
+            //         if (self.order.items[i] == Self.UNDEF) {
+            //             continue;
+            //         }
+            //         self.order.items[i] -= 1;
+            //     }
+            // }
+            // self.len -= 1;
+        }
+
+        pub fn orderedRemove(self: *Self, idx: u32) T {
+            const ok = self.list.orderedRemoveAt(idx);
+            if (ok) {
+                self.len -= 1;
+                self.*.removed += 1;
+            }
+            // const val = self.list.orderedRemove(idx);
+            // _ = self.ids.orderedRemove(idx);
+            // for (self.order.items) |*i| {
+            //     if (i.* == idx) {
+            //         i.* = Self.UNDEF;
+            //         continue;
+            //     }
+            //     if (i.* > idx and i.* != Self.UNDEF) {
+            //         i.* -= 1;
+            //     }
+            // }
+            // self.len -= 1;
+            // return val;
+        }
+
+        // test "ordered-list.remove" {
+        //     const alloc = std.heap.page_allocator;
+        //     var ol = OrderedList(u32).init(alloc);
+        //     const id0 = try ol.add(0);
+        //     const id1 = try ol.add(1);
+        //     const id2 = try ol.add(2);
+        //
+        //     ol.remove(1);
+        //
+        //     const ting = std.testing;
+        //     try ting.expectEqual(ol.order.items[id0], 0);
+        //     try ting.expectEqual(ol.order.items[id1], OrderedList(u32).UNDEF);
+        //     try ting.expectEqual(ol.order.items[id2], 1);
+        //
+        //     try ting.expectEqual(ol.list.items[0], 0);
+        //     try ting.expectEqual(ol.list.items[1], 2);
+        // }
+    };
+}
+
+/// A wrapper around `std.ArrayList` to provide a way to get
+/// the index when you append, and some other helpers TBD + nicer interface
+/// (.len field, .get method etc.)
+pub fn _OrderedList(comptime T: type) type {
+    return struct {
+        list: std.ArrayList(T),
+        len: u32,
+        ids: std.ArrayList(u32),
+        order: std.ArrayList(u32),
+
+        pub const Self = @This();
+        pub const UNDEF = std.math.maxInt(u32);
+
+        pub fn init(alloc: std.mem.Allocator) Self {
+            return .{
+                .list = std.ArrayList(T).init(alloc),
+                .order = std.ArrayList(u32).init(alloc),
+                .ids = std.ArrayList(u32).init(alloc),
+                .len = 0,
+            };
+        }
+
+        /// A helper for iterating instead of `field.list.items`
+        pub inline fn items(self: Self) []T {
+            std.debug.print("maybe dis {d} maybe dat {d}\n", .{ self.list.items.len, self.len });
+            return self.list.items[0..self.len];
+        }
+
+        // TODO: consider refactoring to return just `T`
+        // and create another `getPtr` for when you need a pointer
+        // the `.*` everywhere is kinda annoying ngl
+        pub inline fn get(self: Self, idx: u32) *T {
+            const actual = self.order.items[idx];
+            utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            return &self.list.items[actual];
         }
 
         /// Appends an item and returns the index
         pub fn add(self: *Self, item: T) !u32 {
             const id = self.len;
             try self.list.append(item);
+            try self.ids.append(id);
+            try self.order.append(id);
             self.len += 1;
             return id;
         }
 
         pub inline fn set(self: *Self, idx: u32, item: T) void {
-            self.list.items[idx] = item;
+            const actual = self.order.items[idx];
+            utils.assert(actual != Self.UNDEF, "tried to access removed element in ordered list {d}\n", .{idx});
+            self.list.items[actual] = item;
         }
 
         /// same as add, but does not return the index
@@ -2362,9 +2585,56 @@ pub fn OrderedList(comptime T: type) type {
             _ = try self.add(item);
         }
 
-        pub fn orderedRemove(self: *Self, idx: u32) T {
+        // actuall remove from ids and list
+        pub fn remove(self: *Self, id: u32) void {
+            const index = self.order.items[id];
+            utils.assert(index != Self.UNDEF, "tried to remove removed element in ordered list {d}\n", .{id});
+            self.order.items[id] = Self.UNDEF;
+            _ = self.list.orderedRemove(index);
+            _ = self.ids.orderedRemove(index);
+            if (id + 1 < self.order.items.len) {
+                for (id + 1..self.order.items.len) |i| {
+                    if (self.order.items[i] == Self.UNDEF) {
+                        continue;
+                    }
+                    self.order.items[i] -= 1;
+                }
+            }
             self.len -= 1;
-            return self.list.orderedRemove(idx);
+        }
+
+        pub fn orderedRemove(self: *Self, idx: u32) T {
+            const val = self.list.orderedRemove(idx);
+            _ = self.ids.orderedRemove(idx);
+            for (self.order.items) |*i| {
+                if (i.* == idx) {
+                    i.* = Self.UNDEF;
+                    continue;
+                }
+                if (i.* > idx and i.* != Self.UNDEF) {
+                    i.* -= 1;
+                }
+            }
+            self.len -= 1;
+            return val;
+        }
+
+        test "ordered-list.remove" {
+            const alloc = std.heap.page_allocator;
+            var ol = OrderedList(u32).init(alloc);
+            const id0 = try ol.add(0);
+            const id1 = try ol.add(1);
+            const id2 = try ol.add(2);
+
+            ol.remove(1);
+
+            const ting = std.testing;
+            try ting.expectEqual(ol.order.items[id0], 0);
+            try ting.expectEqual(ol.order.items[id1], OrderedList(u32).UNDEF);
+            try ting.expectEqual(ol.order.items[id2], 1);
+
+            try ting.expectEqual(ol.list.items[0], 0);
+            try ting.expectEqual(ol.list.items[1], 2);
         }
     };
 }
@@ -2679,7 +2949,7 @@ pub const Type = union(enum) {
 /// Ref to a register
 pub const Ref = struct {
     /// ID
-    i: Register.ID,
+    i: ID,
     name: StrID,
     kind: Kind,
     type: Type,
@@ -2688,6 +2958,8 @@ pub const Ref = struct {
     /// Ref used when no ref needed
     /// FIXME: add deadbeef here too
     pub const default = Ref.local(69420, InternPool.NULL, .void);
+
+    pub const ID = Register.ID;
 
     pub fn debugPrintWithName(self: Ref, ir: *IR) void {
         std.debug.print("Ref: {any}, Kind: ", .{self.i});
@@ -2973,16 +3245,14 @@ pub const Inst = struct {
         }
 
         pub fn toInst(inst: Binop) Inst {
-            // NOTE: written by copilot - must be double checked
-            switch (inst.op) {
-                .Add => return Inst.add(inst.register, inst.lhs, inst.rhs),
-                .Mul => return Inst.mul(inst.register, inst.lhs, inst.rhs),
-                .Div => return Inst.div(inst.register, inst.lhs, inst.rhs),
-                .Sub => return Inst.sub(inst.register, inst.lhs, inst.rhs),
-                .And => return Inst.and_(inst.register, inst.lhs, inst.rhs),
-                .Or => return Inst.or_(inst.register, inst.lhs, inst.rhs),
-                .Xor => return Inst.xor(inst.register, inst.lhs, inst.rhs),
-            }
+            return Inst{
+                .op = .Binop,
+                .res = inst.register,
+                .ty1 = inst.returnType,
+                .op1 = inst.lhs,
+                .op2 = inst.rhs,
+                .extra = .{ .op = inst.op },
+            };
         }
     };
 
@@ -3045,7 +3315,14 @@ pub const Inst = struct {
         }
 
         pub inline fn toInst(inst: Cmp) Inst {
-            return Inst.cmp(inst.res, inst.cond, inst.lhs, inst.rhs);
+            return .{
+                .op = .Cmp,
+                .res = inst.res,
+                .ty1 = inst.opTypes,
+                .op1 = inst.lhs,
+                .op2 = inst.rhs,
+                .extra = .{ .cond = inst.cond },
+            };
         }
     };
     // Comparison and Branching
@@ -3113,7 +3390,12 @@ pub const Inst = struct {
             };
         }
         pub inline fn toInst(inst: Load) Inst {
-            return Inst.load(inst.res, inst.ty, inst.ptr);
+            return Inst{
+                .op = .Load,
+                .res = inst.res,
+                .ty1 = inst.ty,
+                .op1 = inst.ptr,
+            };
         }
     };
     // Loads & Stores
@@ -3121,7 +3403,11 @@ pub const Inst = struct {
     /// newer:
     /// `<result> = load <ty>, <ty>* <pointer>`
     pub inline fn load(ty: Type, ptr: Ref) Inst {
-        return .{ .op = .Load, .ty1 = ty, .op1 = ptr };
+        return .{
+            .op = .Load,
+            .ty1 = ty,
+            .op1 = ptr,
+        };
     }
 
     pub const Store = struct {
@@ -3139,13 +3425,25 @@ pub const Inst = struct {
         }
 
         pub inline fn toInst(inst: Store) Inst {
-            return Inst.store(inst.ty, inst.to, inst.fromType, inst.from);
+            return Inst{
+                .op = .Store,
+                .ty1 = inst.ty,
+                .op1 = inst.to,
+                .ty2 = inst.fromType,
+                .op2 = inst.from,
+            };
         }
     };
     /// `store {from.type} {from}, {to.type}* {to}`
     // TODO: remove type params and take them from ref
     pub inline fn store(to: Ref, from: Ref) Inst {
-        return .{ .op = .Store, .ty1 = to.type, .op1 = to, .ty2 = from.type.orelseIfNull(to.type), .op2 = from };
+        return .{
+            .op = .Store,
+            .ty1 = to.type,
+            .op1 = to,
+            .ty2 = from.type.orelseIfNull(to.type),
+            .op2 = from,
+        };
     }
 
     pub const Gep = struct {
@@ -3165,7 +3463,14 @@ pub const Inst = struct {
         }
 
         pub inline fn toInst(inst: Gep) Inst {
-            return Inst.gep(inst.res, inst.baseTy, inst.ptrTy, inst.ptrVal, inst.index);
+            return Inst{
+                .op = .Gep,
+                .res = inst.res,
+                .ty1 = inst.baseTy,
+                .ty2 = inst.ptrTy,
+                .op1 = inst.ptrVal,
+                .op2 = inst.index,
+            };
         }
     };
     /// `<result> = getelementptr <ty>* <ptrval>, i1 0, i32 <index>`
@@ -3277,12 +3582,18 @@ pub const Inst = struct {
             };
         }
         pub inline fn toInst(inst: Misc) Inst {
-            switch (inst.kind) {
-                .bitcast => Inst.bitcast(inst.from, inst.toType),
-                .trunc => Inst.trunc(inst.from, inst.toType),
-                .zext => Inst.zext(inst.from, inst.toType),
-                .sext => Inst.zext(inst.from, inst.toType),
-            }
+            return Inst{
+                .op = switch (inst.kind) {
+                    .bitcast => .Bitcast,
+                    .trunc => .Trunc,
+                    .zext => .Zext,
+                    .sext => .Sext,
+                },
+                .res = inst.res,
+                .ty1 = inst.fromType,
+                .ty2 = inst.toType,
+                .op1 = inst.from,
+            };
         }
     };
     // Miscellaneous
@@ -3316,7 +3627,12 @@ pub const Inst = struct {
             };
         }
         pub inline fn toInst(inst: Phi) Inst {
-            return Inst.phi(inst.res, inst.type, inst.entries);
+            return Inst{
+                .op = .Phi,
+                .res = inst.res,
+                .ty1 = inst.type,
+                .extra = .{ .phi = inst.entries },
+            };
         }
     };
     /// `<result> = phi <ty> [<value 0>, <label 0>] [<value 1>, <label 1>]`

@@ -89,6 +89,7 @@ pub fn get(self: *const InternPool, id: StrID) Error![]const u8 {
         // because we just keep going until we find null terminator, this is a
         // pedantic check to make sure what we extracted is actually something
         // that was interned not just a random sequence of bytes
+        std.debug.print("found str: {s} but value in intern pool at {d} was {?d}\n", .{ str, id, self.map.get(str) });
         return error.StringNotPresent;
     }
     return str;
