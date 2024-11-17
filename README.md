@@ -1,13 +1,21 @@
-## Mini language Implementation 
+## Minilang Implementation 
 
-CSC-431
+Implemented for Cal Poly compiler design (CSC-431)  Spring 2024. 
+
+### Features:
+- Bespoke cache optimized AST for pratt parsing
+- Supports both LLVM-IR and ArmV8 as backends
+- "Impossible state Impossible" internal representation of IR
+    - Strongly controled mutability and creation
+    - Internal management for CFG and Basic Block transformation
+- Large set of unit level tests and product level tests 
 
 
 ## BUILD INSTRUCTIONS
 
 ### Setup
 
-In Order to build the project zig version 0.11 must be installed.
+In order to build the project zig version 0.11 *must* be installed.
 
 There is a nix shell setup for the project that will get you into a shell with [`just`](https://github.com/casey/just) (an alternative to `make`), clang (llvm) v7.0.1, and the correct version of zig. 
     - If you have `nix` and `just` installed you can run `just nix` to get into a shell with the correct versions of everything installed
